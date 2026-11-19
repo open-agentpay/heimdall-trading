@@ -49,6 +49,13 @@ ENV/
 *.key
 credentials.json
 
+# Local Database Files
+*.db
+*.sqlite
+*.sqlite3
+data/
+
+
 # IDEs
 .idea/
 .vscode/
