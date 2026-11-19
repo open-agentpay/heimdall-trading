@@ -1,0 +1,41 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg-warm: #F6F2EB;
+  --card-bg: #FFFFFF;
+  --border-warm: #E6DFD5;
+}
+
+body {
+  background-color: var(--bg-warm);
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  user-select: none;
+}
+
+/* 扑克桌台质感 */
+.poker-arena {
+  background: radial-gradient(circle at center, #F4EFE6 0%, #E8E0D2 100%);
+  border: 10px solid #DED4C5;
+  box-shadow: inset 0 3px 12px rgba(80, 60, 40, 0.08), 0 8px 24px rgba(60, 45, 30, 0.06);
+  border-radius: 42px;
+}
+
+/* 席位卡片 */
+.tactile-card {
+  background: #FFFFFF;
+  border: 1px solid var(--border-warm);
+  box-shadow: 0 4px 12px rgba(70, 50, 30, 0.04), 0 1px 2px rgba(70, 50, 30, 0.02);
+  border-radius: 14px;
+}
+
+.seat-badge {
+  transition: all 0.2s ease-in-out;
+}
+.seat-badge:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px rgba(70, 50, 30, 0.08);
+}
