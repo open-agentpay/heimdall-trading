@@ -19,6 +19,7 @@ from heimdall.agents.graph import MultiAgentPipeline
 from heimdall.accounting.nav import NAVEngine, EquitySnapshot
 from heimdall.execution.base import BaseExecutionAdapter, TradeExecutionResult
 from heimdall.execution.paper import PaperExecutionAdapter
+from heimdall.llm.client import LLMService
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +40,7 @@ class TradingBotInstance:
         max_drawdown_limit: float = 0.05,
         execution_adapter: Optional[BaseExecutionAdapter] = None,
         bifrost_client: Optional[BifrostClient] = None,
+        llm_service: Optional[LLMService] = None,
     ):
         """
         初始化机器人实例
@@ -51,6 +53,7 @@ class TradingBotInstance:
         :param max_drawdown_limit: 单日最大回撤熔断阈值（默认 5%）
         :param execution_adapter: 底层执行器（默认启动高仿真实盘沙盒 PaperExecutionAdapter）
         :param bifrost_client: 数据底座客户端实例
+        :param llm_service: 大模型统一服务实例
         """
         self.bot_id: str = bot_id
         self.name: str = name
@@ -59,6 +62,7 @@ class TradingBotInstance:
         self.status: AgentStatus = AgentStatus.STOPPED
         self.allocated_capital: float = allocated_capital
         self.max_drawdown_limit: float = max_drawdown_limit
+        self.llm_service = llm_service or LLMService()
 
         # 挂载独立的资产净值统计引擎
         self.nav_engine = NAVEngine(
@@ -83,6 +87,7 @@ class TradingBotInstance:
         self.pipeline = MultiAgentPipeline(
             hard_guard=self.hard_guard,
             strategy_agent_id=self.bot_id,
+            llm_service=self.llm_service,
         )
 
         # 历史决策记录与流水
@@ -219,6 +224,7 @@ class BotManager:
         allocated_capital: float = 10000.0,
         max_drawdown_limit: float = 0.05,
         execution_adapter: Optional[BaseExecutionAdapter] = None,
+        llm_service: Optional[LLMService] = None,
     ) -> TradingBotInstance:
         """注册并创建新的交易机器人实例"""
         if bot_id in self.bots:
@@ -233,6 +239,7 @@ class BotManager:
             max_drawdown_limit=max_drawdown_limit,
             execution_adapter=execution_adapter,
             bifrost_client=self.bifrost_client,
+            llm_service=llm_service,
         )
         self.bots[bot_id] = bot
         logger.info("[BotManager] 成功创建机器人: %s (%s) | 标的: %s", bot_id, name, symbol)

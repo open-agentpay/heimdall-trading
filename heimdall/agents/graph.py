@@ -25,6 +25,7 @@ from heimdall.agents.strategy import StrategyAgent
 from heimdall.agents.risk_officer import RiskOfficerAgent
 from heimdall.risk.guard import HardRiskGuard
 from heimdall.models.schemas import RiskReviewResult
+from heimdall.llm.client import LLMService
 
 logger = logging.getLogger(__name__)
 
@@ -33,23 +34,27 @@ class MultiAgentPipeline:
     """
     多智能体量化流水线执行器
     组织协同 Analyst、Debate、Strategy、RiskOfficer 与 HardRiskGuard。
+    支持大模型 (LLM) 深度认知推理，并提供确定性算法双轨兜底。
     """
 
     def __init__(
         self,
         hard_guard: Optional[HardRiskGuard] = None,
         strategy_agent_id: str = "strategy_heimdall_01",
+        llm_service: Optional[LLMService] = None,
     ):
         """
         初始化智能体流水线各节点实例
 
         :param hard_guard: 底层确定性硬风控实例（若为空则使用默认配置初始化）
         :param strategy_agent_id: 策略智能体编号
+        :param llm_service: 统一大模型服务实例（若为空则使用默认单例）
         """
-        self.analyst = AnalystAgent()
-        self.bull_researcher = BullResearcher()
-        self.bear_researcher = BearResearcher()
-        self.moderator = DebateModerator()
+        self.llm = llm_service or LLMService()
+        self.analyst = AnalystAgent(llm_service=self.llm)
+        self.bull_researcher = BullResearcher(llm_service=self.llm)
+        self.bear_researcher = BearResearcher(llm_service=self.llm)
+        self.moderator = DebateModerator(llm_service=self.llm)
         self.strategy = StrategyAgent(agent_id=strategy_agent_id)
         self.risk_officer = RiskOfficerAgent()
         self.hard_guard = hard_guard or HardRiskGuard()
