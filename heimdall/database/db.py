@@ -137,6 +137,37 @@ class DatabaseManager:
                 );
                 """)
 
+                # 5. Web3 钱包用户表 (SIWE 去中心化登录鉴权)
+                cursor.execute("""
+                CREATE TABLE IF NOT EXISTS user_wallets (
+                    address TEXT PRIMARY KEY,
+                    nonce TEXT NOT NULL,
+                    chain_id INTEGER NOT NULL DEFAULT 1,
+                    session_token TEXT,
+                    last_login_at TEXT,
+                    created_at TEXT NOT NULL
+                );
+                """)
+
+                # 6. 安全金库凭证表 (AES-256-GCM 密文存储交易所与大模型 Key)
+                cursor.execute("""
+                CREATE TABLE IF NOT EXISTS user_api_keys (
+                    key_id TEXT PRIMARY KEY,
+                    wallet_address TEXT NOT NULL,
+                    category TEXT NOT NULL,
+                    provider TEXT NOT NULL,
+                    label TEXT NOT NULL,
+                    key_mask TEXT NOT NULL,
+                    encrypted_data TEXT NOT NULL,
+                    is_active INTEGER NOT NULL DEFAULT 1,
+                    last_tested_at TEXT,
+                    last_test_status TEXT DEFAULT 'PENDING',
+                    last_test_latency_ms REAL DEFAULT 0.0,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                """)
+
                 conn.commit()
                 logger.info("[DatabaseManager] 数据库核心表结构校验并初始化成功！")
 

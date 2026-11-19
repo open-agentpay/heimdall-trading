@@ -15,12 +15,14 @@ import logging
 from typing import Dict, Any, List, Optional
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, status, Query
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from heimdall.engine.bot_manager import BotManager
 from heimdall.engine.scheduler import scheduler
 from heimdall.database.db import db_manager
 from heimdall.database.repository import trading_repo
 from heimdall.models.schemas import StrategyType, AgentStatus
+from heimdall.auth.router import auth_router
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +49,18 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan,
 )
+
+# 允许跨域请求 (CORS)，方便 React 前端调试
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# 挂载 Web3 钱包登录鉴权与密钥安全金库路由
+app.include_router(auth_router)
 
 # 挂载单例 BotManager 实例
 bot_manager = BotManager()

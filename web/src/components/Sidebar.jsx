@@ -5,8 +5,15 @@
  */
 
 import React, { useState } from 'react';
+import { Key, Wallet, ShieldCheck } from 'lucide-react';
 
-export default function Sidebar({ activeBotId, onSelectBot }) {
+export default function Sidebar({ 
+  activeBotId, 
+  onSelectBot,
+  walletState,
+  onOpenWalletModal,
+  onOpenKeyVaultModal
+}) {
   const bots = [
     {
       id: "bot_eth_debate_01",
@@ -129,16 +136,24 @@ export default function Sidebar({ activeBotId, onSelectBot }) {
         </div>
       </div>
 
-      {/* 分组 3: 底部用户资产与回撤水位槽 */}
-      <div className="p-3 bg-[#F2EDE4] border-t border-[#E6DFD5]">
-        <div className="flex items-center justify-between mb-1.5">
+      {/* 分组 3: 底部用户资产与回撤水位槽 + 钱包快捷入口 */}
+      <div className="p-3 bg-[#F2EDE4] border-t border-[#E6DFD5] space-y-2">
+        <div 
+          onClick={onOpenWalletModal}
+          className="flex items-center justify-between p-1.5 rounded-xl hover:bg-[#EAE4D9] cursor-pointer transition"
+          title="点击管理 Web3 钱包"
+        >
           <div className="flex items-center space-x-2">
             <div className="w-7 h-7 rounded-full bg-[#DE6438] text-white flex items-center justify-center font-bold text-xs shadow-xs">
-              纯
+              {walletState?.isConnected ? "⚡" : "纯"}
             </div>
             <div>
-              <div className="text-xs font-bold text-[#2E2823]">赵纯想 (Trader)</div>
-              <div className="text-[10px] text-[#7E7469]">量化实盘专业席位</div>
+              <div className="text-xs font-bold text-[#2E2823] flex items-center space-x-1">
+                <span>{walletState?.isConnected ? (walletState.shortAddress || "0x71C...49b2") : "赵纯想 (Trader)"}</span>
+              </div>
+              <div className="text-[10px] text-[#7E7469]">
+                {walletState?.isConnected ? `${walletState.network || 'Arbitrum'} 认证` : "量化实盘专业席位"}
+              </div>
             </div>
           </div>
           <div className="text-right">
@@ -147,13 +162,22 @@ export default function Sidebar({ activeBotId, onSelectBot }) {
           </div>
         </div>
 
-        <div className="w-full bg-[#E5DACB] h-1.5 rounded-full overflow-hidden mt-2">
+        <div className="w-full bg-[#E5DACB] h-1.5 rounded-full overflow-hidden">
           <div className="bg-[#4D835C] h-full rounded-full" style={{ width: '24%' }}></div>
         </div>
-        <div className="flex justify-between text-[10px] text-[#8C8276] mt-1 font-mono">
+        <div className="flex justify-between text-[10px] text-[#8C8276] font-mono">
           <span>当日回撤: 1.20%</span>
           <span>熔断线: 5.00%</span>
         </div>
+
+        {/* 快捷密钥管理入口 */}
+        <button
+          onClick={onOpenKeyVaultModal}
+          className="w-full py-1.5 px-2 rounded-lg bg-[#FAF7F2] hover:bg-white border border-[#DDD5C7] text-[11px] font-bold text-[#2E2823] flex items-center justify-center space-x-1.5 transition shadow-xs"
+        >
+          <Key className="w-3.5 h-3.5 text-[#DE6438]" />
+          <span>🔑 凭证金库 (Hyperliquid / AI)</span>
+        </button>
       </div>
 
     </aside>
