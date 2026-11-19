@@ -146,6 +146,8 @@ heimdall-trading/
 │   │   └── server.py              # Control plane endpoints
 │   ├── bifrost/                   # Bifrost Data Hub client
 │   │   └── client.py              # Read-only ingestion for zero-lookahead k-lines & guards
+│   ├── data/                      # Alternative data & multi-source intelligence ingestion
+│   │   └── sentiment_collector.py # Alternative.me Fear & Greed, news flash & derivatives
 │   ├── database/                  # Data persistence layer (SQLite / PostgreSQL)
 │   │   ├── db.py                  # Async connection pool & schema migration
 │   │   └── repository.py          # Bot, decision, trade, and NAV repositories
@@ -165,7 +167,7 @@ heimdall-trading/
 │   ├── cli.py                     # Command-line interface entrypoint
 │   └── config.py                  # Pydantic Settings configuration loader
 ├── migrations/                    # PostgreSQL 16 & TimescaleDB schema migrations
-├── tests/                         # Full automated test suite (21 unit tests, 100% passing)
+├── tests/                         # Full automated test suite (25 unit tests, 100% passing)
 ├── pyproject.toml                 # Packaging metadata & dependency specifications
 └── requirements.txt               # Pinned dependencies
 ```

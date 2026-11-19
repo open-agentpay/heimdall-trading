@@ -146,6 +146,8 @@ heimdall-trading/
 │   │   └── server.py              # FastAPI 控制台中台路由
 │   ├── bifrost/                   # Bifrost Data Hub 客户端
 │   │   └── client.py              # 零前视 K 线与跨所状态只读感知
+│   ├── data/                      # 替代数据与多源情绪情报采集器
+│   │   └── sentiment_collector.py # Alternative.me 恐慌指数、行业快讯与衍生品聚合
 │   ├── database/                  # 数据持久化存储层 (SQLite / PostgreSQL)
 │   │   ├── db.py                  # 连接池与自动建表迁移
 │   │   └── repository.py          # 机器人/决策/成交/净值 CRUD 仓储
@@ -165,7 +167,7 @@ heimdall-trading/
 │   ├── cli.py                     # 终端交互命令行入口
 │   └── config.py                  # Pydantic Settings 配置解析
 ├── migrations/                    # PostgreSQL 16 / TimescaleDB 建表脚本
-├── tests/                         # 单元测试集 (21 个测试用例，100% 通过)
+├── tests/                         # 单元测试集 (25 个测试用例，100% 通过)
 ├── pyproject.toml                 # 项目构建元数据与依赖定义
 └── requirements.txt               # 依赖列表
 ```
