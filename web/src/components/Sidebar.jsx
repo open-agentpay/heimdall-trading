@@ -46,7 +46,7 @@ export default function Sidebar({ activeBotId, onSelectBot }) {
   return (
     <aside className="w-64 bg-[#FAF7F2] border-r border-[#E6DFD5] flex flex-col shrink-0 select-none">
       
-      <!-- 分组 1: 机器人实例列表 -->
+      {/* 分组 1: 机器人实例列表 */}
       <div className="p-3 border-b border-[#EBE4DA]">
         <div className="flex items-center justify-between text-xs font-semibold text-[#8C8276] uppercase tracking-wider mb-2">
           <span>策略机器人 (Bots)</span>
@@ -89,7 +89,7 @@ export default function Sidebar({ activeBotId, onSelectBot }) {
         </div>
       </div>
 
-      <!-- 分组 2: 数据底座与信号感知源状态树 -->
+      {/* 分组 2: 数据底座与信号感知源状态树 */}
       <div className="flex-1 overflow-y-auto p-3">
         <div className="flex items-center justify-between text-xs font-semibold text-[#8C8276] uppercase tracking-wider mb-2">
           <span>底座信号源 (Data Hub)</span>
@@ -129,7 +129,7 @@ export default function Sidebar({ activeBotId, onSelectBot }) {
         </div>
       </div>
 
-      <!-- 分组 3: 底部用户资产与回撤水位槽 -->
+      {/* 分组 3: 底部用户资产与回撤水位槽 */}
       <div className="p-3 bg-[#F2EDE4] border-t border-[#E6DFD5]">
         <div className="flex items-center justify-between mb-1.5">
           <div className="flex items-center space-x-2">

@@ -43,10 +43,10 @@ export default function DecisionArena({ agents, onSelectAgent, onEmergencyKill, 
   return (
     <main className="flex-1 flex flex-col bg-[#F7F3EC] overflow-hidden relative">
       
-      <!-- 1. 舞台顶栏：视图切换药丸 (Arena vs Kline vs Split) & 操作按键 -->
+      {/* 1. 舞台顶栏：视图切换药丸 (Arena vs Kline vs Split) & 操作按键 */}
       <div className="h-11 px-5 flex items-center justify-between border-b border-[#EBE3D7] bg-[#FAF7F2]/90 backdrop-blur shrink-0">
         
-        <!-- 左侧：多模式视图切换胶囊 -->
+        {/* 左侧：多模式视图切换胶囊 */}
         <div className="flex items-center space-x-1 bg-[#EFE9DF] p-1 rounded-xl border border-[#DFD6C7]">
           <button
             onClick={() => setViewMode("arena")}
@@ -85,7 +85,7 @@ export default function DecisionArena({ agents, onSelectAgent, onEmergencyKill, 
           </button>
         </div>
 
-        <!-- 右侧：当前轮次指示与状态 -->
+        {/* 右侧：当前轮次指示与状态 */}
         <div className="flex items-center space-x-2.5">
           <span className="text-xs text-[#7E7469] font-mono">
             对抗激辩: <strong className="text-[#4D835C]">第 2 轮已收敛</strong>
@@ -97,7 +97,7 @@ export default function DecisionArena({ agents, onSelectAgent, onEmergencyKill, 
         </div>
       </div>
 
-      <!-- 2. 中间核心画布展现区 -->
+      {/* 2. 中间核心画布展现区 */}
       <div className="flex-1 p-5 overflow-auto flex items-center justify-center">
 
         {/* 模式 A：纯环形牌桌博弈 (Arena Mode) */}
@@ -315,12 +315,12 @@ export default function DecisionArena({ agents, onSelectAgent, onEmergencyKill, 
         {/* 模式 C：分屏协同对齐 (Split Mode) */}
         {viewMode === "split" && (
           <div className="w-full h-full max-w-6xl grid grid-cols-2 gap-4">
-            <!-- 左分屏：K 线图 -->
+            {/* 左分屏：K 线图 */}
             <div className="h-[460px]">
               <KlineChart symbol="ETH" interval="15m" />
             </div>
 
-            <!-- 右分屏：缩略对弈舞台与提案 -->
+            {/* 右分屏：缩略对弈舞台与提案 */}
             <div className="h-[460px] bg-white rounded-2xl border border-[#E6DFD5] p-4 flex flex-col justify-between shadow-xs">
               <div className="flex justify-between items-center border-b border-[#F0EAE1] pb-2">
                 <h4 className="font-bold text-xs text-[#2E2823] flex items-center space-x-1.5">
@@ -359,10 +359,10 @@ export default function DecisionArena({ agents, onSelectAgent, onEmergencyKill, 
 
       </div>
 
-      <!-- 3. 舞台底座操作手柄控制栏 (Bottom Controller) -->
+      {/* 3. 舞台底座操作手柄控制栏 (Bottom Controller) */}
       <footer className="h-16 px-6 bg-[#FAF7F2] border-t border-[#E6DFD5] flex items-center justify-between shrink-0">
         
-        <!-- 左侧：全局避险与暂停控制 -->
+        {/* 左侧：全局避险与暂停控制 */}
         <div className="flex items-center space-x-2">
           <button 
             onClick={onEmergencyKill}
@@ -377,7 +377,7 @@ export default function DecisionArena({ agents, onSelectAgent, onEmergencyKill, 
           </button>
         </div>
 
-        <!-- 中间：杠杆动态滑块调节 -->
+        {/* 中间：杠杆动态滑块调节 */}
         <div className="flex items-center space-x-3 bg-white px-3.5 py-1.5 rounded-xl border border-[#D8CEBE] shadow-xs">
           <span className="text-[11px] text-[#7E7469] font-medium">策略执行杠杆:</span>
           <input 
@@ -392,7 +392,7 @@ export default function DecisionArena({ agents, onSelectAgent, onEmergencyKill, 
           <span className="text-xs font-mono font-bold text-[#DE6438]">{leverage.toFixed(1)}x</span>
         </div>
 
-        <!-- 右侧：下发执行按钮 -->
+        {/* 右侧：下发执行按钮 */}
         <div className="flex items-center space-x-2">
           <button 
             onClick={handleExecute}

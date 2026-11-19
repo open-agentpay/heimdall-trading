@@ -24,7 +24,7 @@ export default function AgentModal({ agent, onClose }) {
         onClick={(e) => e.stopPropagation()}
       >
         
-        <!-- 弹窗顶栏：角色形象与关闭按键 -->
+        {/* 弹窗顶栏：角色形象与关闭按键 */}
         <div className="p-4 bg-white border-b border-[#EBE3D7] flex items-center justify-between">
           <div className="flex items-center space-x-3">
             <div 
@@ -55,15 +55,15 @@ export default function AgentModal({ agent, onClose }) {
           </button>
         </div>
 
-        <!-- 弹窗主体内容滚动区 -->
+        {/* 弹窗主体内容滚动区 */}
         <div className="p-5 overflow-y-auto max-h-[70vh] space-y-4 text-xs">
           
-          <!-- 1. 角色白话速懂介绍 -->
+          {/* 1. 角色白话速懂介绍 */}
           <div className="bg-[#FFFDFB] p-3 rounded-xl border border-[#E8DEC0] leading-relaxed text-[#5E554B]">
             {agent.roleDescription}
           </div>
 
-          <!-- 2. 决策结论与置信度量化仪表 -->
+          {/* 2. 决策结论与置信度量化仪表 */}
           <div className="bg-white p-3.5 rounded-xl border border-[#E6DFD5] space-y-2 shadow-xs">
             <div className="flex items-center justify-between">
               <span className="font-semibold text-[#8C8276] uppercase tracking-wide text-[11px]">
@@ -80,7 +80,7 @@ export default function AgentModal({ agent, onClose }) {
               </span>
             </div>
 
-            <!-- 置信度进度槽 -->
+            {/* 置信度进度槽 */}
             <div className="space-y-1 pt-1">
               <div className="flex justify-between text-[11px] text-[#7E7469] font-mono">
                 <span>模型确定性置信度 (Confidence Score):</span>
@@ -98,7 +98,7 @@ export default function AgentModal({ agent, onClose }) {
             </div>
           </div>
 
-          <!-- 3. 核心立论主张 (Key Thesis) -->
+          {/* 3. 核心立论主张 (Key Thesis) */}
           <div className="bg-white p-3.5 rounded-xl border border-[#E6DFD5] space-y-1.5 shadow-xs">
             <div className="font-bold text-xs text-[#2E2823] flex items-center space-x-1.5">
               <span>🎯</span>
@@ -109,7 +109,7 @@ export default function AgentModal({ agent, onClose }) {
             </p>
           </div>
 
-          <!-- 4. 量化指标与证据清单 (Supporting Evidence) -->
+          {/* 4. 量化指标与证据清单 (Supporting Evidence) */}
           <div className="bg-white p-3.5 rounded-xl border border-[#E6DFD5] space-y-2 shadow-xs">
             <div className="font-bold text-xs text-[#2E2823] flex items-center space-x-1.5">
               <span>🔍</span>
@@ -125,7 +125,7 @@ export default function AgentModal({ agent, onClose }) {
             </div>
           </div>
 
-          <!-- 5. 观点失效与止损条件 (Invalidation Stop Condition) -->
+          {/* 5. 观点失效与止损条件 (Invalidation Stop Condition) */}
           <div className="bg-[#FCF7F5] p-3 rounded-xl border border-[#F2D6CA] space-y-1">
             <div className="font-bold text-[11px] text-[#C24D4D] flex items-center space-x-1">
               <span>🛡️</span>
@@ -136,7 +136,7 @@ export default function AgentModal({ agent, onClose }) {
             </p>
           </div>
 
-          <!-- 6. 大语言模型完整思考独白 (Chain-of-Thought) -->
+          {/* 6. 大语言模型完整思考独白 (Chain-of-Thought) */}
           <div className="bg-[#241F1C] p-3 rounded-xl border border-[#3D352E] space-y-1 text-[#EAE2D8] font-mono text-[10px]">
             <div className="flex items-center justify-between text-[#8E8276] border-b border-[#3D352E] pb-1">
               <span>🧠 LLM Chain-of-Thought Stream</span>
@@ -149,7 +149,7 @@ export default function AgentModal({ agent, onClose }) {
 
         </div>
 
-        <!-- 弹窗底栏操作 -->
+        {/* 弹窗底栏操作 */}
         <div className="p-3 bg-white border-t border-[#EBE3D7] flex items-center justify-between">
           <span className="text-[10px] text-[#9E917F]">
             审计追踪 ID: <code className="bg-[#EFE9DF] px-1 rounded">cot_agent_{agent.id}_v1</code>

@@ -218,10 +218,10 @@ export default function KlineChart({ symbol = "ETH", interval = "15m" }) {
   return (
     <div className="w-full h-full flex flex-col bg-white rounded-2xl border border-[#E6DFD5] shadow-xs overflow-hidden">
       
-      <!-- 头部控制栏：标的信息、价格、涨跌幅、周期切换、WS 状态 -->
+      {/* 头部控制栏：标的信息、价格、涨跌幅、周期切换、WS 状态 */}
       <div className="h-11 px-4 border-b border-[#F0EAE1] flex items-center justify-between bg-[#FAF7F2]">
         
-        <!-- 左侧：标的与动态价格跳动 -->
+        {/* 左侧：标的与动态价格跳动 */}
         <div className="flex items-center space-x-3">
           <div className="flex items-center space-x-1.5 font-bold text-sm text-[#2E2823]">
             <span className="text-base">⚡</span>
@@ -251,7 +251,7 @@ export default function KlineChart({ symbol = "ETH", interval = "15m" }) {
           </div>
         </div>
 
-        <!-- 中间：K 线周期选择器 (Timeframe Pills) -->
+        {/* 中间：K 线周期选择器 (Timeframe Pills) */}
         <div className="flex items-center space-x-1 bg-[#EFE9DF] p-0.5 rounded-lg border border-[#DFD6C7]">
           {["1m", "5m", "15m", "1h", "4h", "1d"].map((tf) => (
             <button
@@ -268,7 +268,7 @@ export default function KlineChart({ symbol = "ETH", interval = "15m" }) {
           ))}
         </div>
 
-        <!-- 右侧：WebSocket 连接状态指示器 -->
+        {/* 右侧：WebSocket 连接状态指示器 */}
         <div className="flex items-center space-x-2 text-xs">
           <div className="flex items-center space-x-1.5 px-2 py-0.5 rounded-md bg-[#FAF4EB] border border-[#E5DACB]">
             <span
@@ -286,7 +286,7 @@ export default function KlineChart({ symbol = "ETH", interval = "15m" }) {
         </div>
       </div>
 
-      <!-- K 线画布主体 (HTML5 Canvas) -->
+      {/* K 线画布主体 (HTML5 Canvas) */}
       <div className="flex-1 w-full relative p-2 bg-[#FCFAF7]">
         <canvas
           ref={canvasRef}
@@ -295,7 +295,7 @@ export default function KlineChart({ symbol = "ETH", interval = "15m" }) {
           className="w-full h-full block cursor-crosshair"
         />
 
-        <!-- 图表左上角图例 -->
+        {/* 图表左上角图例 */}
         <div className="absolute top-3 left-4 flex space-x-3 text-[10px] font-mono text-[#7E7469] pointer-events-none">
           <span className="flex items-center space-x-1">
             <span className="w-2 h-0.5 bg-[#D48B38]"></span>
@@ -308,7 +308,7 @@ export default function KlineChart({ symbol = "ETH", interval = "15m" }) {
         </div>
       </div>
 
-      <!-- 底部辅助状态栏 -->
+      {/* 底部辅助状态栏 */}
       <div className="h-6 px-4 border-t border-[#F0EAE1] bg-[#FAF7F2] flex items-center justify-between text-[10px] text-[#9E917F] font-mono">
         <span>数据底座: Bifrost Hub (Zero-Lookahead Closed Klines)</span>
         <span>时区: UTC+0 · 实时撮合沙盒</span>

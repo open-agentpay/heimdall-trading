@@ -66,3 +66,8 @@ credentials.json
 # Logs
 *.log
 logs/
+
+# Frontend Node
+node_modules/
+web/node_modules/
+web/dist/

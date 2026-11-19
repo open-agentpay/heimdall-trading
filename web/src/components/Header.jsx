@@ -18,7 +18,7 @@ export default function Header({ activeTab, onTabChange }) {
   return (
     <header className="h-11 bg-[#FAF7F2] border-b border-[#E6DFD5] flex items-center justify-between px-4 shrink-0 select-none">
       
-      <!-- 左侧：macOS 视窗三色控制按钮 + 品牌标志 + 面包屑 -->
+      {/* 左侧：macOS 视窗三色控制按钮 + 品牌标志 + 面包屑 */}
       <div className="flex items-center space-x-3">
         <div className="flex space-x-1.5 mr-2">
           <div className="w-3 h-3 rounded-full bg-[#EC6A5E] border border-[#D04E43] cursor-pointer" title="关闭"></div>
@@ -37,7 +37,7 @@ export default function Header({ activeTab, onTabChange }) {
         </span>
       </div>
 
-      <!-- 中间：全局一级导航胶囊菜单 -->
+      {/* 中间：全局一级导航胶囊菜单 */}
       <nav className="flex items-center space-x-1 bg-[#EFE9DF] p-1 rounded-xl border border-[#DFD6C7]">
         {tabs.map((tab) => (
           <button
@@ -55,7 +55,7 @@ export default function Header({ activeTab, onTabChange }) {
         ))}
       </nav>
 
-      <!-- 右侧：全局环境与安全状态指示 -->
+      {/* 右侧：全局环境与安全状态指示 */}
       <div className="flex items-center space-x-3 text-xs">
         <div className="flex items-center space-x-1.5 bg-[#FAF4EB] border border-[#E5DACB] px-2.5 py-1 rounded-lg text-[#4D835C] font-mono">
           <span className="w-2 h-2 rounded-full bg-[#4D835C] animate-pulse"></span>

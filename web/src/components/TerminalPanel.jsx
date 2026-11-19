@@ -12,7 +12,7 @@ export default function TerminalPanel() {
   return (
     <aside className="w-80 bg-[#FAF7F2] border-l border-[#E6DFD5] flex flex-col shrink-0 select-none">
       
-      <!-- 顶栏标签切换 -->
+      {/* 顶栏标签切换 */}
       <div className="h-10 px-3 border-b border-[#EBE3D7] flex items-center justify-between">
         <div className="flex space-x-1">
           <button
@@ -40,7 +40,7 @@ export default function TerminalPanel() {
         <span className="text-[10px] text-[#8C8276] font-mono">速度: 420 tok/s</span>
       </div>
 
-      <!-- 思维链流式日志内容区 -->
+      {/* 思维链流式日志内容区 */}
       <div className="flex-1 overflow-y-auto p-3 space-y-2.5 text-xs font-mono">
         
         <div className="bg-white p-2.5 rounded-xl border border-[#E6DFD5] shadow-xs">
@@ -91,7 +91,7 @@ export default function TerminalPanel() {
 
       </div>
 
-      <!-- 底部控制台窗口 (Mini Console) -->
+      {/* 底部控制台窗口 (Mini Console) */}
       <div className="h-36 bg-[#231F1C] p-2.5 flex flex-col font-mono text-[11px] text-[#EFE8DE] border-t border-[#3A332C]">
         <div className="flex items-center justify-between pb-1 border-b border-[#3A332C] text-[10px] text-[#9E917F]">
           <span>💻 PaperEngine Execution Daemon</span>

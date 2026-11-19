@@ -44,7 +44,7 @@ export default function App() {
   return (
     <div className="h-screen w-screen flex flex-col bg-[#F6F2EB] text-[#2E2823] overflow-hidden">
       
-      <!-- 1. 顶部视窗导航栏 -->
+      {/* 1. 顶部视窗导航栏 */}
       <Header 
         activeTab={activeTab} 
         onTabChange={(tab) => {
@@ -53,10 +53,10 @@ export default function App() {
         }} 
       />
 
-      <!-- 2. 主体三栏工作区 -->
+      {/* 2. 主体三栏工作区 */}
       <div className="flex-1 flex overflow-hidden">
         
-        <!-- 左侧栏：机器人选择与信号源树 -->
+        {/* 左侧栏：机器人选择与信号源树 */}
         <Sidebar 
           activeBotId={activeBotId} 
           onSelectBot={(id) => {
@@ -65,7 +65,7 @@ export default function App() {
           }} 
         />
 
-        <!-- 中间：多智能体环形对弈台 (包含 K 线图模式与各个 Agent 角色) -->
+        {/* 中间：多智能体环形对弈台 (包含 K 线图模式与各个 Agent 角色) */}
         <DecisionArena 
           agents={agents}
           onSelectAgent={(agent) => setSelectedAgent(agent)}
@@ -73,12 +73,12 @@ export default function App() {
           onExecuteTrade={handleExecuteTrade}
         />
 
-        <!-- 右侧栏：大模型思维链日志与执行控制台 -->
+        {/* 右侧栏：大模型思维链日志与执行控制台 */}
         <TerminalPanel />
 
       </div>
 
-      <!-- 3. 点击任意 Agent 弹出的深度决策原因解析抽屉 -->
+      {/* 3. 点击任意 Agent 弹出的深度决策原因解析抽屉 */}
       {selectedAgent && (
         <AgentModal 
           agent={selectedAgent} 
@@ -86,7 +86,7 @@ export default function App() {
         />
       )}
 
-      <!-- 4. 全局浮动操作反馈 Toast -->
+      {/* 4. 全局浮动操作反馈 Toast */}
       {notification && (
         <div 
           className={`fixed bottom-6 right-6 z-50 px-4 py-2.5 rounded-xl shadow-lg border text-xs font-semibold flex items-center space-x-2 animate-bounce ${
