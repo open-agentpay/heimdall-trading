@@ -1,0 +1,60 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "heimdall-trading"
+version = "0.1.0"
+description = "Production-Grade Multi-Agent AI Quant Trading & Asset Management Platform"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [
+    { name = "OpenAgentPay Team", email = "dev@openagentpay.dev" }
+]
+keywords = [
+    "quantitative-trading",
+    "ai-agent",
+    "langgraph",
+    "crypto-derivatives",
+    "hyperliquid",
+    "bifrost",
+    "risk-management",
+    "nav-accounting"
+]
+dependencies = [
+    "pydantic>=2.6.0",
+    "pydantic-settings>=2.2.0",
+    "langgraph>=0.2.0",
+    "langchain-core>=0.3.0",
+    "litellm>=1.35.0",
+    "fastapi>=0.110.0",
+    "uvicorn>=0.28.0",
+    "httpx>=0.27.0",
+    "asyncpg>=0.29.0",
+    "sqlalchemy[asyncio]>=2.0.28",
+    "numpy>=1.26.0",
+    "pandas>=2.2.0",
+    "pyyaml>=6.0.1",
+    "hyperliquid-python-sdk>=0.6.0",
+    "websockets>=12.0",
+    "rich>=13.7.0",
+    "typer>=0.12.0",
+    "cryptography>=42.0.0"
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "black>=24.2.0",
+    "ruff>=0.3.0",
+    "mypy>=1.9.0"
+]
+
+[project.scripts]
+heimdall = "heimdall.cli:app"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"

@@ -1,0 +1,39 @@
+app:
+  name: "Heimdall Trading Platform"
+  env: "development"
+  debug: true
+
+server:
+  host: "0.0.0.0"
+  port: 8080
+
+bifrost:
+  base_url: "http://localhost:8080/v1"
+  api_key: "agentpay_live_secret"
+  timeout_seconds: 5.0
+
+database:
+  url: "postgresql+asyncpg://postgres:postgres@localhost:5432/heimdall"
+  pool_size: 10
+  max_overflow: 20
+
+risk:
+  global_max_leverage: 3.0
+  max_position_size_pct: 0.15 # Max 15% capital in single position
+  daily_drawdown_limit_pct: 0.05 # 5% daily circuit breaker
+  max_slippage_pct: 0.003 # 0.3% max slippage
+
+exchanges:
+  hyperliquid:
+    testnet: true
+    wallet_address: ""
+    private_key: ""
+  binance:
+    testnet: true
+    api_key: ""
+    api_secret: ""
+
+llm:
+  default_model: "claude-3-5-sonnet-20241022"
+  temperature: 0.2
+  fast_model: "gpt-4o-mini"
