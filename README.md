@@ -60,11 +60,12 @@ flowchart TD
 
     subgraph Swarm["[Cognitive Swarm] Multi-Agent Pipeline"]
         direction TB
-        A1["1. Macro & Technical Analyst Agent"]
-        A2["2. Bull vs. Bear Debate Team"]
-        A3["3. Quantitative Strategy Agent"]
-        A4["4. Soft Logic Risk Officer Agent"]
-        A1 --> A2 --> A3 --> A4
+        A1["1. Technical Analyst Agent"]
+        A5["2. Sentiment & Whale Flow Analyst"]
+        A2["3. Bull vs. Bear Debate Team"]
+        A3["4. Quantitative Strategy Agent"]
+        A4["5. Soft Logic Risk Officer Agent"]
+        A1 --> A5 --> A2 --> A3 --> A4
     end
 
     subgraph Guard["[Deterministic Guard] HardRiskGuard (Veto Power)"]
@@ -76,16 +77,18 @@ flowchart TD
         G5["Slippage Tolerance Protection"]
     end
 
-    subgraph Exec["[Execution & Ledger] Execution & NAV"]
+    subgraph Exec["[Execution, Ledger & Alerts] Execution, NAV & Alert"]
         E1["High-Fidelity Paper Trading Sandbox"]
         E2["Hyperliquid DEX Perpetual Adapter"]
         E3["Net Asset Value (NAV) Ledger Engine"]
+        E4["Multi-Channel Alert Gateway (Telegram/Feishu/Discord)"]
     end
 
     Data --> Swarm
     Data -.->|Basis Spread Metric| Guard
     Swarm -->|Standardized TradeProposal JSON| Guard
     Guard -->|Unanimous Approval| Exec
+    Exec -->|Breaker/Fill/Anomaly| E4
 ```
 
 ---
@@ -95,12 +98,14 @@ flowchart TD
 | Agent Role | File Location | Specialization & Output |
 | :--- | :--- | :--- |
 | **Analyst Agent** | `heimdall/agents/analyst.py` | Computes EMA20/50, RSI14, ATR, and price channels to produce the *Market State Brief*. |
+| **Sentiment & Whale** | `heimdall/agents/sentiment.py` | Tracks Fear & Greed index, exchange net inflow/outflow, and funding crowding to produce *Sentiment Brief*. |
 | **Bull Researcher** | `heimdall/agents/debate.py` | Identifies catalysts, upside momentum, and invalidation stop levels with confidence scoring. |
 | **Bear Researcher** | `heimdall/agents/debate.py` | Flags bull traps, resistance rejection, and funding rate drag with downside confidence scoring. |
 | **Debate Moderator** | `heimdall/agents/debate.py` | Weighs asymmetric risk-reward, filters confirmation bias, and issues directional consensus (`LONG`, `SHORT`, or `NEUTRAL`). |
 | **Strategy Agent** | `heimdall/agents/strategy.py` | Formulates entry price, strict stop loss, and target take-profit (minimum 1.6:1 risk-reward ratio). |
 | **Risk Officer** | `heimdall/agents/risk_officer.py`| Soft-tier pre-check: validates mathematical consistency, directional integrity, and market regime alignment. |
 | **Hard Risk Guard** | `heimdall/risk/guard.py` | Hard-tier deterministic check: enforces drawdown circuit breaker, leverage ceiling, and Bifrost data integrity. |
+| **Alert Gateway** | `heimdall/alert/notifier.py` | 24/7 Multi-channel notifications: Telegram, Feishu (Lark), and Discord alerts for fills and circuit breakers. |
 
 ---
 
@@ -132,18 +137,27 @@ heimdall-trading/
 │   │   ├── debate.py              # Bull vs. Bear adversarial debate engine
 │   │   ├── graph.py               # Pipeline orchestrator
 │   │   ├── risk_officer.py        # Logic risk officer (soft pre-check)
+│   │   ├── sentiment.py           # Sentiment & on-chain whale flow analyst
 │   │   ├── state.py               # Shared decision context state definitions
 │   │   └── strategy.py            # Quantitative proposal generation
+│   ├── alert/                     # Real-time alert gateway
+│   │   └── notifier.py            # Telegram, Feishu (Lark), Discord push notifications
 │   ├── api/                       # REST API backend (FastAPI)
 │   │   └── server.py              # Control plane endpoints
 │   ├── bifrost/                   # Bifrost Data Hub client
 │   │   └── client.py              # Read-only ingestion for zero-lookahead k-lines & guards
+│   ├── database/                  # Data persistence layer (SQLite / PostgreSQL)
+│   │   ├── db.py                  # Async connection pool & schema migration
+│   │   └── repository.py          # Bot, decision, trade, and NAV repositories
 │   ├── engine/                    # Orchestration core
-│   │   └── bot_manager.py         # Bot instance lifecycle management
+│   │   ├── bot_manager.py         # Bot instance lifecycle management
+│   │   └── scheduler.py           # 24/7 background daemon loop & watchdog
 │   ├── execution/                 # Exchange execution adapters
 │   │   ├── base.py                # Abstract execution contract
 │   │   ├── hyperliquid.py         # Hyperliquid L1 DEX perpetuals adapter
 │   │   └── paper.py               # In-memory realistic paper trading sandbox
+│   ├── llm/                       # Unified LLM service
+│   │   └── client.py              # Structured output inference & fallback
 │   ├── models/                    # Pydantic schema specifications
 │   │   └── schemas.py             # Standardized TradeProposal and RiskReviewResult
 │   ├── risk/                      # Deterministic code-level hard guard
@@ -151,7 +165,7 @@ heimdall-trading/
 │   ├── cli.py                     # Command-line interface entrypoint
 │   └── config.py                  # Pydantic Settings configuration loader
 ├── migrations/                    # PostgreSQL 16 & TimescaleDB schema migrations
-├── tests/                         # Full automated test suite (11 unit tests)
+├── tests/                         # Full automated test suite (21 unit tests, 100% passing)
 ├── pyproject.toml                 # Packaging metadata & dependency specifications
 └── requirements.txt               # Pinned dependencies
 ```

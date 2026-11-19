@@ -20,6 +20,7 @@ from heimdall.accounting.nav import NAVEngine, EquitySnapshot
 from heimdall.execution.base import BaseExecutionAdapter, TradeExecutionResult
 from heimdall.execution.paper import PaperExecutionAdapter
 from heimdall.llm.client import LLMService
+from heimdall.alert.notifier import alert_gateway
 
 logger = logging.getLogger(__name__)
 
@@ -110,6 +111,13 @@ class TradingBotInstance:
             klines = await self.bifrost.get_klines(self.symbol, interval="15m", limit=60)
             funding = await self.bifrost.get_funding_rate(self.symbol)
             guard_status = await self.bifrost.check_cross_exchange_guard(self.symbol)
+            # 若跨所价差出现高危偏离 (DEGRADED 或 ISOLATED)，主动推送行情异动告警
+            if guard_status and guard_status.get("status") in ("DEGRADED", "ISOLATED"):
+                await alert_gateway.notify_bifrost_anomaly(
+                    symbol=self.symbol,
+                    guard_status=guard_status.get("status", "DEGRADED"),
+                    spread_pct=guard_status.get("spread_pct", 0.0),
+                )
         except Exception as exc:
             logger.error("[Bot %s] 获取 Bifrost 底座数据异常: %s", self.bot_id, exc)
             return {"error": f"Bifrost data fetch error: {exc}"}
@@ -144,14 +152,21 @@ class TradingBotInstance:
         # 5. 检查是否触发单日最大回撤熔断 (Circuit Breaker)
         if current_dd >= self.max_drawdown_limit:
             self.status = AgentStatus.CIRCUIT_BROKEN
+            reason = f"当日回撤 {current_dd:.2%} 达到或超过预设熔断上限 {self.max_drawdown_limit:.2%}"
             logger.critical(
-                "[Bot %s 紧急熔断] 当日回撤达到 %.2f%%，超过阈值 %.2f%%！立即终止新开仓权限！",
+                "[Bot %s 紧急熔断] %s！立即终止新开仓权限！",
                 self.bot_id,
-                current_dd * 100.0,
-                self.max_drawdown_limit * 100.0,
+                reason,
             )
             # 紧急撤销所有未完成委托
             await self.executor.cancel_all_orders(self.symbol)
+            # 毫秒级多渠道告警推送 (Telegram/飞书/Discord)
+            await alert_gateway.notify_circuit_breaker(
+                bot_id=self.bot_id,
+                drawdown_pct=current_dd,
+                limit_pct=self.max_drawdown_limit,
+                reason=reason,
+            )
             return {
                 "bot_id": self.bot_id,
                 "status": self.status,
@@ -181,6 +196,12 @@ class TradingBotInstance:
             logger.info("[Bot %s] 提案通过风控审核，提交执行适配器下单...", self.bot_id)
             execution_report = await self.executor.execute_proposal(proposal)
             self.executed_trades.append(execution_report)
+            # 自动推送成交流水通知
+            await alert_gateway.notify_trade_filled(
+                bot_id=self.bot_id,
+                trade=execution_report,
+                latest_nav=snapshot.nav,
+            )
 
         # 8. 归档本轮思维链审计记录
         decision_record = {

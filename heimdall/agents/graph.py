@@ -20,6 +20,7 @@ import logging
 from typing import Dict, Any, Optional
 from heimdall.agents.state import MultiAgentState
 from heimdall.agents.analyst import AnalystAgent
+from heimdall.agents.sentiment import SentimentWhaleAnalyst
 from heimdall.agents.debate import BullResearcher, BearResearcher, DebateModerator
 from heimdall.agents.strategy import StrategyAgent
 from heimdall.agents.risk_officer import RiskOfficerAgent
@@ -52,6 +53,7 @@ class MultiAgentPipeline:
         """
         self.llm = llm_service or LLMService()
         self.analyst = AnalystAgent(llm_service=self.llm)
+        self.sentiment_analyst = SentimentWhaleAnalyst(llm_service=self.llm)
         self.bull_researcher = BullResearcher(llm_service=self.llm)
         self.bear_researcher = BearResearcher(llm_service=self.llm)
         self.moderator = DebateModerator(llm_service=self.llm)
@@ -76,6 +78,20 @@ class MultiAgentPipeline:
         state.thinking_logs.append(f"[Analyst]: 状态定性为 {brief.get('regime')} | {brief.get('summary')}")
 
         # -------------------------------------------------------------
+        # 步骤 1b: SentimentWhaleAnalyst 进行情绪与链上巨鲸异动感知
+        # -------------------------------------------------------------
+        funding_rate = float(state.raw_funding.get("funding_rate", 0.0))
+        annualized_funding = float(state.raw_funding.get("annualized_rate", funding_rate * 3 * 365))
+        sentiment_report = await self.sentiment_analyst.analyze(
+            symbol=state.symbol,
+            funding_rate_annualized=annualized_funding,
+        )
+        state.sentiment_report = sentiment_report
+        state.thinking_logs.append(
+            f"[Sentiment/Whale]: 得分={sentiment_report.get('sentiment_score')} | 巨鲸={sentiment_report.get('whale_activity')} | {sentiment_report.get('summary')}"
+        )
+
+        # -------------------------------------------------------------
         # 步骤 2: 多空辩论团展开对抗激辩 (Bull vs Bear Debate Team)
         # 支持多轮对抗反驳机制 (Multi-Round Adversarial Rebuttal)
         # -------------------------------------------------------------
@@ -87,17 +103,19 @@ class MultiAgentPipeline:
             opponent_bear = bear_view.get("key_thesis") if round_idx > 1 else None
             opponent_bull = bull_view.get("key_thesis") if round_idx > 1 else None
 
-            # 多头立论（若为第 2 轮则直接反驳上一轮空头的观点）
+            # 多头立论（结合技术面 + 情绪链上面，反驳空头）
             bull_view = await self.bull_researcher.argue_long(
                 analyst_brief=brief,
                 opponent_point=opponent_bear,
                 lessons_learned=state.lessons_learned,
+                sentiment_report=sentiment_report,
             )
-            # 空头立论（若为第 2 轮则直接反驳多头的论点）
+            # 空头立论（结合技术面 + 情绪链上面，反驳多头）
             bear_view = await self.bear_researcher.argue_short(
                 analyst_brief=brief,
                 opponent_point=opponent_bull,
                 lessons_learned=state.lessons_learned,
+                sentiment_report=sentiment_report,
             )
 
             state.thinking_logs.append(

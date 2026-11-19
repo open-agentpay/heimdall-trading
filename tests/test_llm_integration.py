@@ -12,6 +12,7 @@ import pytest
 from unittest.mock import AsyncMock, patch
 from heimdall.llm.client import LLMService
 from heimdall.agents.analyst import AnalystAgent, AnalystLLMOutput
+from heimdall.agents.sentiment import SentimentWhaleOutput
 from heimdall.agents.debate import (
     BullResearcher,
     BearResearcher,
@@ -118,6 +119,12 @@ def test_pipeline_with_mocked_llm_full_flow():
         mock_analyst = AnalystLLMOutput(
             regime="TREND_UP", support=3000.0, resistance=3250.0, summary="多头强势"
         )
+        mock_sentiment = SentimentWhaleOutput(
+            sentiment_score=0.6,
+            whale_activity="ACCUMULATION",
+            crowding_risk="BALANCED",
+            summary="巨鲸大额提币，链上抛压极轻，情绪温和偏多",
+        )
         mock_bull = BullDebateLLMOutput(
             confidence=0.85, key_thesis="动量强劲", target_price=3240.0, invalidation_price=3060.0
         )
@@ -129,7 +136,7 @@ def test_pipeline_with_mocked_llm_full_flow():
         )
 
         mock_llm.generate_structured = AsyncMock(
-            side_effect=[mock_analyst, mock_bull, mock_bear, mock_mod]
+            side_effect=[mock_analyst, mock_sentiment, mock_bull, mock_bear, mock_mod]
         )
 
         pipeline = MultiAgentPipeline(

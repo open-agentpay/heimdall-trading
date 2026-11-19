@@ -65,7 +65,7 @@ class BifrostClient:
             params["as_of_ts"] = as_of_ts
 
         try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
+            async with httpx.AsyncClient(timeout=self.timeout, trust_env=False) as client:
                 resp = await client.get(
                     f"{self.base_url}/klines", params=params, headers=self.headers
                 )
@@ -87,7 +87,7 @@ class BifrostClient:
         """
         params = {"symbol": symbol}
         try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
+            async with httpx.AsyncClient(timeout=self.timeout, trust_env=False) as client:
                 resp = await client.get(
                     f"{self.base_url}/funding", params=params, headers=self.headers
                 )
@@ -112,7 +112,7 @@ class BifrostClient:
         """
         params = {"symbol": symbol}
         try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
+            async with httpx.AsyncClient(timeout=self.timeout, trust_env=False) as client:
                 resp = await client.get(
                     f"{self.base_url}/guard/status", params=params, headers=self.headers
                 )

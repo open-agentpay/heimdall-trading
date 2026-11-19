@@ -106,6 +106,7 @@ class BullResearcher:
         analyst_brief: Dict[str, Any],
         opponent_point: Optional[str] = None,
         lessons_learned: Optional[str] = None,
+        sentiment_report: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
         发起做多辩护或反驳空头观点
@@ -113,6 +114,7 @@ class BullResearcher:
         :param analyst_brief: 宏观分析师整理的市场背景（K线均线、资金费率、跨所基差）
         :param opponent_point: 上一轮辩论中空头研究员提出的刁钻质问（用于多轮对抗反驳）
         :param lessons_learned: 历史类似行情的交易复盘教训（防范在同一个坑摔倒两次）
+        :param sentiment_report: 情绪与链上巨鲸异动研报（巨鲸吸筹/砸盘、持仓挤压度）
         :return: 包含做多立论、目标点位与失效止损价的字典
         """
         regime = analyst_brief.get("regime", "RANGE")
@@ -129,10 +131,11 @@ class BullResearcher:
             system_prompt = (
                 "You are the Senior Bullish Quant Researcher at Heimdall Capital. "
                 "Your role is to build a high-conviction, evidence-based argument for taking a LONG position. "
-                "Directly refute any bear concerns with data and structural logic."
+                "Synthesize technical indicators and on-chain whale sentiment, and directly refute any bear concerns."
             )
             rebuttal_context = f"\n[Opponent Bear Argument]: {opponent_point}\n" if opponent_point else ""
             lessons_context = f"\n[Historical Lessons]: {lessons_learned}\n" if lessons_learned else ""
+            sentiment_context = f"\n[Sentiment & On-Chain Whale Report]: {sentiment_report.get('summary')}\n" if sentiment_report else ""
 
             user_prompt = (
                 f"Asset: {analyst_brief.get('symbol', 'ETH')}, Price: ${latest_price:,.2f}\n"
@@ -140,7 +143,7 @@ class BullResearcher:
                 f"Key Technicals: Support=${support:,.2f}, Resistance=${resistance:,.2f}, RSI={rsi:.1f}, "
                 f"EMA20=${indicators.get('ema20')}, EMA50=${indicators.get('ema50')}\n"
                 f"Annualized Funding Rate: {indicators.get('annualized_funding', 0):.2%}\n"
-                f"{rebuttal_context}{lessons_context}\n"
+                f"{sentiment_context}{rebuttal_context}{lessons_context}\n"
                 "Provide your bullish thesis, confidence score (0.0 to 1.0), upside target, and invalidation stop."
             )
 
@@ -161,10 +164,19 @@ class BullResearcher:
 
         # ---------------------------------------------------------------------
         # 模式 2：确定性量化算法规则兜底 (Local Quant Rule Fallback)
-        # 当未配置 API Key 或网络离线时，确保系统依然拥有秒级准确反应
         # ---------------------------------------------------------------------
         thesis = []
         confidence = 0.5  # 基础基准分
+
+        # 链上与情绪面支持
+        if sentiment_report:
+            whale_act = sentiment_report.get("whale_activity")
+            if whale_act == "ACCUMULATION":
+                thesis.append("链上巨鲸大额提现锁仓，现货抛压被有效出清吸收")
+                confidence += 0.10
+            elif sentiment_report.get("crowding_risk") == "HIGH_SHORT_CROWDING":
+                thesis.append("空头极端拥挤，具备巨大轧空爆发潜力")
+                confidence += 0.10
 
         # 【小白知识点】：TREND_UP 叫单边多头上升趋势，均线多头排列（短期均线在上，长期均线在下），做多胜率高
         if regime == "TREND_UP":
@@ -216,9 +228,16 @@ class BearResearcher:
         analyst_brief: Dict[str, Any],
         opponent_point: Optional[str] = None,
         lessons_learned: Optional[str] = None,
+        sentiment_report: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
         发起做空/防守指控，反驳多头乐观情绪
+
+        :param analyst_brief: 宏观分析师整理的市场背景（K线均线、资金费率、跨所基差）
+        :param opponent_point: 上一轮辩论中多头研究员的立论（用于针锋相对反驳）
+        :param lessons_learned: 历史类似行情的交易复盘教训
+        :param sentiment_report: 情绪与链上巨鲸异动研报
+        :return: 包含做空/防守立论、目标点位与失效止损价的字典
         """
         regime = analyst_brief.get("regime", "RANGE")
         latest_price = analyst_brief.get("latest_price", 0.0)
@@ -239,14 +258,15 @@ class BearResearcher:
             )
             rebuttal_context = f"\n[Opponent Bull Argument]: {opponent_point}\n" if opponent_point else ""
             lessons_context = f"\n[Historical Lessons]: {lessons_learned}\n" if lessons_learned else ""
+            sentiment_context = f"\n[Sentiment & On-Chain Whale Report]: {sentiment_report.get('summary')}\n" if sentiment_report else ""
 
             user_prompt = (
                 f"Asset: {analyst_brief.get('symbol', 'ETH')}, Price: ${latest_price:,.2f}\n"
                 f"Market Regime: {regime}\n"
                 f"Key Technicals: Support=${support:,.2f}, Resistance=${resistance:,.2f}, RSI={rsi:.1f}, "
                 f"EMA20=${indicators.get('ema20')}, EMA50=${indicators.get('ema50')}\n"
-                f"Annualized Funding: {funding:.2%}\n"
-                f"{rebuttal_context}{lessons_context}\n"
+                f"Annualized Funding Rate: {funding:.2%}\n"
+                f"{sentiment_context}{rebuttal_context}{lessons_context}\n"
                 "Provide your bearish thesis, confidence score (0.0 to 1.0), downside target, and invalidation stop."
             )
 
@@ -270,6 +290,16 @@ class BearResearcher:
         # ---------------------------------------------------------------------
         thesis = []
         confidence = 0.5
+
+        # 链上与情绪面做空警示
+        if sentiment_report:
+            whale_act = sentiment_report.get("whale_activity")
+            if whale_act == "DISTRIBUTION":
+                thesis.append("链上巨鲸向中心化交易所大额充值代币，筹码呈出货砸盘形态")
+                confidence += 0.15
+            elif sentiment_report.get("crowding_risk") == "HIGH_LONG_CROWDING":
+                thesis.append("做多杠杆过度狂热拥挤，面临多头踩踏清算风险")
+                confidence += 0.10
 
         if regime == "TREND_DOWN":
             thesis.append("当前处于空头排列趋势 (TREND_DOWN)，反弹均是逢高沽空机会")

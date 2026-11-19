@@ -51,8 +51,10 @@ class MultiAgentState(BaseModel):
     # -------------------------------------------------------------------------
     # 3. 各专业 Agent 的研判与博弈产出
     # -------------------------------------------------------------------------
-    # Analyst Agent（宏观与异动分析师）生成的环境研报
+    # Analyst Agent（宏观与技术分析师）生成的环境研报
     analyst_brief: Optional[Dict[str, Any]] = None
+    # SentimentWhaleAnalyst（情绪与链上巨鲸分析师）生成的资金流研报
+    sentiment_report: Optional[Dict[str, Any]] = None
     # Bull Researcher（多头研究员）的看多立论与潜在收益支撑
     bull_thesis: Optional[Dict[str, Any]] = None
     # Bear Researcher（空头研究员）的看空找茬、反转陷阱与下行风险

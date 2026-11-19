@@ -60,11 +60,12 @@ flowchart TD
 
     subgraph Swarm["【多智能体协同大脑】Multi-Agent Pipeline"]
         direction TB
-        A1["1. 宏观与异动分析师 (Analyst Agent)"]
-        A2["2. 多空对抗辩论团 (Bull vs Bear Debate Team)"]
-        A3["3. 策略量化生成 (Strategy Agent)"]
-        A4["4. 逻辑风控官 (Risk Officer Agent)"]
-        A1 --> A2 --> A3 --> A4
+        A1["1. 宏观技术分析师 (Analyst Agent)"]
+        A5["2. 情绪与链上巨鲸分析师 (Sentiment & Whale Flow)"]
+        A2["3. 多空对抗辩论团 (Bull vs Bear Debate Team)"]
+        A3["4. 策略量化生成 (Strategy Agent)"]
+        A4["5. 逻辑风控官 (Risk Officer Agent)"]
+        A1 --> A5 --> A2 --> A3 --> A4
     end
 
     subgraph Guard["【代码层确定性硬守卫】HardRiskGuard (一票否决)"]
@@ -76,16 +77,18 @@ flowchart TD
         G5["极端盘口滑点保护 (Slippage Tolerance)"]
     end
 
-    subgraph Exec["【执行与核算】Execution & NAV"]
+    subgraph Exec["【执行、核算与推送】Execution, NAV & Alert"]
         E1["沙盒模拟盘 (Paper Trading Engine)"]
         E2["Hyperliquid DEX 永续合约执行驱动"]
         E3["单位净值法核算引擎 (NAV Engine)"]
+        E4["多渠道实时告警网关 (Telegram/飞书/Discord)"]
     end
 
     Data --> Swarm
     Data -.->|跨所偏离度| Guard
     Swarm -->|标准化交易提案 Proposal| Guard
     Guard -->|全票合规通过| Exec
+    Exec -->|熔断/成交/异动| E4
 ```
 
 ---
@@ -94,13 +97,15 @@ flowchart TD
 
 | 智能体角色 | 代码实现 | 专精领域与产出 |
 | :--- | :--- | :--- |
-| **Analyst Agent** | `heimdall/agents/analyst.py` | 提取 EMA20/50, RSI14, ATR, 通道极值，产出《市场状态简报》|
-| **Bull Researcher** | `heimdall/agents/debate.py` | 寻找做多催化剂与上行支撑，计算做多置信度与失效价格 |
+| **Analyst Agent** | `heimdall/agents/analyst.py` | 提取 EMA20/50, RSI14, ATR, 通道极值，产出《技术面状态简报》|
+| **Sentiment & Whale** | `heimdall/agents/sentiment.py` | 抓取恐慌贪婪指数、交易所大额净充提、多空持仓挤压度，产出《情绪与资金面研报》|
+| **Bull Researcher** | `heimdall/agents/debate.py` | 结合技术与情绪面寻找催化剂与支撑，计算做多置信度与失效价格 |
 | **Bear Researcher** | `heimdall/agents/debate.py` | 识别诱多陷阱、阻力位抛压与资金费损耗，计算做空置信度 |
 | **Debate Moderator** | `heimdall/agents/debate.py` | 消除确认偏差，综合评判胜率赔率，裁决最终方向 (LONG / SHORT / NEUTRAL) |
 | **Strategy Agent** | `heimdall/agents/strategy.py` | 基于凯利公式动态调节仓位，生成包含进场价、硬止损、止盈的提案 |
 | **Risk Officer** | `heimdall/agents/risk_officer.py`| 软风控第一道防线：校验盈亏比 $\ge 1.6:1$、点位逻辑自洽性 |
 | **Hard Risk Guard** | `heimdall/risk/guard.py` | 纯代码第二道防线：日内回撤熔断、杠杆上限、Bifrost偏离守卫 |
+| **Alert Gateway** | `heimdall/alert/notifier.py` | 全天候多渠道通知：支持 Telegram、飞书、Discord 熔断与成交实时推送 |
 
 ---
 
@@ -132,18 +137,27 @@ heimdall-trading/
 │   │   ├── debate.py              # Tauric/MIT 风格多空对抗辩论团
 │   │   ├── graph.py               # 多智能体状态流水线编排器
 │   │   ├── risk_officer.py        # 逻辑风控官
+│   │   ├── sentiment.py           # 情绪与链上巨鲸异动分析师
 │   │   ├── state.py               # 决策上下文状态流定义
 │   │   └── strategy.py            # 策略生成与头寸管理
+│   ├── alert/                     # 全天候告警网关
+│   │   └── notifier.py            # Telegram, 飞书, Discord 毫秒级推送
 │   ├── api/                       # Web REST API 服务端
 │   │   └── server.py              # FastAPI 控制台中台路由
 │   ├── bifrost/                   # Bifrost Data Hub 客户端
 │   │   └── client.py              # 零前视 K 线与跨所状态只读感知
+│   ├── database/                  # 数据持久化存储层 (SQLite / PostgreSQL)
+│   │   ├── db.py                  # 连接池与自动建表迁移
+│   │   └── repository.py          # 机器人/决策/成交/净值 CRUD 仓储
 │   ├── engine/                    # 调度中台
-│   │   └── bot_manager.py         # 交易机器人实例与生命周期调度
+│   │   ├── bot_manager.py         # 交易机器人实例与生命周期调度
+│   │   └── scheduler.py           # 24/7 守护进程调度器与容错看门狗
 │   ├── execution/                 # 交易所执行适配驱动
 │   │   ├── base.py                # 执行器标准接口抽象
 │   │   ├── hyperliquid.py         # Hyperliquid DEX 永续合约适配器
 │   │   └── paper.py               # 高精度沙盒模拟撮合引擎
+│   ├── llm/                       # 大语言模型统一服务
+│   │   └── client.py              # 结构化输出推理与确定性本地降级兜底
 │   ├── models/                    # Pydantic 契约模型与枚举
 │   │   └── schemas.py             # 交易提案与风控结果 Schema
 │   ├── risk/                      # 确定性硬风控模块
@@ -151,7 +165,7 @@ heimdall-trading/
 │   ├── cli.py                     # 终端交互命令行入口
 │   └── config.py                  # Pydantic Settings 配置解析
 ├── migrations/                    # PostgreSQL 16 / TimescaleDB 建表脚本
-├── tests/                         # 单元测试集 (11 个测试用例)
+├── tests/                         # 单元测试集 (21 个测试用例，100% 通过)
 ├── pyproject.toml                 # 项目构建元数据与依赖定义
 └── requirements.txt               # 依赖列表
 ```
