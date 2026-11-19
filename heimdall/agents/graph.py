@@ -1,19 +1,19 @@
 """
+================================================================================
 Heimdall 交易平台 - 多智能体协同状态图编排模块 (Multi-Agent StateGraph)
-编排完整的智能体决策流转工作流：
-【Analyst Node】
-       │
-       ▼
-【Debate Node】(Bull vs Bear 并发对抗激辩 -> Moderator 综合裁定)
-       │
-       ▼
-【Strategy Node】(落地为量化买卖点位与资金比例提案)
-       │
-       ▼
-【Risk Officer Node】(第一道软风控：盈亏比与自洽性审查)
-       │
-       ▼
-【Hard Guard Node】(第二道确定性硬风控：仓位/杠杆/熔断/Bifrost守护拦截)
+================================================================================
+
+【小白速懂】：
+这个文件就像量化对冲基金的“每日投研晨会流程表”：
+1. 晨会开始，【分析师】先汇报大盘天气（牛市、熊市还是死水横盘？）；
+2. 随后【多头研究员】和【空头研究员】当场激烈吵架：
+   - 多头说：“均线金叉了，买入突破！”
+   - 空头反驳：“阻力位放量滞涨，买入就是接盘侠！”
+   - （支持两轮甚至多轮唇枪舌战针锋相对！）
+3. 【投资总监/裁判】听完双方吵架后拍板裁决（买入、卖出或空仓观望）；
+4. 若决定买入，【策略师】把裁决翻译成具体计划（买多少U、挂什么价、止盈止损点）；
+5. 【逻辑风控官】初审：盈亏比必须大于 1.6:1，否则打回；
+6. 最后送交【纯代码底层硬风控】做铁律拦截：没触犯单日熔断线、杠杆未超标才准真正下单！
 """
 
 import logging
@@ -77,21 +77,46 @@ class MultiAgentPipeline:
 
         # -------------------------------------------------------------
         # 步骤 2: 多空辩论团展开对抗激辩 (Bull vs Bear Debate Team)
+        # 支持多轮对抗反驳机制 (Multi-Round Adversarial Rebuttal)
         # -------------------------------------------------------------
-        bull_view = await self.bull_researcher.argue_long(brief)
-        bear_view = await self.bear_researcher.argue_short(brief)
+        rounds = max(1, state.debate_rounds)
+        bull_view: Dict[str, Any] = {}
+        bear_view: Dict[str, Any] = {}
+
+        for round_idx in range(1, rounds + 1):
+            opponent_bear = bear_view.get("key_thesis") if round_idx > 1 else None
+            opponent_bull = bull_view.get("key_thesis") if round_idx > 1 else None
+
+            # 多头立论（若为第 2 轮则直接反驳上一轮空头的观点）
+            bull_view = await self.bull_researcher.argue_long(
+                analyst_brief=brief,
+                opponent_point=opponent_bear,
+                lessons_learned=state.lessons_learned,
+            )
+            # 空头立论（若为第 2 轮则直接反驳多头的论点）
+            bear_view = await self.bear_researcher.argue_short(
+                analyst_brief=brief,
+                opponent_point=opponent_bull,
+                lessons_learned=state.lessons_learned,
+            )
+
+            state.thinking_logs.append(
+                f"[Debate R{round_idx} · 多头]: 置信度={bull_view.get('confidence')} | 论据: {bull_view.get('key_thesis')}"
+            )
+            state.thinking_logs.append(
+                f"[Debate R{round_idx} · 空头]: 置信度={bear_view.get('confidence')} | 论据: {bear_view.get('key_thesis')}"
+            )
+
         state.bull_thesis = bull_view
         state.bear_thesis = bear_view
 
-        state.thinking_logs.append(
-            f"[Bull Researcher]: 置信度={bull_view.get('confidence')} | 论据: {bull_view.get('key_thesis')}"
+        # 裁判综合裁定（投资总监听取多轮辩论后的最终结论）
+        debate_synthesis = await self.moderator.adjudicate(
+            analyst_brief=brief,
+            bull_view=bull_view,
+            bear_view=bear_view,
+            lessons_learned=state.lessons_learned,
         )
-        state.thinking_logs.append(
-            f"[Bear Researcher]: 置信度={bear_view.get('confidence')} | 论据: {bear_view.get('key_thesis')}"
-        )
-
-        # 裁判综合裁定
-        debate_synthesis = await self.moderator.adjudicate(brief, bull_view, bear_view)
         state.debate_synthesis = debate_synthesis
         state.thinking_logs.append(f"[Moderator Verdict]: {debate_synthesis.get('verdict')}")
 
