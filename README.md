@@ -70,11 +70,13 @@ flowchart TD
 
     subgraph Guard["[Deterministic Guard] HardRiskGuard (Veto Power)"]
         direction TB
-        G1["Daily Drawdown Circuit Breaker"]
-        G2["Bifrost Integrity Interceptor (HEALTHY only)"]
-        G3["Global Leverage Ceiling Limit"]
-        G4["Single-Position Capital Exposure Cap"]
-        G5["Slippage Tolerance Protection"]
+        G1["1. Daily Drawdown Circuit Breaker"]
+        G2["2. Bifrost Integrity Interceptor (HEALTHY only)"]
+        G3["3. Global Leverage Ceiling Limit"]
+        G4["4. Single-Position Capital Exposure Cap"]
+        G5["5. Slippage Tolerance Protection"]
+        G6["6. 🚨 Macro Event Blackout Window (FOMC/CPI)"]
+        G7["7. ⚡ Flash Spike & Volatility Shield"]
     end
 
     subgraph Exec["[Execution, Ledger & Alerts] Execution, NAV & Alert"]
@@ -104,7 +106,7 @@ flowchart TD
 | **Debate Moderator** | `heimdall/agents/debate.py` | Weighs asymmetric risk-reward, filters confirmation bias, and issues directional consensus (`LONG`, `SHORT`, or `NEUTRAL`). |
 | **Strategy Agent** | `heimdall/agents/strategy.py` | Formulates entry price, strict stop loss, and target take-profit (minimum 1.6:1 risk-reward ratio). |
 | **Risk Officer** | `heimdall/agents/risk_officer.py`| Soft-tier pre-check: validates mathematical consistency, directional integrity, and market regime alignment. |
-| **Hard Risk Guard** | `heimdall/risk/guard.py` | Hard-tier deterministic check: enforces drawdown circuit breaker, leverage ceiling, and Bifrost data integrity. |
+| **Hard Risk Guard** | `heimdall/risk/guard.py` | Hard-tier deterministic check: enforces 7 iron rules (circuit breaker, leverage, macro blackout, flash spike). |
 | **Alert Gateway** | `heimdall/alert/notifier.py` | 24/7 Multi-channel notifications: Telegram, Feishu (Lark), and Discord alerts for fills and circuit breakers. |
 
 ---
@@ -163,11 +165,13 @@ heimdall-trading/
 │   ├── models/                    # Pydantic schema specifications
 │   │   └── schemas.py             # Standardized TradeProposal and RiskReviewResult
 │   ├── risk/                      # Deterministic code-level hard guard
-│   │   └── guard.py               # Absolute veto firewall
+│   │   ├── flash_guard.py         # Flash spike & pin bar anomaly detector
+│   │   ├── guard.py               # Absolute veto firewall (7 Iron Rules)
+│   │   └── macro_guard.py         # Macro economic blackout calendar (FOMC/CPI)
 │   ├── cli.py                     # Command-line interface entrypoint
 │   └── config.py                  # Pydantic Settings configuration loader
 ├── migrations/                    # PostgreSQL 16 & TimescaleDB schema migrations
-├── tests/                         # Full automated test suite (25 unit tests, 100% passing)
+├── tests/                         # Full automated test suite (31 unit tests, 100% passing)
 ├── pyproject.toml                 # Packaging metadata & dependency specifications
 └── requirements.txt               # Pinned dependencies
 ```

@@ -180,6 +180,7 @@ class MultiAgentPipeline:
             account_equity=state.account_equity,
             current_daily_drawdown_pct=state.current_daily_drawdown_pct,
             bifrost_status=state.raw_guard_status,
+            market_klines=state.raw_klines,
         )
         state.risk_review = hard_review
         state.thinking_logs.append(

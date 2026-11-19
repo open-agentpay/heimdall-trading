@@ -70,11 +70,13 @@ flowchart TD
 
     subgraph Guard["【代码层确定性硬守卫】HardRiskGuard (一票否决)"]
         direction TB
-        G1["单日最大回撤绝对熔断 (Daily Drawdown Breaker)"]
-        G2["Bifrost 跨所偏离状态硬拦截 (HEALTHY 校验)"]
-        G3["全局最大杠杆天花板 (Max Leverage Limit)"]
-        G4["单笔持仓敞口比例上限 (Position Sizing Cap)"]
-        G5["极端盘口滑点保护 (Slippage Tolerance)"]
+        G1["1. 单日最大回撤绝对熔断 (Daily Drawdown Breaker)"]
+        G2["2. Bifrost 跨所偏离状态硬拦截 (HEALTHY 校验)"]
+        G3["3. 全局最大杠杆天花板 (Max Leverage Limit)"]
+        G4["4. 单笔持仓敞口比例上限 (Position Sizing Cap)"]
+        G5["5. 极端盘口滑点保护 (Slippage Tolerance)"]
+        G6["6. 🚨 宏观大事件避险静默期 (FOMC/CPI Blackout Window)"]
+        G7["7. ⚡ 极端插针与流动性骤降拦截 (Flash Spike Shield)"]
     end
 
     subgraph Exec["【执行、核算与推送】Execution, NAV & Alert"]
@@ -104,7 +106,7 @@ flowchart TD
 | **Debate Moderator** | `heimdall/agents/debate.py` | 消除确认偏差，综合评判胜率赔率，裁决最终方向 (LONG / SHORT / NEUTRAL) |
 | **Strategy Agent** | `heimdall/agents/strategy.py` | 基于凯利公式动态调节仓位，生成包含进场价、硬止损、止盈的提案 |
 | **Risk Officer** | `heimdall/agents/risk_officer.py`| 软风控第一道防线：校验盈亏比 $\ge 1.6:1$、点位逻辑自洽性 |
-| **Hard Risk Guard** | `heimdall/risk/guard.py` | 纯代码第二道防线：日内回撤熔断、杠杆上限、Bifrost偏离守卫 |
+| **Hard Risk Guard** | `heimdall/risk/guard.py` | 纯代码第二道防线：守卫七大铁律（回撤熔断、偏离拦截、宏观静默期、插针防御） |
 | **Alert Gateway** | `heimdall/alert/notifier.py` | 全天候多渠道通知：支持 Telegram、飞书、Discord 熔断与成交实时推送 |
 
 ---
@@ -163,11 +165,13 @@ heimdall-trading/
 │   ├── models/                    # Pydantic 契约模型与枚举
 │   │   └── schemas.py             # 交易提案与风控结果 Schema
 │   ├── risk/                      # 确定性硬风控模块
-│   │   └── guard.py               # 具有一票否决权的代码层防火墙
+│   │   ├── flash_guard.py         # 极端插针与流动性骤降检测器
+│   │   ├── guard.py               # 具有一票否决权的代码层防火墙 (七大铁律)
+│   │   └── macro_guard.py         # 宏观重大事件避险日历 (FOMC / CPI 静默期)
 │   ├── cli.py                     # 终端交互命令行入口
 │   └── config.py                  # Pydantic Settings 配置解析
 ├── migrations/                    # PostgreSQL 16 / TimescaleDB 建表脚本
-├── tests/                         # 单元测试集 (25 个测试用例，100% 通过)
+├── tests/                         # 单元测试集 (31 个测试用例，100% 通过)
 ├── pyproject.toml                 # 项目构建元数据与依赖定义
 └── requirements.txt               # 依赖列表
 ```
