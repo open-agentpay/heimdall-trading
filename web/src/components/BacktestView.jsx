@@ -19,6 +19,7 @@ import {
   runZeroLookaheadBacktest,
   runWalkForwardBacktest,
 } from '../api/endpoints';
+import { MAINSTREAM_SYMBOLS } from '../data/symbols';
 
 export default function BacktestView({ onApplyToCreateBot, onShowToast }) {
   const [catalog, setCatalog] = useState([]);
@@ -245,9 +246,11 @@ export default function BacktestView({ onApplyToCreateBot, onShowToast }) {
                 onChange={(e) => setSymbol(e.target.value)}
                 className="w-full px-2.5 py-1.5 bg-white border border-[#D8CEBE] rounded-lg font-mono font-bold"
               >
-                <option value="ETH">ETH</option>
-                <option value="BTC">BTC</option>
-                <option value="SOL">SOL</option>
+                {MAINSTREAM_SYMBOLS.map((s) => (
+                  <option key={s.symbol} value={s.symbol}>
+                    {s.symbol} · {s.name}
+                  </option>
+                ))}
               </select>
             </div>
             <div>

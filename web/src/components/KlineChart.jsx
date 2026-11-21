@@ -13,6 +13,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { INITIAL_KLINES } from '../data/mockData';
+import { SYMBOL_PRICES } from '../data/symbols';
 
 // 计算 EMA 指数移动平均线
 function computeEMA(prices, period) {
@@ -39,9 +40,9 @@ export default function KlineChart({
   interval = "15m",
   trades = [],
 }) {
-  const defaultPrices = { BTC: 96500.0, ETH: 3120.0, SOL: 185.0 };
+  const defaultPrices = SYMBOL_PRICES;
   const currentSymbolUpper = (symbol || "ETH").toUpperCase();
-  const initPrice = defaultPrices[currentSymbolUpper] || 3120.0;
+  const initPrice = defaultPrices[currentSymbolUpper] || 100.0;
 
   const [chartEngine, setChartEngine] = useState("tradingview"); // "tradingview" | "bifrost"
   const [klines, setKlines] = useState(INITIAL_KLINES);

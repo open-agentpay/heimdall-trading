@@ -11,8 +11,9 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { X, Bot, ShieldCheck, ArrowRight, CheckCircle2, XCircle } from 'lucide-react';
+import { X, Bot, ShieldCheck, ArrowRight, CheckCircle2, XCircle, DollarSign } from 'lucide-react';
 import { createBot, getStrategiesCatalog, checkLiveReadiness } from '../api/endpoints';
+import { MAINSTREAM_SYMBOLS } from '../data/symbols';
 
 export default function CreateBotModal({ isOpen, onClose, onCreated, prefill = null }) {
   const [catalog, setCatalog] = useState([]);
@@ -153,15 +154,27 @@ export default function CreateBotModal({ isOpen, onClose, onCreated, prefill = n
 
           <div className="grid grid-cols-3 gap-3">
             <div>
-              <label className="block text-[11px] font-semibold text-[#665E54] mb-1">交易标的</label>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-[11px] font-semibold text-[#665E54]">交易标的</label>
+                <span className="text-[10px] text-[#DE6438] font-mono">{MAINSTREAM_SYMBOLS.length} 主流资产</span>
+              </div>
               <select
                 value={formData.symbol}
-                onChange={(e) => setFormData({ ...formData, symbol: e.target.value })}
+                onChange={(e) => {
+                  const newSym = e.target.value;
+                  setFormData((prev) => ({
+                    ...prev,
+                    symbol: newSym,
+                    name: prev.name.replace(/^(ETH|BTC|SOL|[A-Z]{2,10})/, newSym),
+                  }));
+                }}
                 className="w-full px-3 py-2 bg-white border border-[#D8CEBE] rounded-xl text-xs font-mono font-bold"
               >
-                <option value="ETH">ETH</option>
-                <option value="BTC">BTC</option>
-                <option value="SOL">SOL</option>
+                {MAINSTREAM_SYMBOLS.map((s) => (
+                  <option key={s.symbol} value={s.symbol}>
+                    {s.symbol} · {s.name}
+                  </option>
+                ))}
               </select>
             </div>
             <div>
@@ -284,6 +297,22 @@ export default function CreateBotModal({ isOpen, onClose, onCreated, prefill = n
                 ${Number(formData.allocated_capital).toLocaleString()} USDT
               </span>
             </div>
+            <div className="flex items-center space-x-1.5 mb-2 overflow-x-auto pb-1">
+              {[1000, 5000, 10000, 20000, 50000, 100000].map((amt) => (
+                <button
+                  key={amt}
+                  type="button"
+                  onClick={() => setFormData({ ...formData, allocated_capital: amt })}
+                  className={`px-2 py-1 rounded-lg text-[10px] font-mono font-bold transition shrink-0 ${
+                    Number(formData.allocated_capital) === amt
+                      ? 'bg-[#DE6438] text-white shadow-xs'
+                      : 'bg-[#F2EDE4] text-[#6E6458] hover:bg-white hover:text-[#DE6438] border border-[#E6DFD5]'
+                  }`}
+                >
+                  ${amt >= 1000 ? `${amt / 1000}k` : amt}
+                </button>
+              ))}
+            </div>
             <input
               type="number"
               min="100"
@@ -291,6 +320,7 @@ export default function CreateBotModal({ isOpen, onClose, onCreated, prefill = n
               value={formData.allocated_capital}
               onChange={(e) => setFormData({ ...formData, allocated_capital: Number(e.target.value) })}
               className="w-full px-3 py-2 bg-white border border-[#D8CEBE] rounded-xl font-mono text-xs"
+              placeholder="自定义初始资金"
             />
           </div>
 
