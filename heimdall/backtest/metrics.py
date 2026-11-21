@@ -2,7 +2,7 @@
 Heimdall 交易平台 - 回测绩效报表聚合器 (Backtest Metrics & Report)
 """
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 from heimdall.accounting.nav import NAVEngine
 from heimdall.backtest.broker import BacktestBroker
@@ -31,6 +31,8 @@ class BacktestReport(BaseModel):
     max_consecutive_losses: int
     total_fees_usd: float
     total_funding_pnl_usd: float
+    funding_coverage: Dict[str, Any] = Field(default_factory=dict)
+    execution_assumptions: Dict[str, Any] = Field(default_factory=dict)
     nav_curve: List[Dict[str, Any]] = Field(default_factory=list)
 
 
@@ -41,6 +43,8 @@ def build_backtest_report(
     symbol: str,
     timeframe: str,
     bars_evaluated: int,
+    funding_coverage: Optional[Dict[str, Any]] = None,
+    execution_assumptions: Optional[Dict[str, Any]] = None,
 ) -> BacktestReport:
     perf = nav_engine.calculate_performance_metrics()
     trades = broker.trades
@@ -98,5 +102,7 @@ def build_backtest_report(
         max_consecutive_losses=max_consec_losses,
         total_fees_usd=round(broker.total_fees_usd, 4),
         total_funding_pnl_usd=round(broker.total_funding_pnl_usd, 4),
+        funding_coverage=funding_coverage or {},
+        execution_assumptions=execution_assumptions or getattr(broker, "execution_assumptions", {}),
         nav_curve=nav_curve,
     )

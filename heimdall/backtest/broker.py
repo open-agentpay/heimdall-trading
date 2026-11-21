@@ -247,9 +247,28 @@ class BacktestBroker:
             trigger_price: Optional[float] = None
             trigger_tag = ""
             if sl_hit:
-                trigger_price = float(pos.stop_loss_price)
-                trigger_tag = "INTRABAR_SL"
+                if pos.side == PositionSide.LONG:
+                    # 多头止损跳空判定：若开盘价已经跌破止损价，模拟市价止损以更差的开盘价成交（保守反映真实跳空亏损）
+                    if bar_open < float(pos.stop_loss_price):
+                        trigger_price = bar_open
+                        trigger_tag = "INTRABAR_SL_GAP"
+                    else:
+                        trigger_price = float(pos.stop_loss_price)
+                        trigger_tag = "INTRABAR_SL"
+                    if self.base_slippage_pct > 0:
+                        trigger_price = trigger_price * (1.0 - self.base_slippage_pct)
+                else:
+                    # 空头止损跳空判定：若开盘价已经涨破止损价，模拟市价止损以更差的开盘价成交
+                    if bar_open > float(pos.stop_loss_price):
+                        trigger_price = bar_open
+                        trigger_tag = "INTRABAR_SL_GAP"
+                    else:
+                        trigger_price = float(pos.stop_loss_price)
+                        trigger_tag = "INTRABAR_SL"
+                    if self.base_slippage_pct > 0:
+                        trigger_price = trigger_price * (1.0 + self.base_slippage_pct)
             elif tp_hit:
+                # 止盈单按预设目标价保守撮合（不擅自扩大跳空盈利）
                 trigger_price = float(pos.take_profit_price)
                 trigger_tag = "INTRABAR_TP"
 
@@ -291,3 +310,15 @@ class BacktestBroker:
             pos.unrealized_pnl = (pos.entry_price - bar_close) * pos.quantity
         else:
             pos.unrealized_pnl = 0.0
+
+    @property
+    def execution_assumptions(self) -> Dict[str, Any]:
+        """撮合引擎核心假设与风控保护规则披露"""
+        return {
+            "sl_tp_priority": "SL_FIRST",
+            "sl_gap_model": "WORST_OF_STOP_AND_OPEN",
+            "slippage_model": "ASYMMETRIC_WORSE_FILL",
+            "base_slippage_pct": self.base_slippage_pct,
+            "maker_fee_rate": self.maker_fee_rate,
+            "taker_fee_rate": self.taker_fee_rate,
+        }

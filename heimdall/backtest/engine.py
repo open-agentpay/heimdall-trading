@@ -126,6 +126,8 @@ class BacktestEngine:
             symbol=feed.symbol,
             timeframe=feed.timeframe,
             bars_evaluated=bars_evaluated,
+            funding_coverage=feed.funding_coverage_stats(),
+            execution_assumptions=broker.execution_assumptions,
         )
 
     async def walk_forward(

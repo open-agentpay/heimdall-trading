@@ -19,6 +19,7 @@ import asyncio
 import logging
 import os
 import sqlite3
+import urllib.parse
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -26,12 +27,24 @@ logger = logging.getLogger(__name__)
 
 
 def normalize_postgres_dsn(raw_url: str) -> str:
-    """将 SQLAlchemy 风格的 postgresql+asyncpg:// 或 postgres:// 规范化为 asyncpg 标准 postgresql:// DSN"""
+    """
+    将 SQLAlchemy 风格的 postgresql+asyncpg:// 或 postgres:// 规范化为 asyncpg 标准 postgresql:// DSN，
+    并自动对密码中包含的特殊字符（如 @、/、:、+ 等）进行 URL 编码，避免 asyncpg 内部 host/port 解析异常。
+    """
     url = (raw_url or "").strip()
     if url.startswith("postgresql+asyncpg://"):
-        return "postgresql://" + url[len("postgresql+asyncpg://"):]
-    if url.startswith("postgres://"):
-        return "postgresql://" + url[len("postgres://"):]
+        url = "postgresql://" + url[len("postgresql+asyncpg://"):]
+    elif url.startswith("postgres://"):
+        url = "postgresql://" + url[len("postgres://"):]
+
+    if "://" in url and "@" in url:
+        scheme, _, rest = url.partition("://")
+        auth_part, _, host_db = rest.rpartition("@")
+        user, sep, password = auth_part.partition(":")
+        if sep:
+            encoded_password = urllib.parse.quote(urllib.parse.unquote(password), safe="")
+            url = f"{scheme}://{user}:{encoded_password}@{host_db}"
+
     return url
 
 

@@ -17,9 +17,13 @@ class HistoricalDataFeed:
         klines: List[Dict[str, Any]],
         timeframe: str = "15m",
         funding_history: Optional[List[Dict[str, Any]]] = None,
+        default_funding_rate: Optional[float] = None,
+        strict_funding: bool = True,
     ):
         self.symbol = symbol.upper().replace("USDT", "")
         self.timeframe = timeframe
+        self.default_funding_rate = default_funding_rate
+        self.strict_funding = bool(strict_funding)
         # 按开盘时间戳升序排列并深拷贝隔离
         sorted_k = sorted(klines, key=lambda x: int(x.get("timestamp", 0)))
         self._klines: List[Dict[str, Any]] = [dict(k) for k in sorted_k]
@@ -33,6 +37,57 @@ class HistoricalDataFeed:
             [dict(f) for f in (funding_history or [])],
             key=lambda x: int(x.get("timestamp", 0)),
         )
+
+    @property
+    def has_funding_data(self) -> bool:
+        return bool(self._funding_history)
+
+    def funding_coverage_stats(self) -> Dict[str, Any]:
+        """统计历史资金费率数据对 K 线时间跨度的覆盖情况与数据完整性"""
+        if not self._klines:
+            return {
+                "has_funding_data": False,
+                "funding_count": 0,
+                "expected_settlement_count": 0,
+                "coverage_pct": 0.0,
+                "data_complete": False,
+                "settlement_mode": "NO_KLINES",
+            }
+
+        t_start = int(self._klines[0]["timestamp"])
+        t_end = int(self._klines[-1]["close_time"])
+        eight_hours_ms = 8 * 3_600_000
+        # 计算时间跨度内跨过的标准 8 小时结算周期数
+        start_period = t_start // eight_hours_ms
+        end_period = t_end // eight_hours_ms
+        expected_settlements = max(0, end_period - start_period)
+
+        covered_count = sum(
+            1 for f in self._funding_history
+            if t_start <= int(f.get("timestamp", 0)) <= t_end
+        )
+
+        coverage_pct = (
+            100.0 if expected_settlements == 0 and covered_count > 0
+            else round(min(1.0, covered_count / max(1, expected_settlements)) * 100.0, 2)
+        )
+        if not self._funding_history:
+            coverage_pct = 0.0
+
+        is_complete = bool(self._funding_history and coverage_pct >= 95.0)
+        mode = "REAL_HISTORY" if is_complete else (
+            "ESTIMATED" if self.default_funding_rate is not None else "SKIPPED_MISSING_DATA"
+        )
+
+        return {
+            "has_funding_data": bool(self._funding_history),
+            "funding_count": covered_count,
+            "expected_settlement_count": expected_settlements,
+            "coverage_pct": coverage_pct,
+            "data_complete": is_complete,
+            "settlement_mode": mode,
+            "default_funding_rate": self.default_funding_rate,
+        }
 
     @staticmethod
     def _interval_to_ms(interval: str) -> int:
@@ -77,14 +132,31 @@ class HistoricalDataFeed:
                 "mark_price": float(latest.get("mark_price", 0.0)),
                 "index_price": float(latest.get("index_price", 0.0)),
                 "timestamp": int(latest.get("timestamp", as_of_ts_ms)),
+                "is_estimated": False,
+                "has_data": True,
+            }
+        # 缺失历史费率序列时，严格杜绝擅自假设固定 0.0001 费率
+        if self.default_funding_rate is not None:
+            rate = float(self.default_funding_rate)
+            return {
+                "symbol": self.symbol,
+                "funding_rate": rate,
+                "annualized_rate": rate * 3.0 * 365.0,
+                "mark_price": 0.0,
+                "index_price": 0.0,
+                "timestamp": as_of_ts_ms,
+                "is_estimated": True,
+                "has_data": False,
             }
         return {
             "symbol": self.symbol,
-            "funding_rate": 0.0001,
-            "annualized_rate": 0.0001 * 3.0 * 365.0,
+            "funding_rate": 0.0,
+            "annualized_rate": 0.0,
             "mark_price": 0.0,
             "index_price": 0.0,
             "timestamp": as_of_ts_ms,
+            "is_estimated": False,
+            "has_data": False,
         }
 
     def funding_event_in(self, bar: Dict[str, Any]) -> Optional[float]:
@@ -98,24 +170,39 @@ class HistoricalDataFeed:
                     return float(f.get("funding_rate", 0.0))
             return None
 
-        # 无显式费率序列时，检测是否跨越 UTC 00:00 / 08:00 / 16:00 整点
-        eight_hours_ms = 8 * 3_600_000
-        if (t0 // eight_hours_ms) != (t1 // eight_hours_ms):
-            return float(self.funding_at(t1).get("funding_rate", 0.0001))
+        # 无真实费率序列时，若用户明确指定了估算费率则采用显式估算值，否则严格跳过结算
+        if self.default_funding_rate is not None:
+            eight_hours_ms = 8 * 3_600_000
+            if (t0 // eight_hours_ms) != (t1 // eight_hours_ms):
+                return float(self.default_funding_rate)
         return None
 
     def slice_range(self, start_idx: int, end_idx: int) -> "HistoricalDataFeed":
         """用于 Walk-Forward 切分的子区间视图"""
         sub_k = self._klines[start_idx:end_idx]
         if not sub_k:
-            return HistoricalDataFeed(self.symbol, [], self.timeframe, [])
+            return HistoricalDataFeed(
+                self.symbol,
+                [],
+                self.timeframe,
+                [],
+                default_funding_rate=self.default_funding_rate,
+                strict_funding=self.strict_funding,
+            )
         t_start = int(sub_k[0]["timestamp"])
         t_end = int(sub_k[-1]["close_time"])
         sub_f = [
             f for f in self._funding_history
             if t_start <= int(f.get("timestamp", 0)) <= t_end
         ]
-        return HistoricalDataFeed(self.symbol, sub_k, self.timeframe, sub_f)
+        return HistoricalDataFeed(
+            self.symbol,
+            sub_k,
+            self.timeframe,
+            sub_f,
+            default_funding_rate=self.default_funding_rate,
+            strict_funding=self.strict_funding,
+        )
 
     @classmethod
     def generate_synthetic(

@@ -31,6 +31,12 @@ def test_postgres_sql_placeholder_translation_and_dsn():
     assert normalize_postgres_dsn("postgresql+asyncpg://u:p@db.internal:5432/heimdall") == "postgresql://u:p@db.internal:5432/heimdall"
     assert normalize_postgres_dsn("postgres://u:p@db.internal:5432/heimdall") == "postgresql://u:p@db.internal:5432/heimdall"
 
+    # 验证含有 @、:、/、+ 等特殊字符的密码被安全 URL-encode
+    raw = "postgresql+asyncpg://heimdall:pass@word:L9N3cwQfSitCVq+El114eAVyhVoFa3fJZoHdRyrx@postgres:5432/heimdall"
+    normalized = normalize_postgres_dsn(raw)
+    assert "@postgres:5432/heimdall" in normalized
+    assert "pass%40word%3AL9N3cwQfSitCVq%2BEl114eAVyhVoFa3fJZoHdRyrx" in normalized
+
 
 def test_postgres_database_manager_pool_init_query_commit_and_close():
     """验证 PostgreSQL 模式下建表、参数转换查询、写入影响行数解析及连接池优雅关闭。"""
