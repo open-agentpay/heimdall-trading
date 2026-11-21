@@ -733,6 +733,22 @@ class BotManager:
             # 默认设置为 RUNNING
             bot.status = AgentStatus.RUNNING
 
+            # 确保在 trading_agents 表中登记档案，满足 PostgreSQL 外键完整性约束
+            try:
+                await trading_repo.save_agent(
+                    agent_id=bid,
+                    name=name,
+                    symbol=sym,
+                    strategy_type=stype.value,
+                    status=bot.status.value,
+                    allocated_capital=cap,
+                    max_drawdown_limit=bot.max_drawdown_limit,
+                    owner_wallet="system",
+                    config=bot.config or {},
+                )
+            except Exception as save_err:
+                logger.warning("[Bot %s] 注册预置机器人档案失败: %s", bid, save_err)
+
             # 确保数据库中存在初始 1.0000 净值基准切片
             try:
                 exist_series = await trading_repo.get_nav_series(bid, limit=1)
