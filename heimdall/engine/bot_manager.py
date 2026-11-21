@@ -859,7 +859,17 @@ class BotManager:
             if bot_owner != "system" and bot_owner != clean_wallet:
                 continue
 
-            perf = b.nav_engine.calculate_performance_metrics()
+            try:
+                perf = b.nav_engine.calculate_performance_metrics()
+            except Exception as metric_err:
+                logger.warning("[BotManager] 计算 Bot=%s 绩效指标失败，安全回落: %s", b.bot_id, metric_err)
+                perf = {
+                    "latest_nav": 1.0,
+                    "cumulative_return_pct": 0.0,
+                    "max_drawdown_pct": 0.0,
+                    "annualized_sharpe_ratio": 0.0,
+                    "calmar_ratio": 0.0,
+                }
             overview.append({
                 "bot_id": b.bot_id,
                 "name": b.name,

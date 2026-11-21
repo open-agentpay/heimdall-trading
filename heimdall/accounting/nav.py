@@ -168,11 +168,17 @@ class NAVEngine:
         calendar_days = max(1.0, total_span_secs / 86400.0) if total_span_secs > 0 else float(max(1, len(daily_navs)))
         calmar_ratio = 0.0
         if max_drawdown_pct > 1e-4:
-            if calendar_days >= 1.0 and latest_nav > 0:
-                cagr_pct = ((latest_nav ** (365.0 / calendar_days)) - 1.0) * 100.0
-            else:
+            try:
+                # 仅在跨度充足（>= 7 天）且当前 NAV 处于常态收益区间时采用几何复合年化，防止新创建短周期样本指数溢出
+                if calendar_days >= 7.0 and 0.1 <= latest_nav <= 10.0:
+                    cagr_pct = ((latest_nav ** (365.0 / calendar_days)) - 1.0) * 100.0
+                else:
+                    cagr_pct = cumulative_return_pct * (365.0 / max(1.0, calendar_days))
+            except (OverflowError, ValueError, ZeroDivisionError):
                 cagr_pct = cumulative_return_pct * (365.0 / max(1.0, calendar_days))
-            calmar_ratio = cagr_pct / max_drawdown_pct
+
+            cagr_pct = max(-100.0, min(100000.0, cagr_pct))
+            calmar_ratio = max(-1000.0, min(1000.0, cagr_pct / max_drawdown_pct))
 
         return {
             "cumulative_return_pct": round(cumulative_return_pct, 4),
