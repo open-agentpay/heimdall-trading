@@ -18,9 +18,10 @@ import React, { useState, useEffect } from 'react';
 import { 
   Key, ShieldCheck, Lock, Eye, EyeOff, Plus, Trash2, CheckCircle2, 
   AlertCircle, ExternalLink, RefreshCw, Copy, Check, Sparkles, 
-  Cpu, Building2, HelpCircle, Activity, ChevronRight, CheckCircle, Radio
+  Cpu, Building2, HelpCircle, Activity, ChevronRight, CheckCircle, Radio,
+  Pencil, X, Save
 } from 'lucide-react';
-import { listVaultKeys, createVaultKey, testVaultKey, deleteVaultKey, updateVaultKeyNetwork, activateVaultKey } from '../api/endpoints';
+import { listVaultKeys, createVaultKey, testVaultKey, deleteVaultKey, updateVaultKeyNetwork, activateVaultKey, updateVaultKey } from '../api/endpoints';
 
 export default function KeyVaultModal({ isOpen, onClose, walletState, onConnectWallet }) {
   if (!isOpen) return null;
@@ -35,6 +36,16 @@ export default function KeyVaultModal({ isOpen, onClose, walletState, onConnectW
   const [revealedKeys, setRevealedKeys] = useState({});
   const [copiedId, setCopiedId] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
+
+  // 编辑已有密钥状态
+  const [editingKeyId, setEditingKeyId] = useState(null);
+  const [editForm, setEditForm] = useState({
+    label: '',
+    model: '',
+    baseUrl: '',
+    apiKey: '',
+  });
+  const [isSavingEdit, setIsSavingEdit] = useState(false);
 
   // 密钥列表 (仅属于当前连接钱包的脱敏数据，绝不展示未授权的 Mock 数据)
   const [keysList, setKeysList] = useState([]);
@@ -194,6 +205,68 @@ export default function KeyVaultModal({ isOpen, onClose, walletState, onConnectW
       alert(`切换激活密钥失败: ${e.message}`);
     } finally {
       setActivatingKeyId(null);
+    }
+  };
+
+  // 开启编辑配置
+  const handleStartEdit = (k) => {
+    setEditingKeyId(k.id);
+    setEditForm({
+      label: k.label || '',
+      model: k.model || '',
+      baseUrl: k.baseUrl || '',
+      apiKey: '',
+    });
+  };
+
+  // 取消编辑
+  const handleCancelEdit = () => {
+    setEditingKeyId(null);
+  };
+
+  // 提交保存修改
+  const handleSaveEdit = async (keyId) => {
+    setIsSavingEdit(true);
+    try {
+      let rawBaseUrl = editForm.baseUrl.trim();
+      for (const suffix of ['/chat/completions', '/chat/completions/', '/completions', '/completions/']) {
+        if (rawBaseUrl.endsWith(suffix)) {
+          rawBaseUrl = rawBaseUrl.slice(0, -suffix.length);
+          break;
+        }
+      }
+      const effectiveBaseUrl = rawBaseUrl.replace(/\/+$/, '');
+
+      const payload = {
+        label: editForm.label.trim() || undefined,
+        model: editForm.model.trim() || undefined,
+        base_url: effectiveBaseUrl,
+      };
+      if (editForm.apiKey.trim()) {
+        payload.api_key = editForm.apiKey.trim();
+      }
+
+      const res = await updateVaultKey(keyId, payload);
+
+      setKeysList(prev => prev.map(k => {
+        if (k.id === keyId || k.key_id === keyId) {
+          return {
+            ...k,
+            label: res.label || editForm.label,
+            model: res.model !== undefined ? res.model : editForm.model,
+            baseUrl: res.base_url !== undefined ? res.base_url : effectiveBaseUrl,
+            mask: res.key_mask || k.mask,
+            lastMessage: '配置已更新并实时生效',
+            status: 'OK',
+          };
+        }
+        return k;
+      }));
+      setEditingKeyId(null);
+    } catch (err) {
+      alert("保存配置失败: " + (err.message || '网络或鉴权异常'));
+    } finally {
+      setIsSavingEdit(false);
     }
   };
 
@@ -636,6 +709,19 @@ export default function KeyVaultModal({ isOpen, onClose, walletState, onConnectW
                           <RefreshCw className={`w-3.5 h-3.5 ${isTesting ? "animate-spin text-[#DE6438]" : ""}`} />
                         </button>
 
+                        {/* 修改配置按钮 */}
+                        <button
+                          onClick={() => (editingKeyId === k.id ? handleCancelEdit() : handleStartEdit(k))}
+                          className={`p-1.5 rounded-lg border transition ${
+                            editingKeyId === k.id
+                              ? 'border-[#DE6438] bg-[#FAF7F2] text-[#DE6438]'
+                              : 'border-[#E4DDD1] hover:bg-[#F2ECE3] text-[#7E7469] hover:text-[#2E2823]'
+                          }`}
+                          title="修改模型名称 (Model) 或 API 端点 (Base URL)"
+                        >
+                          <Pencil className="w-3.5 h-3.5" />
+                        </button>
+
                         {/* 删除按钮 */}
                         <button
                           onClick={() => handleDeleteKey(k.id, k.label)}
@@ -646,6 +732,116 @@ export default function KeyVaultModal({ isOpen, onClose, walletState, onConnectW
                         </button>
                       </div>
                     </div>
+
+                    {/* 编辑表单面板 */}
+                    {editingKeyId === k.id && (
+                      <div className="bg-[#FAF7F2] p-3 rounded-xl border border-[#DE6438]/30 space-y-3 animate-in fade-in duration-150">
+                        <div className="flex items-center justify-between pb-1.5 border-b border-[#E6DFD5]">
+                          <span className="text-xs font-bold text-[#2E2823] flex items-center space-x-1.5">
+                            <Pencil className="w-3.5 h-3.5 text-[#DE6438]" />
+                            <span>修改凭据配置信息</span>
+                          </span>
+                          <button
+                            type="button"
+                            onClick={handleCancelEdit}
+                            className="text-[#7E7469] hover:text-[#2E2823] text-xs cursor-pointer"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                          <div>
+                            <label className="block text-[11px] font-semibold text-[#5A5046] mb-1">自定义别名备注</label>
+                            <input
+                              type="text"
+                              value={editForm.label}
+                              onChange={(e) => setEditForm(f => ({ ...f, label: e.target.value }))}
+                              placeholder="如：DeepSeek 核心推理 Key"
+                              className="w-full p-2 rounded-lg bg-white border border-[#DDD5C8] text-xs font-medium text-[#2E2823] focus:outline-hidden focus:ring-1 focus:ring-[#DE6438]"
+                            />
+                          </div>
+
+                          {k.category === 'llms' && (
+                            <div>
+                              <label className="block text-[11px] font-semibold text-[#5A5046] mb-1">
+                                模型代码 (Model)
+                              </label>
+                              <input
+                                type="text"
+                                value={editForm.model}
+                                onChange={(e) => setEditForm(f => ({ ...f, model: e.target.value }))}
+                                placeholder="如：deepseek-chat、gpt-4o、qwen-plus"
+                                className="w-full p-2 rounded-lg bg-white border border-[#DDD5C8] text-xs font-mono font-medium text-[#2E2823] focus:outline-hidden focus:ring-1 focus:ring-[#DE6438]"
+                              />
+                            </div>
+                          )}
+                        </div>
+
+                        {k.category === 'llms' && (
+                          <div className="space-y-1.5">
+                            <div className="flex items-center space-x-1 text-[10px] text-[#7E7469] flex-wrap gap-1">
+                              <span>快捷选择模型:</span>
+                              {['deepseek-chat', 'deepseek-reasoner', 'gpt-4o', 'qwen-plus', 'claude-3-5-sonnet'].map(m => (
+                                <button
+                                  key={m}
+                                  type="button"
+                                  onClick={() => setEditForm(f => ({ ...f, model: m }))}
+                                  className="px-1.5 py-0.5 rounded bg-white border border-[#DDD5C8] hover:border-[#DE6438] text-[#DE6438] font-mono cursor-pointer"
+                                >
+                                  {m}
+                                </button>
+                              ))}
+                            </div>
+
+                            <div>
+                              <label className="block text-[11px] font-semibold text-[#5A5046] mb-1">
+                                API 接入端点 (Base URL)
+                              </label>
+                              <input
+                                type="text"
+                                value={editForm.baseUrl}
+                                onChange={(e) => setEditForm(f => ({ ...f, baseUrl: e.target.value }))}
+                                placeholder="如：https://api.deepseek.com (无需包含 /chat/completions)"
+                                className="w-full p-2 rounded-lg bg-white border border-[#DDD5C8] text-xs font-mono font-medium text-[#2E2823] focus:outline-hidden focus:ring-1 focus:ring-[#DE6438]"
+                              />
+                            </div>
+                          </div>
+                        )}
+
+                        <div>
+                          <label className="block text-[11px] font-semibold text-[#5A5046] mb-1">
+                            更新 API Key / 密钥 <span className="text-[#9E9486] font-normal">(留空表示保持当前密钥不变)</span>
+                          </label>
+                          <input
+                            type="password"
+                            value={editForm.apiKey}
+                            onChange={(e) => setEditForm(f => ({ ...f, apiKey: e.target.value }))}
+                            placeholder="输入新 Key 以覆盖，留空则保持不变"
+                            className="w-full p-2 rounded-lg bg-white border border-[#DDD5C8] text-xs font-mono font-medium text-[#2E2823] focus:outline-hidden focus:ring-1 focus:ring-[#DE6438]"
+                          />
+                        </div>
+
+                        <div className="flex items-center justify-end space-x-2 pt-1">
+                          <button
+                            type="button"
+                            onClick={handleCancelEdit}
+                            className="px-3 py-1.5 rounded-lg border border-[#DDD5C8] text-[#5A5046] text-xs hover:bg-white transition cursor-pointer"
+                          >
+                            取消
+                          </button>
+                          <button
+                            type="button"
+                            disabled={isSavingEdit}
+                            onClick={() => handleSaveEdit(k.id)}
+                            className="px-3 py-1.5 rounded-lg bg-[#DE6438] hover:bg-[#C95328] text-white text-xs font-bold transition flex items-center space-x-1.5 shadow-xs disabled:opacity-50 cursor-pointer"
+                          >
+                            <Save className="w-3.5 h-3.5" />
+                            <span>{isSavingEdit ? '保存中...' : '保存配置'}</span>
+                          </button>
+                        </div>
+                      </div>
+                    )}
 
                     {/* 密钥打码展示槽 */}
                     <div className="flex items-center justify-between bg-[#F8F5F0] p-2.5 rounded-lg border border-[#ECE5D9]">
@@ -853,8 +1049,8 @@ export default function KeyVaultModal({ isOpen, onClose, walletState, onConnectW
                   {newKeyForm.category === 'exchanges' ? (
                     <>
                       <option value="hyperliquid">Hyperliquid L1 (Agent 代理私钥)</option>
-                      <option value="binance_demo">Binance Demo (币安现货模拟交易 · demo-api.binance.com)</option>
-                      <option value="binance">Binance (币安正式网/测试网 API Key)</option>
+                      <option value="binance">Binance Futures (币安 U 本位合约 · 官方 SDK 支持实盘与测试网)</option>
+                      <option value="binance_demo">Binance Spot Demo (币安现货模拟 demo-api · 仅限现货多头)</option>
                       <option value="okx">OKX (欧易 API Key)</option>
                       <option value="bybit">Bybit 衍生品 API</option>
                     </>

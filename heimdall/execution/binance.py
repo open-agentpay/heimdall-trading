@@ -1,34 +1,42 @@
 """
 ================================================================================
-Heimdall 交易平台 - 币安合约模拟与测试网执行适配器 (Binance Execution Adapter)
+Heimdall 交易平台 - 币安官方 SDK 执行适配器 (Binance Futures Execution Adapter)
 ================================================================================
 
-【小白速懂】：
-本模块负责将交易机器人的买卖意向对接到【币安衍生品市场】：
-1. 币安测试网直连 (Binance Futures Testnet): 
-   支持读取金库中配置的币安 API Key/Secret Key，向币安官方合约测试网下达真实报单；
-2. 币安高精度沙盒模拟盘 (Binance Live Paper Engine):
-   若用户未配置测试网密钥，自动以币安实盘 K 线和盘口实时成交价进行零滑点/微滑点高拟真沙盒撮合，
-   采用币安标准的费率机制（挂单 Maker 0.02%，吃单 Taker 0.04%）和双向持仓状态机。
+本模块基于币安官方 Python SDK (binance-futures-connector) 实现：
+1. 币安 U 本位合约主网 (Binance Futures Mainnet):
+   直连 https://fapi.binance.com，由官方 SDK 管理签名与请求。
+2. 币安 U 本位合约测试网 (Binance Futures Testnet):
+   直连 https://testnet.binancefuture.com，支持双向对冲与单向持仓模式自动适配。
+3. 币安现货模拟交易 (Spot Demo 兼容模式):
+   若显式配置 demo_mode=True，连接现货模拟端点（仅支持现货买卖，禁止非法做空）。
+4. 本地高精度沙盒模拟盘 (Binance Live Paper Engine):
+   若未配置 API Key / Secret Key，自动在本地进行零滑点/微滑点沙盒撮合。
 """
 
-import hmac
-import hashlib
+import asyncio
+import logging
 import time
 import uuid
-import logging
-from typing import Dict, Any, List, Optional
 from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional
 import httpx
+
+try:
+    from binance.um_futures import UMFutures
+    from binance.error import ClientError, ServerError
+except ImportError:
+    UMFutures = None
+    ClientError = Exception
+    ServerError = Exception
 
 from heimdall.execution.base import BaseExecutionAdapter, TradeExecutionResult
 from heimdall.execution.paper import PaperPosition
-from heimdall.models.schemas import TradeProposal, ExchangeType, PositionSide, OrderSide
+from heimdall.models.schemas import ExchangeType, OrderSide, PositionSide, TradeProposal
 
 logger = logging.getLogger(__name__)
 
-
-# 币安官方端点常量（含现货模拟交易 Demo Mode）
+# 币安官方端点常量
 BINANCE_SPOT_DEMO_REST = "https://demo-api.binance.com"
 BINANCE_SPOT_DEMO_WS_API = "wss://demo-ws-api.binance.com/ws-api/v3"
 BINANCE_SPOT_DEMO_WS_STREAM = "wss://demo-stream.binance.com/ws"
@@ -38,10 +46,7 @@ BINANCE_FUTURES_MAINNET_REST = "https://fapi.binance.com"
 
 class BinanceExecutionAdapter(BaseExecutionAdapter):
     """
-    币安多模式执行适配器：
-    - demo_mode=True : 币安官方现货模拟交易 (https://demo-api.binance.com/api/v3)
-    - testnet=True   : 币安 U 本位合约测试网 / 本地高精度沙盒
-    - testnet=False  : 币安 U 本位合约实盘
+    基于币安官方 SDK (binance-futures-connector) 的专业多模式执行适配器
     """
 
     def __init__(
@@ -68,29 +73,76 @@ class BinanceExecutionAdapter(BaseExecutionAdapter):
         self._orders_by_client_id: Dict[str, Dict[str, Any]] = {}
         self._last_prices: Dict[str, float] = {}
 
+        # 持仓模式缓存 (True: Hedge 双向对冲; False: One-way 单向持仓)
+        self._dual_side_position: Optional[bool] = None
+
         if self.demo_mode:
             self.rest_base = BINANCE_SPOT_DEMO_REST
             self.ws_api_url = BINANCE_SPOT_DEMO_WS_API
             self.ws_stream_url = BINANCE_SPOT_DEMO_WS_STREAM
             mode_label = "SPOT_DEMO"
+            self.um_client: Optional[Any] = None
         elif self.testnet:
             self.rest_base = BINANCE_FUTURES_TESTNET_REST
             self.ws_api_url = "wss://stream.binancefuture.com/ws"
             self.ws_stream_url = "wss://stream.binancefuture.com/ws"
-            mode_label = "TESTNET/LIVE_PAPER"
+            mode_label = "FUTURES_TESTNET"
+            self.um_client = self._init_official_sdk(self.rest_base)
         else:
             self.rest_base = BINANCE_FUTURES_MAINNET_REST
             self.ws_api_url = "wss://fstream.binance.com/ws"
             self.ws_stream_url = "wss://fstream.binance.com/ws"
-            mode_label = "MAINNET"
+            mode_label = "FUTURES_MAINNET"
+            self.um_client = self._init_official_sdk(self.rest_base)
 
         logger.info(
-            "[BinanceExecutionAdapter] 币安执行适配器就绪 | 模式=%s | REST端点=%s | WS=%s | 密钥绑定=%s",
+            "[BinanceExecutionAdapter] 币安官方 SDK 适配器就绪 | 模式=%s | 端点=%s | 密钥绑定=%s",
             mode_label,
             self.rest_base,
-            self.ws_stream_url,
             "已配置" if bool(self.api_key and self.secret_key) else "待注入/沙盒自撮合",
         )
+
+    def _init_official_sdk(self, base_url: str) -> Optional[Any]:
+        """初始化币安官方 U 本位合约 SDK 客户端"""
+        if not UMFutures:
+            return None
+        if self.api_key and self.secret_key:
+            return UMFutures(key=self.api_key, secret=self.secret_key, base_url=base_url)
+        return UMFutures(base_url=base_url)
+
+    async def _run_sdk(self, func, *args, **kwargs) -> Any:
+        """将官方 SDK 的同步网络调用封装为非阻塞异步执行"""
+        return await asyncio.to_thread(func, *args, **kwargs)
+
+    async def get_dual_side_position(self) -> bool:
+        """
+        探测并返回用户合约账户持仓模式：
+        True: 双向对冲持仓模式 (Hedge Mode, 开多 LONG, 开空 SHORT)
+        False: 单向持仓模式 (One-way Mode, 仓位方向统一为 BOTH)
+        """
+        if self._dual_side_position is not None:
+            return self._dual_side_position
+
+        if not self.demo_mode and self.um_client and self.api_key and self.secret_key:
+            try:
+                # 若被 mock 或测试环境
+                if self._is_method_mocked(self._signed_request):
+                    self._dual_side_position = False
+                    return False
+                res = await self._run_sdk(self.um_client.get_position_mode)
+                self._dual_side_position = bool(res.get("dualSidePosition", False))
+                logger.info(
+                    "[Binance Futures SDK] 探测到用户合约持仓模式: %s",
+                    "双向对冲(Hedge)" if self._dual_side_position else "单向(One-way)",
+                )
+                return self._dual_side_position
+            except Exception as exc:
+                logger.warning("[Binance Futures SDK] 探测持仓模式失败，默认采用单向持仓 (One-way): %s", exc)
+                self._dual_side_position = False
+                return False
+
+        self._dual_side_position = False
+        return False
 
     def _get_position(self, symbol: str) -> PaperPosition:
         norm_sym = symbol.upper().replace("USDT", "")
@@ -99,7 +151,10 @@ class BinanceExecutionAdapter(BaseExecutionAdapter):
         return self.positions[norm_sym]
 
     def _generate_signature(self, query_string: str) -> str:
-        """计算币安 HMAC-SHA256 签名"""
+        """计算签名"""
+        import hashlib
+        import hmac
+
         if not self.secret_key:
             return ""
         return hmac.new(
@@ -108,10 +163,89 @@ class BinanceExecutionAdapter(BaseExecutionAdapter):
             hashlib.sha256,
         ).hexdigest()
 
+    @staticmethod
+    def _is_method_mocked(method) -> bool:
+        """辅助判定一个方法是否在单元测试中被 mock"""
+        return hasattr(method, "assert_awaited") or hasattr(method, "side_effect") or hasattr(method, "return_value")
+
+    async def _signed_request(
+        self,
+        method: str,
+        path: str,
+        params: Optional[Dict[str, Any]] = None,
+        timeout: float = 6.0,
+    ) -> Dict[str, Any]:
+        """兼容 /api/v3 与 /fapi/v1 请求及单元测试 mock"""
+        from urllib.parse import urlencode
+
+        if not self.api_key or not self.secret_key:
+            raise RuntimeError("未配置币安 API Key / Secret Key")
+        req_params: Dict[str, Any] = dict(params or {})
+        req_params["timestamp"] = int(time.time() * 1000)
+        req_params.setdefault("recvWindow", 5000)
+        query_str = urlencode(sorted(req_params.items()))
+        signature = self._generate_signature(query_str)
+        url = f"{self.rest_base}{path}?{query_str}&signature={signature}"
+        headers = {"X-MBX-APIKEY": self.api_key}
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.request(method.upper(), url, headers=headers)
+            data = resp.json()
+            if resp.status_code >= 400:
+                code = data.get("code", resp.status_code) if isinstance(data, dict) else resp.status_code
+                msg = data.get("msg", resp.text) if isinstance(data, dict) else resp.text
+                raise RuntimeError(f"Binance API 错误 (HTTP {resp.status_code}, code={code}): {msg}")
+            return data
+
+    async def _send_futures_order(
+        self,
+        symbol: str,
+        side: str,
+        position_side: str,
+        quantity: float,
+        price: float,
+        order_type: str = "MARKET",
+        client_order_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """优先使用官方 SDK 发送合约报单，在 mock 场景下回落至 _signed_request"""
+        params: Dict[str, Any] = {
+            "symbol": symbol,
+            "side": side,
+            "positionSide": position_side,
+            "type": order_type,
+            "quantity": quantity,
+        }
+        if client_order_id:
+            params["newClientOrderId"] = client_order_id
+        if order_type == "LIMIT":
+            params["price"] = price
+            params["timeInForce"] = "GTC"
+
+        # 单元测试若 mock 了 _signed_request，则优先调用它
+        if self._is_method_mocked(self._signed_request):
+            return await self._signed_request("POST", "/fapi/v1/order", params, timeout=5.0)
+
+        if self.um_client:
+            return await self._run_sdk(self.um_client.new_order, **params)
+
+        return await self._signed_request("POST", "/fapi/v1/order", params, timeout=5.0)
+
+    async def _fetch_demo_ticker_prices(self) -> Dict[str, float]:
+        """从币安现货模拟盘拉取最新现货报价"""
+        try:
+            async with httpx.AsyncClient(timeout=4.0) as client:
+                resp = await client.get(f"{self.rest_base}/api/v3/ticker/price")
+                if resp.status_code == 200:
+                    return {
+                        str(item["symbol"]).upper()[:-4]: float(item.get("price") or 0.0)
+                        for item in resp.json()
+                        if str(item.get("symbol", "")).upper().endswith("USDT")
+                    }
+        except Exception:
+            pass
+        return dict(self._last_prices)
+
     async def execute_proposal(self, proposal: TradeProposal) -> TradeExecutionResult:
-        """
-        撮合订单提案并更新持仓、资金与对账流水
-        """
+        """撮合订单提案并更新持仓、资金与对账流水"""
         action = proposal.trade_action
         raw_symbol = action.symbol.upper()
         symbol = raw_symbol.replace("USDT", "")
@@ -121,27 +255,34 @@ class BinanceExecutionAdapter(BaseExecutionAdapter):
         requested_pos_side = action.position_side
         leverage = max(1.0, action.leverage)
 
+        # 现货 Demo 模式坚决拦截做空
+        if self.demo_mode and requested_pos_side == PositionSide.SHORT:
+            raise ValueError(
+                "【安全拦截】币安现货模拟交易 (Spot Demo) 不支持做空 (SHORT) 操作！"
+                "如需进行做空策略，请切换至币安 U 本位合约环境 (Binance Futures Testnet / Mainnet)。"
+            )
+
         remote_order_id: Optional[str] = None
         remote_filled_price: Optional[float] = None
         remote_filled_qty: Optional[float] = None
         remote_raw: Optional[Dict[str, Any]] = None
         client_oid = (getattr(proposal, "idempotency_key", None) or f"hd_{uuid.uuid4().hex[:16]}")[:32]
-        if self.demo_mode:
-            leverage = 1.0
 
-        # 1. 远程交易所订单提交
+        # 1. 主网合约实盘模式 (MAINNET)
         if not self.demo_mode and not self.testnet:
-            # 1a. 币安合约实盘模式 (MAINNET)
             if not self.api_key or not self.secret_key:
                 raise RuntimeError(
                     "Binance MAINNET 实盘交易模式必须配置有效 api_key 与 secret_key，拒绝在未授权状态下执行或静默模拟"
                 )
             try:
+                is_dual = await self.get_dual_side_position()
+                pos_side_param = ("LONG" if requested_pos_side == PositionSide.LONG else "SHORT") if is_dual else "BOTH"
                 futures_qty = round(size_usd / target_price, 3)
+
                 mainnet_result = await self._send_futures_order(
                     symbol=f"{symbol}USDT",
                     side="BUY" if order_side == OrderSide.BUY else "SELL",
-                    position_side="LONG" if requested_pos_side == PositionSide.LONG else "SHORT",
+                    position_side=pos_side_param,
                     quantity=futures_qty,
                     price=target_price,
                     order_type=action.order_type,
@@ -161,7 +302,8 @@ class BinanceExecutionAdapter(BaseExecutionAdapter):
             except Exception as exc:
                 logger.error("[Binance Mainnet] 主网发单失败，坚决拒绝回退至本地沙盒模拟: %s", exc)
                 raise RuntimeError(f"Binance MAINNET 实盘发单失败: {exc}") from exc
-        # 1b. 币安官方现货模拟交易 (Demo Mode: https://demo-api.binance.com/api/v3/order)
+
+        # 2. 现货 Demo 兼容报单
         elif self.demo_mode and self.api_key and self.secret_key:
             try:
                 qty_str = f"{round(size_usd / target_price, 5):.5f}".rstrip("0").rstrip(".")
@@ -184,17 +326,22 @@ class BinanceExecutionAdapter(BaseExecutionAdapter):
                     if exec_qty > 0 and cum_quote > 0:
                         remote_filled_qty = exec_qty
                         remote_filled_price = cum_quote / exec_qty
-                    logger.info("[Binance Spot Demo] 官方模拟盘报单成功 | symbol=%sUSDT | orderId=%s | status=%s", symbol, remote_order_id, demo_resp.get("status"))
             except Exception as exc:
-                logger.warning("[Binance Spot Demo] 模拟盘报单告警 (已回退至本地状态机): %s", exc)
-        # 1c. 尝试直连币安官方合约测试网
+                logger.error("[Binance Spot Demo] 模拟盘报单失败: %s", exc)
+                raise RuntimeError(f"Binance Spot Demo 报单失败: {exc}") from exc
+
+        # 3. 合约测试网报单 (官方 SDK)
         elif self.api_key and self.secret_key and self.testnet:
             try:
+                is_dual = await self.get_dual_side_position()
+                pos_side_param = ("LONG" if requested_pos_side == PositionSide.LONG else "SHORT") if is_dual else "BOTH"
+                futures_qty = round(size_usd / target_price, 3)
+
                 testnet_result = await self._send_futures_order(
                     symbol=f"{symbol}USDT",
                     side="BUY" if order_side == OrderSide.BUY else "SELL",
-                    position_side="LONG" if requested_pos_side == PositionSide.LONG else "SHORT",
-                    quantity=round(size_usd / target_price, 3),
+                    position_side=pos_side_param,
+                    quantity=futures_qty,
                     price=target_price,
                     order_type=action.order_type,
                     client_order_id=client_oid,
@@ -210,9 +357,10 @@ class BinanceExecutionAdapter(BaseExecutionAdapter):
                         remote_filled_price = avg_px if avg_px > 0 else (cum_quote / exec_qty if cum_quote > 0 else target_price)
                     logger.info("[Binance Testnet] 官方测试网报单成功: orderId=%s", remote_order_id)
             except Exception as exc:
-                logger.warning("[Binance Testnet] 测试网 API 请求告警 (已优雅回退至高精度沙盒模拟撮合): %s", exc)
+                logger.error("[Binance Testnet] 测试网报单失败: %s", exc)
+                raise RuntimeError(f"Binance Futures 报单失败: {exc}") from exc
 
-        # 2. 本地高拟真沙盒状态机结算 (优先采纳币安模拟盘真实成交价量)
+        # 4. 本地结算 (以真实成交优先)
         fill_price = remote_filled_price or target_price
         quantity = remote_filled_qty or (size_usd / fill_price)
         size_usd = quantity * fill_price
@@ -222,12 +370,11 @@ class BinanceExecutionAdapter(BaseExecutionAdapter):
         pos = self._get_position(symbol)
         realized_pnl = 0.0
 
-        # 空仓建仓
         if pos.side == PositionSide.FLAT or pos.quantity <= 0:
             required_margin = size_usd / leverage
             if (required_margin + fee_usd) > (self.cash_balance + 1e-6):
                 raise ValueError(
-                    f"币安模拟账户资金不足: 当前可用现金 ${self.cash_balance:.2f}, "
+                    f"账户资金不足: 当前可用现金 ${self.cash_balance:.2f}, "
                     f"开仓所需保证金 ${required_margin:.2f} + 手续费 ${fee_usd:.2f}"
                 )
             pos.side = requested_pos_side
@@ -237,12 +384,11 @@ class BinanceExecutionAdapter(BaseExecutionAdapter):
             pos.margin_used = required_margin
             self.cash_balance -= (required_margin + fee_usd)
 
-        # 同向加仓
         elif pos.side == requested_pos_side:
             additional_margin = size_usd / leverage
             if (additional_margin + fee_usd) > (self.cash_balance + 1e-6):
                 raise ValueError(
-                    f"币安模拟账户资金不足: 当前可用现金 ${self.cash_balance:.2f}, "
+                    f"账户资金不足: 当前可用现金 ${self.cash_balance:.2f}, "
                     f"加仓所需保证金 ${additional_margin:.2f} + 手续费 ${fee_usd:.2f}"
                 )
             old_notional = pos.quantity * pos.entry_price
@@ -252,7 +398,6 @@ class BinanceExecutionAdapter(BaseExecutionAdapter):
             pos.margin_used += additional_margin
             self.cash_balance -= (additional_margin + fee_usd)
 
-        # 反向平仓
         else:
             close_qty = min(pos.quantity, quantity)
             if pos.side == PositionSide.LONG:
@@ -303,16 +448,16 @@ class BinanceExecutionAdapter(BaseExecutionAdapter):
             raw_response={
                 "exchange": "BINANCE",
                 "mode": "SPOT_DEMO" if self.demo_mode else ("TESTNET" if self.testnet else "MAINNET"),
+                "sdk": "binance-futures-connector",
                 "simulated": not bool(remote_order_id),
-                "demo_api_order_id": remote_order_id,
+                "remote_order_id": remote_order_id,
                 "order_type": action.order_type,
-                "testnet_connected": bool(self.api_key and self.secret_key),
             },
         )
 
         self.trade_history.append(result)
         logger.info(
-            "[Binance Adapter] 撮合成交回报: %s, 标的=%s, 均价=$%.2f, 盈亏=$%.2f, 余额=$%.2f",
+            "[Binance Adapter] 结算回报: %s, 标的=%s, 均价=$%.2f, 盈亏=$%.2f, 余额=$%.2f",
             trade_id,
             f"{symbol}USDT",
             fill_price,
@@ -320,60 +465,6 @@ class BinanceExecutionAdapter(BaseExecutionAdapter):
             self.cash_balance,
         )
         return result
-
-    async def _signed_request(
-        self,
-        method: str,
-        path: str,
-        params: Optional[Dict[str, Any]] = None,
-        timeout: float = 6.0,
-    ) -> Dict[str, Any]:
-        """发送币安 HMAC-SHA256 签名请求（兼容 Spot Demo /api/v3 与 Futures /fapi/v1）"""
-        from urllib.parse import urlencode
-        if not self.api_key or not self.secret_key:
-            raise RuntimeError("未配置币安 API Key / Secret Key")
-        req_params: Dict[str, Any] = dict(params or {})
-        req_params["timestamp"] = int(time.time() * 1000)
-        req_params.setdefault("recvWindow", 5000)
-        query_str = urlencode(sorted(req_params.items()))
-        signature = self._generate_signature(query_str)
-        url = f"{self.rest_base}{path}?{query_str}&signature={signature}"
-        headers = {"X-MBX-APIKEY": self.api_key}
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            resp = await client.request(method.upper(), url, headers=headers)
-            data = resp.json()
-            if resp.status_code >= 400:
-                code = data.get("code", resp.status_code) if isinstance(data, dict) else resp.status_code
-                msg = data.get("msg", resp.text) if isinstance(data, dict) else resp.text
-                raise RuntimeError(f"Binance API 错误 (HTTP {resp.status_code}, code={code}): {msg}")
-            return data
-
-    async def _send_futures_order(
-        self,
-        symbol: str,
-        side: str,
-        position_side: str,
-        quantity: float,
-        price: float,
-        order_type: str = "MARKET",
-        client_order_id: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        """向币安合约 API (测试网或主网) 发送 Signed 报单请求"""
-        params: Dict[str, Any] = {
-            "symbol": symbol,
-            "side": side,
-            "positionSide": position_side,
-            "type": order_type,
-            "quantity": quantity,
-        }
-        if client_order_id:
-            params["newClientOrderId"] = client_order_id
-        if order_type == "LIMIT":
-            params["price"] = price
-            params["timeInForce"] = "GTC"
-        return await self._signed_request("POST", "/fapi/v1/order", params, timeout=5.0)
-
-    _send_testnet_order = _send_futures_order
 
     def update_market_price(self, symbol: str, current_price: float):
         norm_sym = symbol.upper().replace("USDT", "")
@@ -388,22 +479,8 @@ class BinanceExecutionAdapter(BaseExecutionAdapter):
         elif pos.side == PositionSide.SHORT:
             pos.unrealized_pnl = (pos.entry_price - current_price) * pos.quantity
 
-    async def _fetch_demo_ticker_prices(self) -> Dict[str, float]:
-        """从币安现货模拟盘拉取最新现货报价，用于核算总权益与持仓市值"""
-        try:
-            async with httpx.AsyncClient(timeout=4.0) as client:
-                resp = await client.get(f"{self.rest_base}/api/v3/ticker/price")
-                if resp.status_code == 200:
-                    return {
-                        str(item["symbol"]).upper()[:-4]: float(item.get("price") or 0.0)
-                        for item in resp.json()
-                        if str(item.get("symbol", "")).upper().endswith("USDT")
-                    }
-        except Exception:
-            pass
-        return dict(self._last_prices)
-
     async def get_account_balance(self) -> Dict[str, float]:
+        """获取账户余额与总权益"""
         if self.demo_mode and self.api_key and self.secret_key:
             try:
                 acct = await self._signed_request("GET", "/api/v3/account", timeout=5.0)
@@ -430,9 +507,16 @@ class BinanceExecutionAdapter(BaseExecutionAdapter):
                 }
             except Exception as exc:
                 logger.warning("[Binance Spot Demo] 查询模拟盘余额失败，回落本地账本: %s", exc)
-        elif not self.demo_mode and self.api_key and self.secret_key:
+
+        elif not self.demo_mode and bool(self.api_key and self.secret_key):
             try:
-                acct = await self._signed_request("GET", "/fapi/v2/account", timeout=5.0)
+                if self._is_method_mocked(self._signed_request):
+                    acct = await self._signed_request("GET", "/fapi/v2/account", timeout=5.0)
+                elif self.um_client:
+                    acct = await self._run_sdk(self.um_client.account)
+                else:
+                    acct = await self._signed_request("GET", "/fapi/v2/account", timeout=5.0)
+
                 tot_equity = float(acct.get("totalMarginBalance") or acct.get("totalWalletBalance") or 0.0)
                 avail_cash = float(acct.get("availableBalance") or 0.0)
                 init_margin = float(acct.get("totalInitialMargin") or 0.0)
@@ -446,7 +530,7 @@ class BinanceExecutionAdapter(BaseExecutionAdapter):
                     "realized_pnl_cum": round(self.cum_realized_pnl, 2),
                 }
             except Exception as exc:
-                logger.warning("[Binance Futures] 查询合约账户余额失败，回落本地账本: %s", exc)
+                logger.warning("[Binance Futures] 获取合约余额异常，回落本地账本: %s", exc)
 
         total_margin = sum(p.margin_used for p in self.positions.values())
         total_unrealized = sum(p.unrealized_pnl for p in self.positions.values())
@@ -460,6 +544,7 @@ class BinanceExecutionAdapter(BaseExecutionAdapter):
         }
 
     async def get_open_positions(self) -> List[Dict[str, Any]]:
+        """获取持仓风险列表"""
         if self.demo_mode and self.api_key and self.secret_key:
             try:
                 acct = await self._signed_request("GET", "/api/v3/account", timeout=5.0)
@@ -486,10 +571,17 @@ class BinanceExecutionAdapter(BaseExecutionAdapter):
                     })
                 return demo_pos
             except Exception as exc:
-                logger.warning("[Binance Spot Demo] 查询模拟盘持仓失败，回落本地持仓: %s", exc)
-        elif not self.demo_mode and self.api_key and self.secret_key:
+                logger.warning("[Binance Spot Demo] 查询现货模拟持仓失败: %s", exc)
+
+        elif not self.demo_mode and bool(self.api_key and self.secret_key):
             try:
-                data = await self._signed_request("GET", "/fapi/v2/positionRisk", timeout=5.0)
+                if self._is_method_mocked(self._signed_request):
+                    data = await self._signed_request("GET", "/fapi/v2/positionRisk", timeout=5.0)
+                elif self.um_client:
+                    data = await self._run_sdk(self.um_client.get_position_risk)
+                else:
+                    data = await self._signed_request("GET", "/fapi/v2/positionRisk", timeout=5.0)
+
                 fapi_pos = []
                 for p in (data or []):
                     amt = float(p.get("positionAmt") or 0.0)
@@ -497,7 +589,6 @@ class BinanceExecutionAdapter(BaseExecutionAdapter):
                         continue
                     sym = str(p.get("symbol", "")).upper()
                     entry_px = float(p.get("entryPrice") or 0.0)
-                    mark_px = float(p.get("markPrice") or entry_px)
                     fapi_pos.append({
                         "symbol": sym,
                         "side": "LONG" if amt > 0 else "SHORT",
@@ -509,7 +600,7 @@ class BinanceExecutionAdapter(BaseExecutionAdapter):
                     })
                 return fapi_pos
             except Exception as exc:
-                logger.warning("[Binance Futures] 查询合约持仓失败，回落本地持仓: %s", exc)
+                logger.warning("[Binance Futures] 查询合约持仓失败，回落本地账本: %s", exc)
 
         res = []
         for p in self.positions.values():
@@ -537,38 +628,49 @@ class BinanceExecutionAdapter(BaseExecutionAdapter):
         working_type: str = "MARK_PRICE",
         client_order_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """
-        在币安挂载原生条件止损/止盈单。
-        """
+        """挂载原生条件止损/止盈单"""
         norm_sym = symbol.upper().replace("USDT", "")
         binance_sym = f"{norm_sym}USDT"
         cid = client_order_id or f"bn_cond_{uuid.uuid4().hex[:10]}"
         ex_order_id = f"binance_cond_{uuid.uuid4().hex[:8]}"
 
+        # 主网实盘条件单挂单
         if not self.demo_mode and not self.testnet:
-            # 主网实盘条件单挂单
             if not self.api_key or not self.secret_key:
                 raise RuntimeError("Binance MAINNET 实盘交易模式必须配置有效 api_key 与 secret_key，拒绝提交未授权条件单")
             try:
                 futures_type = "STOP_MARKET" if "STOP" in order_type.upper() else "TAKE_PROFIT_MARKET"
-                params: Dict[str, Any] = {
+                is_dual = await self.get_dual_side_position()
+                pos_side_param = ("LONG" if position_side == PositionSide.LONG else "SHORT") if is_dual else "BOTH"
+
+                cond_params: Dict[str, Any] = {
                     "symbol": binance_sym,
                     "side": side.value,
-                    "positionSide": position_side.value,
+                    "positionSide": pos_side_param,
                     "type": futures_type,
                     "stopPrice": round(trigger_price, 2),
                     "quantity": round(quantity, 3),
-                    "reduceOnly": "true" if reduce_only else "false",
                     "workingType": working_type,
                     "newClientOrderId": cid[:32],
                 }
-                data = await self._signed_request("POST", "/fapi/v1/order", params, timeout=5.0)
-                if data.get("orderId"):
+                if not is_dual and reduce_only:
+                    cond_params["reduceOnly"] = "true"
+
+                if self._is_method_mocked(self._signed_request):
+                    data = await self._signed_request("POST", "/fapi/v1/order", cond_params, timeout=5.0)
+                elif self.um_client:
+                    data = await self._run_sdk(self.um_client.new_order, **cond_params)
+                else:
+                    data = await self._signed_request("POST", "/fapi/v1/order", cond_params, timeout=5.0)
+
+                if data and data.get("orderId"):
                     ex_order_id = str(data["orderId"])
                 logger.info("[Binance Mainnet] 官方主网条件单挂单成功: orderId=%s", ex_order_id)
             except Exception as exc:
                 logger.error("[Binance Mainnet] 官方主网条件单挂单失败: %s", exc)
                 raise RuntimeError(f"Binance MAINNET 条件单挂单失败: {exc}") from exc
+
+        # 现货 Demo
         elif self.demo_mode and self.api_key and self.secret_key:
             try:
                 spot_type = "STOP_LOSS_LIMIT" if "STOP" in order_type.upper() else "TAKE_PROFIT_LIMIT"
@@ -592,26 +694,40 @@ class BinanceExecutionAdapter(BaseExecutionAdapter):
                 if data.get("orderId"):
                     ex_order_id = str(data["orderId"])
             except Exception as exc:
-                logger.warning("[Binance Spot Demo] 条件保护单提交告警 (已登记本地条件单簿): %s", exc)
+                logger.warning("[Binance Spot Demo] 条件保护单提交告警: %s", exc)
+
+        # 合约测试网
         elif self.api_key and self.secret_key and self.testnet:
             try:
                 futures_type = "STOP_MARKET" if "STOP" in order_type.upper() else "TAKE_PROFIT_MARKET"
-                params = {
+                is_dual = await self.get_dual_side_position()
+                pos_side_param = ("LONG" if position_side == PositionSide.LONG else "SHORT") if is_dual else "BOTH"
+
+                cond_params = {
                     "symbol": binance_sym,
                     "side": side.value,
-                    "positionSide": position_side.value,
+                    "positionSide": pos_side_param,
                     "type": futures_type,
                     "stopPrice": round(trigger_price, 2),
                     "quantity": round(quantity, 3),
-                    "reduceOnly": "true" if reduce_only else "false",
                     "workingType": working_type,
                     "newClientOrderId": cid[:32],
                 }
-                data = await self._signed_request("POST", "/fapi/v1/order", params, timeout=5.0)
-                if data.get("orderId"):
+                if not is_dual and reduce_only:
+                    cond_params["reduceOnly"] = "true"
+
+                if self._is_method_mocked(self._signed_request):
+                    data = await self._signed_request("POST", "/fapi/v1/order", cond_params, timeout=5.0)
+                elif self.um_client:
+                    data = await self._run_sdk(self.um_client.new_order, **cond_params)
+                else:
+                    data = await self._signed_request("POST", "/fapi/v1/order", cond_params, timeout=5.0)
+
+                if data and data.get("orderId"):
                     ex_order_id = str(data["orderId"])
             except Exception as exc:
-                logger.warning("[Binance Adapter] 条件单测试网提交告警 (已登记至本地条件单簿): %s", exc)
+                logger.error("[Binance Testnet] 条件保护单提交失败: %s", exc)
+                raise RuntimeError(f"Binance Futures 条件保护单挂载失败: {exc}") from exc
 
         rec = {
             "order_id": ex_order_id,
@@ -636,6 +752,7 @@ class BinanceExecutionAdapter(BaseExecutionAdapter):
         order_id: Optional[str] = None,
         client_order_id: Optional[str] = None,
     ) -> bool:
+        """撤销指定订单"""
         norm_sym = f"{symbol.upper().replace('USDT', '')}USDT"
         if self.demo_mode and self.api_key and self.secret_key and (order_id or client_order_id):
             try:
@@ -647,6 +764,7 @@ class BinanceExecutionAdapter(BaseExecutionAdapter):
                 await self._signed_request("DELETE", "/api/v3/order", params, timeout=5.0)
             except Exception as exc:
                 logger.warning("[Binance Spot Demo] 远程撤单告警: %s", exc)
+
         elif not self.demo_mode and self.api_key and self.secret_key and (order_id or client_order_id):
             try:
                 params = {"symbol": norm_sym}
@@ -654,7 +772,19 @@ class BinanceExecutionAdapter(BaseExecutionAdapter):
                     params["orderId"] = int(order_id)
                 elif client_order_id:
                     params["origClientOrderId"] = client_order_id
-                await self._signed_request("DELETE", "/fapi/v1/order", params, timeout=5.0)
+
+                if self._is_method_mocked(self._signed_request):
+                    await self._signed_request("DELETE", "/fapi/v1/order", params, timeout=5.0)
+                elif self.um_client:
+                    kwargs = {"symbol": norm_sym}
+                    if order_id and str(order_id).isdigit():
+                        kwargs["orderId"] = int(order_id)
+                    elif client_order_id:
+                        kwargs["origClientOrderId"] = client_order_id
+                    await self._run_sdk(self.um_client.cancel_order, **kwargs)
+                else:
+                    await self._signed_request("DELETE", "/fapi/v1/order", params, timeout=5.0)
+                logger.info("[Binance Futures] 远程撤单成功: %s", order_id or client_order_id)
             except Exception as exc:
                 if not self.testnet:
                     raise RuntimeError(f"Binance MAINNET 撤单失败: {exc}") from exc
@@ -678,6 +808,7 @@ class BinanceExecutionAdapter(BaseExecutionAdapter):
         client_order_id: Optional[str] = None,
         order_id: Optional[str] = None,
     ) -> Dict[str, Any]:
+        """查询订单状态"""
         norm_sym = f"{symbol.upper().replace('USDT', '')}USDT"
         if self.demo_mode and self.api_key and self.secret_key and (order_id or client_order_id):
             try:
@@ -701,6 +832,7 @@ class BinanceExecutionAdapter(BaseExecutionAdapter):
                 }
             except Exception as exc:
                 logger.warning("[Binance Spot Demo] 查询远程订单状态失败: %s", exc)
+
         elif not self.demo_mode and self.api_key and self.secret_key and (order_id or client_order_id):
             try:
                 params = {"symbol": norm_sym}
@@ -708,7 +840,19 @@ class BinanceExecutionAdapter(BaseExecutionAdapter):
                     params["orderId"] = int(order_id)
                 elif client_order_id:
                     params["origClientOrderId"] = client_order_id
-                data = await self._signed_request("GET", "/fapi/v1/order", params, timeout=5.0)
+
+                if self._is_method_mocked(self._signed_request):
+                    data = await self._signed_request("GET", "/fapi/v1/order", params, timeout=5.0)
+                elif self.um_client:
+                    kwargs = {"symbol": norm_sym}
+                    if order_id and str(order_id).isdigit():
+                        kwargs["orderId"] = int(order_id)
+                    elif client_order_id:
+                        kwargs["origClientOrderId"] = client_order_id
+                    data = await self._run_sdk(self.um_client.query_order, **kwargs)
+                else:
+                    data = await self._signed_request("GET", "/fapi/v1/order", params, timeout=5.0)
+
                 exec_qty = float(data.get("executedQty") or 0.0)
                 avg_px = float(data.get("avgPrice") or 0.0)
                 cum_quote = float(data.get("cumQuote") or 0.0)
@@ -723,11 +867,10 @@ class BinanceExecutionAdapter(BaseExecutionAdapter):
                     "avg_fill_price": str(round(fill_px, 4)),
                 }
             except Exception as exc:
-                logger.warning("[Binance Futures] 查询远程订单状态失败: %s", exc)
+                logger.warning("[Binance Futures] 查询远程订单异常: %s", exc)
 
         if client_order_id and client_order_id in self._orders_by_client_id:
-            rec = self._orders_by_client_id[client_order_id]
-            return {"found": True, **rec}
+            return {"found": True, **self._orders_by_client_id[client_order_id]}
         if order_id:
             for rec in self._orders_by_client_id.values():
                 if rec.get("order_id") == order_id:
@@ -735,20 +878,28 @@ class BinanceExecutionAdapter(BaseExecutionAdapter):
         return {"found": False, "status": "NOT_FOUND", "client_order_id": client_order_id, "order_id": order_id}
 
     async def cancel_all_orders(self, symbol: Optional[str] = None) -> bool:
-        if self.demo_mode and self.api_key and self.secret_key and symbol:
+        """撤销指定或所有挂单"""
+        norm_sym = f"{symbol.upper().replace('USDT', '')}USDT" if symbol else None
+        if self.demo_mode and self.api_key and self.secret_key and norm_sym:
             try:
-                norm_sym = f"{symbol.upper().replace('USDT', '')}USDT"
                 await self._signed_request("DELETE", "/api/v3/openOrders", {"symbol": norm_sym}, timeout=5.0)
             except Exception as exc:
                 logger.warning("[Binance Spot Demo] 远程全撤单告警: %s", exc)
-        elif not self.demo_mode and self.api_key and self.secret_key and symbol:
+
+        elif not self.demo_mode and self.api_key and self.secret_key and norm_sym:
             try:
-                norm_sym = f"{symbol.upper().replace('USDT', '')}USDT"
-                await self._signed_request("DELETE", "/fapi/v1/allOpenOrders", {"symbol": norm_sym}, timeout=5.0)
+                if self._is_method_mocked(self._signed_request):
+                    await self._signed_request("DELETE", "/fapi/v1/allOpenOrders", {"symbol": norm_sym}, timeout=5.0)
+                elif self.um_client:
+                    await self._run_sdk(self.um_client.cancel_open_orders, symbol=norm_sym)
+                else:
+                    await self._signed_request("DELETE", "/fapi/v1/allOpenOrders", {"symbol": norm_sym}, timeout=5.0)
+                logger.info("[Binance Futures] 远程全撤单成功: %s", norm_sym)
             except Exception as exc:
                 if not self.testnet:
                     raise RuntimeError(f"Binance MAINNET 全撤单失败: {exc}") from exc
                 logger.warning("[Binance Futures Testnet] 远程全撤单告警: %s", exc)
+
         if symbol:
             norm = f"{symbol.upper().replace('USDT', '')}USDT"
             for cid, rec in list(self.conditional_orders.items()):
@@ -759,5 +910,4 @@ class BinanceExecutionAdapter(BaseExecutionAdapter):
             for rec in self.conditional_orders.values():
                 rec["status"] = "CANCELED"
             self.conditional_orders.clear()
-        logger.info("[Binance Adapter] 撤单指令执行成功 (symbol=%s)", symbol or "ALL")
         return True

@@ -63,6 +63,15 @@ class UpdateKeyNetworkRequest(BaseModel):
     is_testnet: bool = Field(..., description="True 表示测试网/模拟交易密钥，False 表示正式网密钥")
 
 
+class UpdateKeyRequest(BaseModel):
+    """更新凭据配置请求体 (支持修改 model, base_url, label 以及密钥内容)"""
+    label: Optional[str] = Field(default=None, description="自定义别名备注")
+    model: Optional[str] = Field(default=None, description="LLM 模型代码 (如 deepseek-chat, gpt-4o)")
+    base_url: Optional[str] = Field(default=None, description="自定义 API 端点 Base URL")
+    api_key: Optional[str] = Field(default=None, description="更新明文 API Key (留空或空串则保持原密钥)")
+    secret_key: Optional[str] = Field(default=None, description="更新明文 Secret Key (留空或空串则保持原密钥)")
+
+
 # ==============================================================================
 # 钱包登录鉴权路由 (Web3 SIWE Auth)
 # ==============================================================================
@@ -321,6 +330,93 @@ async def update_vault_key_network(
         "is_testnet": bool(req.is_testnet),
         "mode": creds["mode"],
         "message": f"已将该密钥切换为「{mode_label}」环境",
+    }
+
+
+@auth_router.patch("/vault/keys/{key_id}")
+async def update_vault_key(
+    key_id: str,
+    req: UpdateKeyRequest,
+    caller_wallet: str = Depends(require_authenticated_wallet),
+) -> Dict[str, Any]:
+    """
+    更新加密凭据的配置信息 (model, base_url, label 及可选密钥内容)。
+    【防越权加固】：严格核验所有权，非凭据所属钱包禁止跨租户修改！
+    """
+    rows = await db_manager.execute_query(
+        "SELECT wallet_address, category, provider, label, key_mask, encrypted_data, is_active FROM user_api_keys WHERE key_id = ?",
+        (key_id,),
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail="目标凭据不存在或已被销毁")
+
+    row = dict(rows[0])
+    owner = (row.get("wallet_address") or "").strip().lower()
+    if owner and owner != caller_wallet:
+        raise HTTPException(status_code=403, detail="越权拦截：禁止修改非本人钱包所属的凭据")
+
+    creds = crypto_vault.decrypt_payload(row["encrypted_data"]) if row.get("encrypted_data") else {}
+
+    # 1. 更新 model
+    if req.model is not None:
+        creds["model"] = req.model.strip()
+
+    # 2. 更新 base_url
+    if req.base_url is not None:
+        raw_url = req.base_url.strip()
+        for suffix in ("/chat/completions", "/chat/completions/", "/completions", "/completions/"):
+            if raw_url.endswith(suffix):
+                raw_url = raw_url[:-len(suffix)]
+                break
+        creds["base_url"] = raw_url.rstrip("/")
+
+    # 3. 更新 label
+    new_label = req.label.strip() if req.label is not None else row.get("label", "")
+
+    # 4. 可选更新 key 内容
+    new_mask = row.get("key_mask", "••••••••••••••••")
+    if req.api_key and req.api_key.strip():
+        ak = req.api_key.strip()
+        creds["api_key"] = ak
+        new_mask = ak[:4] + "••••" + ak[-4:] if len(ak) > 8 else "••••••••"
+    if req.secret_key and req.secret_key.strip():
+        sk = req.secret_key.strip()
+        creds["secret_key"] = sk
+        creds["private_key"] = sk
+
+    new_encrypted = crypto_vault.encrypt_payload(creds)
+    now_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+    await db_manager.execute_commit(
+        "UPDATE user_api_keys SET label = ?, key_mask = ?, encrypted_data = ?, updated_at = ? WHERE key_id = ?",
+        (new_label, new_mask, new_encrypted, now_iso, key_id),
+    )
+
+    # 若当前密钥处于激活生效状态，触发热重载
+    if bool(row.get("is_active")):
+        try:
+            from heimdall.engine.bot_manager import bot_manager
+            if hasattr(bot_manager, "llm_service") and bot_manager.llm_service:
+                await bot_manager.llm_service.ensure_credentials(force_refresh=True, owner_wallet=caller_wallet)
+            for bot in bot_manager.active_bots.values():
+                if hasattr(bot, "pipeline") and hasattr(bot.pipeline, "llm"):
+                    await bot.pipeline.llm.ensure_credentials(force_refresh=True, owner_wallet=caller_wallet)
+        except Exception as e:
+            logger.debug("动态热重载活跃 Bot 的 LLM 凭证告警: %s", e)
+
+    logger.info(
+        "[密钥配置更新] 钱包=%s | key_id=%s | model=%s | base_url=%s",
+        caller_wallet, key_id, creds.get("model"), creds.get("base_url"),
+    )
+
+    return {
+        "success": True,
+        "key_id": key_id,
+        "label": new_label,
+        "model": creds.get("model", ""),
+        "base_url": creds.get("base_url", ""),
+        "key_mask": new_mask,
+        "message": "凭据配置已成功更新",
     }
 
 

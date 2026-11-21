@@ -71,6 +71,14 @@ export async function updateVaultKeyNetwork(keyId, isTestnet) {
   });
 }
 
+/** 更新指定凭据的配置信息 (model, base_url, label 及可选密钥内容) */
+export async function updateVaultKey(keyId, data) {
+  return apiRequest(`/api/v1/vault/keys/${encodeURIComponent(keyId)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(data),
+  });
+}
+
 /** 设为当前默认激活密钥（多密钥中切换活跃大模型） */
 export async function activateVaultKey(keyId) {
   return apiRequest(`/api/v1/vault/keys/${encodeURIComponent(keyId)}/activate`, {
