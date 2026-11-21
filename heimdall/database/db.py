@@ -355,6 +355,13 @@ class DatabaseManager:
                 updated_at TEXT NOT NULL
             );
             """,
+            """
+            CREATE TABLE IF NOT EXISTS system_settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            """,
             "ALTER TABLE trading_agents ADD COLUMN IF NOT EXISTS owner_wallet TEXT NOT NULL DEFAULT 'system';",
             "CREATE INDEX IF NOT EXISTS idx_decisions_agent_ts ON agent_decisions (agent_id, timestamp DESC);",
             "CREATE INDEX IF NOT EXISTS idx_trades_agent_exec ON trades (agent_id, executed_at DESC);",
@@ -519,6 +526,14 @@ class DatabaseManager:
                     state TEXT NOT NULL,
                     error_message TEXT,
                     created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                """)
+
+                cursor.execute("""
+                CREATE TABLE IF NOT EXISTS system_settings (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 );
                 """)

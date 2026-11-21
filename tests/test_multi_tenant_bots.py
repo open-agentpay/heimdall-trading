@@ -122,3 +122,20 @@ def test_multi_tenant_bot_ownership_and_isolation():
         assert not any(b["bot_id"] == bot_a_id for b in after_del_bots)
     finally:
         bot_manager.bots.pop(bot_a_id, None)
+
+
+def test_deleted_default_bot_not_recreated_on_bootstrap():
+    """验证默认机器人被删除后，服务再次执行 bootstrap_default_bots 绝不重复复活已删机器人"""
+    import asyncio
+    from heimdall.database.repository import trading_repo
+
+    async def _run():
+        target_bot = "bot_sol_arb_01"
+        await trading_repo.mark_bot_as_deleted(target_bot)
+        assert await trading_repo.is_bot_deleted(target_bot) is True
+
+        bot_manager.bots.pop(target_bot, None)
+        await bot_manager.bootstrap_default_bots()
+        assert target_bot not in bot_manager.bots
+
+    asyncio.run(_run())

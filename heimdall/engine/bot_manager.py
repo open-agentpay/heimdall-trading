@@ -709,20 +709,50 @@ class BotManager:
             await bot.executor.cancel_all_orders(bot.symbol)
             logger.critical("[BotManager 紧急急停] 已对机器人 %s 执行全撤单与安全锁定！", bot.bot_id)
 
-    async def bootstrap_default_bots(self) -> None:
+    async def bootstrap_default_bots(self, repo: Optional[Any] = None) -> None:
         """
-        初始化系统预置的标准交易机器人
-        确保前端或 CLI 接入时立刻拥有真实机器人实例与运行状态
+        初始化系统预置的标准交易机器人。
+        规则：
+        1. 仅在首次全新部署且数据库中尚无任何机器人档案时执行一次引导；
+        2. 若已经完成过首次引导、数据库中已有用户创建的私有 Bot、或者某个预置 Bot 已被用户删除，
+           则绝对不再重复注入或复活已删除的默认机器人！
         """
-        if self.bots:
-            return
+        target_repo = repo or trading_repo
+
+        # 检查是否已完成过首次系统引导
+        try:
+            is_bootstrapped = await target_repo.get_system_setting("defaults_bootstrapped", "false")
+            if is_bootstrapped == "true":
+                logger.info("[BotManager] 系统已完成过初始引导，跳过默认示范机器人创建")
+                return
+
+            # 检查数据库中是否已存在已持久化的机器人
+            existing_agents = await target_repo.get_all_agents()
+            if existing_agents:
+                logger.info("[BotManager] 数据库已存在 %d 个机器人档案，标记引导完成并不再注入默认机器人", len(existing_agents))
+                await target_repo.set_system_setting("defaults_bootstrapped", "true")
+                return
+        except Exception as check_err:
+            logger.warning("[BotManager] 检查系统引导状态异常: %s", check_err)
 
         defaults = [
             ("bot_eth_debate_01", "ETH 多空激辩对战", "ETH", StrategyType.BULL_BEAR_DEBATE, 10000.0),
             ("bot_btc_trend_01", "BTC 宏观趋势突破跟踪", "BTC", StrategyType.TREND_FOLLOW, 25000.0),
             ("bot_sol_arb_01", "SOL 资金费率跨期对冲", "SOL", StrategyType.FUNDING_ARB, 5000.0),
         ]
+        created_count = 0
         for bid, name, sym, stype, cap in defaults:
+            # 严格检查：若该机器人被用户明确删除过，绝不复活
+            try:
+                if await target_repo.is_bot_deleted(bid):
+                    logger.info("[BotManager] 预置机器人 %s 已被用户主动删除，跳过初始化", bid)
+                    continue
+            except Exception:
+                pass
+
+            if bid in self.bots:
+                continue
+
             bot = self.create_bot(
                 bot_id=bid,
                 name=name,
@@ -732,10 +762,11 @@ class BotManager:
             )
             # 默认设置为 RUNNING
             bot.status = AgentStatus.RUNNING
+            created_count += 1
 
             # 确保在 trading_agents 表中登记档案，满足 PostgreSQL 外键完整性约束
             try:
-                await trading_repo.save_agent(
+                await target_repo.save_agent(
                     agent_id=bid,
                     name=name,
                     symbol=sym,
@@ -751,7 +782,7 @@ class BotManager:
 
             # 确保数据库中存在初始 1.0000 净值基准切片
             try:
-                exist_series = await trading_repo.get_nav_series(bid, limit=1)
+                exist_series = await target_repo.get_nav_series(bid, limit=1)
                 if not exist_series:
                     init_snap = bot.nav_engine.record_snapshot(
                         total_equity=cap,
@@ -760,9 +791,15 @@ class BotManager:
                         unrealized_pnl=0.0,
                         realized_pnl_cum=0.0,
                     )
-                    await trading_repo.record_equity_snapshot(bid, init_snap)
+                    await target_repo.record_equity_snapshot(bid, init_snap)
             except Exception as init_snap_err:
                 logger.warning("[Bot %s] 写入初始净值基准失败: %s", bid, init_snap_err)
+
+        # 标记首次引导完成
+        try:
+            await target_repo.set_system_setting("defaults_bootstrapped", "true")
+        except Exception as flag_err:
+            logger.warning("[BotManager] 记录 defaults_bootstrapped 标志失败: %s", flag_err)
 
         # 为主力机器人主动触发一轮初始 step 推演，生成真实的初始行情指标与多 Agent 决策
         try:

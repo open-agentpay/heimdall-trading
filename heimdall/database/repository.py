@@ -115,6 +115,40 @@ class TradingRepository:
         logger.info("[Repository] 机器人及其全部关联历史记录已从数据库物理删除: %s (affected=%d)", agent_id, deleted)
         return deleted
 
+    async def get_system_setting(self, key: str, default: Optional[str] = None) -> Optional[str]:
+        """获取系统级持久化配置项"""
+        try:
+            sql = "SELECT value FROM system_settings WHERE key = ? LIMIT 1;"
+            rows = await self.db.execute_query(sql, (key,))
+            if rows:
+                return rows[0].get("value")
+        except Exception as e:
+            logger.debug("[Repository] 读取系统配置项 %s 异常: %s", key, e)
+        return default
+
+    async def set_system_setting(self, key: str, value: str) -> None:
+        """保存或更新系统级持久化配置项"""
+        now = datetime.now(timezone.utc).isoformat()
+        sql = """
+        INSERT INTO system_settings (key, value, updated_at) VALUES (?, ?, ?)
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at;
+        """
+        await self.db.execute_commit(sql, (key, value, now))
+
+    async def mark_bot_as_deleted(self, bot_id: str) -> None:
+        """记录被用户主动删除的机器人 ID（删除墓碑），确保重启时绝不被初始化复活"""
+        deleted_raw = await self.get_system_setting("deleted_bot_ids", "") or ""
+        deleted_set = set(filter(None, [x.strip() for x in deleted_raw.split(",")]))
+        deleted_set.add(bot_id.strip())
+        await self.set_system_setting("deleted_bot_ids", ",".join(sorted(deleted_set)))
+        logger.info("[Repository] 机器人 %s 已永久登记至已删除列表 (重启不再初始化)", bot_id)
+
+    async def is_bot_deleted(self, bot_id: str) -> bool:
+        """检查指定机器人是否曾被用户主动删除"""
+        deleted_raw = await self.get_system_setting("deleted_bot_ids", "") or ""
+        deleted_set = set(filter(None, [x.strip() for x in deleted_raw.split(",")]))
+        return bot_id.strip() in deleted_set
+
     # -------------------------------------------------------------------------
     # 2. 决策链与多空辩论审计日志 (Agent Decisions)
     # -------------------------------------------------------------------------

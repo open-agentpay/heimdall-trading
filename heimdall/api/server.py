@@ -66,10 +66,10 @@ async def lifespan(app: FastAPI):
     """
     logger.info(">>> [Heimdall 服务启动] 正在检查并初始化数据库表结构...")
     await db_manager.init_tables()
-    logger.info(">>> [Heimdall 服务就绪] 数据库就绪，正在引导预置交易机器人...")
-    await bot_manager.bootstrap_default_bots()
+    logger.info(">>> [Heimdall 服务就绪] 数据库就绪，正在恢复历史机器人与引导预置策略...")
     restored = await bot_manager.restore_persisted_bots()
     logger.info(">>> [Heimdall 启动恢复] 已从数据库恢复 %d 个历史持久化机器人", restored)
+    await bot_manager.bootstrap_default_bots()
     dead_man_switch.start()
     logger.info(">>> [Heimdall 引导完毕] 默认机器人已注册并就绪，后台调度与外部心跳中枢待命。")
     yield
@@ -360,6 +360,8 @@ async def delete_bot(
     await bot_manager.delete_bot(bot_id)
     # 3. 从数据库级联删除持久化记录
     await trading_repo.delete_agent(bot_id)
+    # 4. 永久记录已删除名单（墓碑标记），确保后续重启或热更新时永不复活
+    await trading_repo.mark_bot_as_deleted(bot_id)
 
     logger.info("[BotManagement] 用户 %s 已彻底删除机器人: %s (%s)", caller_wallet, bot_id, bot_name)
     return {
