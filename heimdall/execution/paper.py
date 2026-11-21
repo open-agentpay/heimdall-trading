@@ -7,7 +7,7 @@ Heimdall 交易平台 - 模拟盘沙盒执行引擎 (Paper Trading Adapter)
 
 import uuid
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, Any, List, Optional
 from heimdall.execution.base import BaseExecutionAdapter, TradeExecutionResult
 from heimdall.models.schemas import TradeProposal, PositionSide, OrderSide, ExchangeType
@@ -89,25 +89,34 @@ class PaperExecutionAdapter(BaseExecutionAdapter):
         # =====================================================================
         # 场景 A: 当前为空仓，直接新建多仓或空仓
         if pos.side == PositionSide.FLAT or pos.quantity <= 0:
+            # 扣除保证金与手续费 (Margin = Nominal / Leverage)
+            required_margin = size_usd / leverage
+            if (required_margin + fee_usd) > (self.cash_balance + 1e-6):
+                raise ValueError(
+                    f"空闲可用资金不足: 当前可用现金 ${self.cash_balance:.2f}, "
+                    f"建仓所需保证金 ${required_margin:.2f} + 手续费 ${fee_usd:.2f} (合计 ${required_margin + fee_usd:.2f})"
+                )
             pos.side = requested_pos_side
             pos.quantity = quantity
             pos.entry_price = fill_price
             pos.leverage = leverage
-            # 扣除保证金与手续费 (Margin = Nominal / Leverage)
-            required_margin = size_usd / leverage
             pos.margin_used = required_margin
             self.cash_balance -= (required_margin + fee_usd)
 
         # 场景 B: 同向加仓（加多或加空）
         elif pos.side == requested_pos_side:
+            # 追加保证金与扣减手续费
+            additional_margin = size_usd / leverage
+            if (additional_margin + fee_usd) > (self.cash_balance + 1e-6):
+                raise ValueError(
+                    f"空闲可用资金不足: 当前可用现金 ${self.cash_balance:.2f}, "
+                    f"加仓所需保证金 ${additional_margin:.2f} + 手续费 ${fee_usd:.2f} (合计 ${additional_margin + fee_usd:.2f})"
+                )
             # 计算加权开仓均价：(旧市值 + 新市值) / (旧数量 + 新数量)
             old_notional = pos.quantity * pos.entry_price
             new_notional = quantity * fill_price
             pos.quantity += quantity
             pos.entry_price = (old_notional + new_notional) / pos.quantity
-
-            # 追加保证金与扣减手续费
-            additional_margin = size_usd / leverage
             pos.margin_used += additional_margin
             self.cash_balance -= (additional_margin + fee_usd)
 
@@ -139,7 +148,7 @@ class PaperExecutionAdapter(BaseExecutionAdapter):
                 pos.margin_used = 0.0
 
         # 4. 生成成交回报单
-        trade_id = f"sim_trd_{datetime.utcnow().strftime('%Y%m%d%H%M%S')}_{uuid.uuid4().hex[:6]}"
+        trade_id = f"sim_trd_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}_{uuid.uuid4().hex[:6]}"
         order_id = f"sim_ord_{uuid.uuid4().hex[:8]}"
 
         result = TradeExecutionResult(
@@ -155,7 +164,7 @@ class PaperExecutionAdapter(BaseExecutionAdapter):
             executed_size_usd=round(size_usd, 2),
             fee_usd=round(fee_usd, 4),
             realized_pnl=round(realized_pnl, 4),
-            executed_at=datetime.utcnow(),
+            executed_at=datetime.now(timezone.utc),
             raw_response={"simulated": True},
         )
 

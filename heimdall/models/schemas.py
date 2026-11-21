@@ -4,7 +4,7 @@ Heimdall 交易平台 - 核心数据结构与契约定义模块 (Pydantic Schema
 包含市场上下文、交易提案、风控审查结果、状态枚举等。
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional, Dict, Any
 from pydantic import BaseModel, Field
@@ -103,7 +103,7 @@ class TradeProposal(BaseModel):
     # 发起提案的智能体标识符
     agent_id: str
     # 提案创建的 UTC 时间戳
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     # 当时输入给 Agent 的市场环境上下文
     market_context: MarketContext
     # 具体的拟交易动作
@@ -113,6 +113,18 @@ class TradeProposal(BaseModel):
         default_factory=dict,
         description="包含核心买入/卖出论点、失效条件、多空对抗辩论要点等"
     )
+    # 幂等性控制键 (Idempotency Key): 用于防止网络重试或状态重启造成的重复挂单副作用
+    idempotency_key: Optional[str] = Field(
+        default=None,
+        description="基于标的、方向、周期和时间戳窗口计算的唯一 SHA256 签名，保障多次重试执行的绝对幂等"
+    )
+
+
+class VetoSeverity(str, Enum):
+    """风控拦截严重级别枚举（支持 Loop Engineering 有界自动修复）"""
+    NONE = "NONE"                # 无拦截（通过）
+    REPAIRABLE = "REPAIRABLE"    # 参数级可修复拦截（杠杆/仓位/滑点超限，可降档修复重审）
+    FATAL = "FATAL"              # 环境级致命拦截（熔断/Bifrost异常/宏观静默/插针，立即终止）
 
 
 class RiskReviewResult(BaseModel):
@@ -124,7 +136,21 @@ class RiskReviewResult(BaseModel):
     approved: bool
     # 审核拒绝原因（若 approved 为 False，该字段包含具体违规规则说明）
     rejection_reason: Optional[str] = None
+    # 兼容别名
+    rejection_rule: Optional[str] = None
+    # 拦截严重级别（NONE / REPAIRABLE / FATAL）
+    veto_severity: VetoSeverity = VetoSeverity.NONE
+    # 若为 REPAIRABLE，提供结构化修复约束边界（如 {"max_allowed_size_usd": 1500.0}）
+    repair_constraints: Dict[str, Any] = Field(default_factory=dict)
     # 动态调整后的下单金额（若触发轻度风控，可压低仓位后放行）
     adjusted_size_usd: Optional[float] = None
     # 各单项规则校验通过状态字典（例如 {"daily_drawdown": True, "bifrost_guard": True}）
     checked_rules: Dict[str, bool] = Field(default_factory=dict)
+
+    def model_post_init(self, __context: Any) -> None:
+        if self.rejection_reason and not self.rejection_rule:
+            self.rejection_rule = self.rejection_reason
+        elif self.rejection_rule and not self.rejection_reason:
+            self.rejection_reason = self.rejection_rule
+        if not self.approved and self.veto_severity == VetoSeverity.NONE:
+            self.veto_severity = VetoSeverity.FATAL

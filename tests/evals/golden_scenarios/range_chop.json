@@ -1,0 +1,67 @@
+[
+  {
+    "scenario_id": "chop_01_eth_tight_range",
+    "category": "range_chop",
+    "description": "ETH 窄幅低波动横盘震荡（应维持 NEUTRAL 防磨损）",
+    "symbol": "ETH",
+    "account_equity": 10000.0,
+    "daily_drawdown_pct": 0.0,
+    "guard_status": {"status": "HEALTHY", "spread_pct": 0.02},
+    "funding": {"funding_rate": 0.00005, "annualized_rate": 0.0547},
+    "kline_pattern": {"type": "range_flat", "bars": 35, "start": 3100.0, "amp": 6.0},
+    "expected_actions": ["NEUTRAL"],
+    "expected_blocked": false
+  },
+  {
+    "scenario_id": "chop_02_btc_tight_range",
+    "category": "range_chop",
+    "description": "BTC 窄幅箱体震荡无方向优势",
+    "symbol": "BTC",
+    "account_equity": 20000.0,
+    "daily_drawdown_pct": 0.0,
+    "guard_status": {"status": "HEALTHY", "spread_pct": 0.02},
+    "funding": {"funding_rate": 0.00004, "annualized_rate": 0.0438},
+    "kline_pattern": {"type": "range_flat", "bars": 35, "start": 92000.0, "amp": 120.0},
+    "expected_actions": ["NEUTRAL"],
+    "expected_blocked": false
+  },
+  {
+    "scenario_id": "chop_03_sol_sideways",
+    "category": "range_chop",
+    "description": "SOL 横盘缩量整理",
+    "symbol": "SOL",
+    "account_equity": 10000.0,
+    "daily_drawdown_pct": 0.0,
+    "guard_status": {"status": "HEALTHY", "spread_pct": 0.03},
+    "funding": {"funding_rate": 0.00003, "annualized_rate": 0.0328},
+    "kline_pattern": {"type": "range_flat", "bars": 35, "start": 190.0, "amp": 0.8},
+    "expected_actions": ["NEUTRAL"],
+    "expected_blocked": false
+  },
+  {
+    "scenario_id": "chop_04_eth_weekend_flat",
+    "category": "range_chop",
+    "description": "ETH 周末低流动性死水行情",
+    "symbol": "ETH",
+    "account_equity": 10000.0,
+    "daily_drawdown_pct": 0.0,
+    "guard_status": {"status": "HEALTHY", "spread_pct": 0.03},
+    "funding": {"funding_rate": 0.00002, "annualized_rate": 0.0219},
+    "kline_pattern": {"type": "range_flat", "bars": 35, "start": 3050.0, "amp": 4.0},
+    "expected_actions": ["NEUTRAL"],
+    "expected_blocked": false
+  },
+  {
+    "scenario_id": "chop_05_btc_consolidation",
+    "category": "range_chop",
+    "description": "BTC 均线粘合无趋势整理",
+    "symbol": "BTC",
+    "account_equity": 15000.0,
+    "daily_drawdown_pct": 0.0,
+    "guard_status": {"status": "HEALTHY", "spread_pct": 0.02},
+    "funding": {"funding_rate": 0.00001, "annualized_rate": 0.0109},
+    "kline_pattern": {"type": "range_flat", "bars": 35, "start": 91000.0, "amp": 90.0},
+    "expected_actions": ["NEUTRAL"],
+    "expected_blocked": false
+  }
+]

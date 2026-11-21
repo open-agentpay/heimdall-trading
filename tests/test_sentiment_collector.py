@@ -80,7 +80,8 @@ def test_collector_news_and_derivatives_aggregation():
         assert context.exchange_net_inflow_usd == -15000000.0
         assert len(context.news_headlines) > 0
         assert context.open_interest_usd > 0
-        assert context.stablecoin_mint_inflow_usd > 0
+        # 已彻底移除硬编码 8500 万假稳定币数据，未接入真实链上 API 时诚实返回 >= 0.0
+        assert context.stablecoin_mint_inflow_usd >= 0.0
 
     asyncio.run(_test())
 

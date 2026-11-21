@@ -1,0 +1,67 @@
+[
+  {
+    "scenario_id": "trap_01_eth_upper_wick",
+    "category": "bull_trap_exhaustion",
+    "description": "ETH 阻力位连续长上影线滞涨（诱多陷阱）",
+    "symbol": "ETH",
+    "account_equity": 10000.0,
+    "daily_drawdown_pct": 0.0,
+    "guard_status": {"status": "HEALTHY", "spread_pct": 0.05},
+    "funding": {"funding_rate": 0.00045, "annualized_rate": 0.4927},
+    "kline_pattern": {"type": "upper_wick_trap", "bars": 35, "start": 3200.0},
+    "expected_actions": ["SHORT", "NEUTRAL"],
+    "expected_blocked": false
+  },
+  {
+    "scenario_id": "trap_02_btc_volume_fade",
+    "category": "bull_trap_exhaustion",
+    "description": "BTC 高位缩量拉升量价顶背离 + 高资金费",
+    "symbol": "BTC",
+    "account_equity": 15000.0,
+    "daily_drawdown_pct": 0.0,
+    "guard_status": {"status": "HEALTHY", "spread_pct": 0.04},
+    "funding": {"funding_rate": 0.0005, "annualized_rate": 0.5475},
+    "kline_pattern": {"type": "upper_wick_trap", "bars": 35, "start": 94000.0},
+    "expected_actions": ["SHORT", "NEUTRAL"],
+    "expected_blocked": false
+  },
+  {
+    "scenario_id": "trap_03_sol_rejection",
+    "category": "bull_trap_exhaustion",
+    "description": "SOL 触及通道上轨遭强抛压回落",
+    "symbol": "SOL",
+    "account_equity": 10000.0,
+    "daily_drawdown_pct": 0.0,
+    "guard_status": {"status": "HEALTHY", "spread_pct": 0.06},
+    "funding": {"funding_rate": 0.0004, "annualized_rate": 0.438},
+    "kline_pattern": {"type": "upper_wick_trap", "bars": 35, "start": 210.0},
+    "expected_actions": ["SHORT", "NEUTRAL"],
+    "expected_blocked": false
+  },
+  {
+    "scenario_id": "trap_04_eth_overbought_exhaustion",
+    "category": "bull_trap_exhaustion",
+    "description": "ETH 超买区长上影线派发形态",
+    "symbol": "ETH",
+    "account_equity": 10000.0,
+    "daily_drawdown_pct": 0.01,
+    "guard_status": {"status": "HEALTHY", "spread_pct": 0.05},
+    "funding": {"funding_rate": 0.00055, "annualized_rate": 0.6022},
+    "kline_pattern": {"type": "upper_wick_trap", "bars": 35, "start": 3500.0},
+    "expected_actions": ["SHORT", "NEUTRAL"],
+    "expected_blocked": false
+  },
+  {
+    "scenario_id": "trap_05_btc_distribution",
+    "category": "bull_trap_exhaustion",
+    "description": "BTC 高位密集插针派发阻力区",
+    "symbol": "BTC",
+    "account_equity": 10000.0,
+    "daily_drawdown_pct": 0.0,
+    "guard_status": {"status": "HEALTHY", "spread_pct": 0.05},
+    "funding": {"funding_rate": 0.00042, "annualized_rate": 0.4599},
+    "kline_pattern": {"type": "upper_wick_trap", "bars": 35, "start": 98000.0},
+    "expected_actions": ["SHORT", "NEUTRAL"],
+    "expected_blocked": false
+  }
+]

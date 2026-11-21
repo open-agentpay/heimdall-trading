@@ -71,3 +71,6 @@ logs/
 node_modules/
 web/node_modules/
 web/dist/
+
+docs/
+skills/

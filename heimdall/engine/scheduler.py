@@ -20,10 +20,11 @@ import asyncio
 import logging
 import traceback
 from typing import Dict, Any, List, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 from heimdall.models.schemas import AgentStatus
 from heimdall.engine.bot_manager import TradingBotInstance
 from heimdall.database.repository import trading_repo
+from heimdall.api.websocket import manager as ws_manager, EventType as WsEventType
 
 logger = logging.getLogger(__name__)
 
@@ -31,77 +32,140 @@ logger = logging.getLogger(__name__)
 class BotScheduler:
     """
     量化机器人全自动后台调度中枢
-    负责管理各个机器人的常驻后台协程循环任务（Background Daemon Loops）。
+    负责管理各个机器人的常驻后台决策循环 + 每 30~60 秒高频对账循环（OMS + Reconciler）。
     """
 
     def __init__(self):
-        # 保存正在后台运行的 asyncio.Task 协程对象字典 {bot_id: Task}
+        # 决策主循环任务字典 {bot_id: Task}
         self._active_tasks: Dict[str, asyncio.Task] = {}
-        # 记录每个机器人的配置轮询时间间隔（秒） {bot_id: interval_seconds}
+        # 独立对账巡检任务字典 {bot_id: Task}
+        self._reconcile_tasks: Dict[str, asyncio.Task] = {}
+        # 记录每个机器人的决策与对账时间间隔（秒）
         self._bot_intervals: Dict[str, int] = {}
+        self._reconcile_intervals: Dict[str, int] = {}
 
     def is_running(self, bot_id: str) -> bool:
         """检查指定机器人当前是否在后台异步轮询循环中"""
         task = self._active_tasks.get(bot_id)
         return bool(task and not task.done())
 
+    def is_reconciling(self, bot_id: str) -> bool:
+        """检查指定机器人的对账守护协程是否在运行中"""
+        task = self._reconcile_tasks.get(bot_id)
+        return bool(task and not task.done())
+
     async def start_bot_loop(
         self,
         bot: TradingBotInstance,
         interval_seconds: int = 60,
+        reconcile_interval_seconds: int = 30,
     ) -> bool:
         """
-        为指定机器人启动一个自主常驻运行的后台调度任务
+        为指定机器人启动常驻后台决策循环与定时交易所对账循环。
 
         :param bot: 目标机器人运行实例
-        :param interval_seconds: 触发一轮决策的间隔秒数（默认 60 秒，实盘可设为 900 秒即 15 分钟）
+        :param interval_seconds: 触发一轮策略决策的间隔秒数（默认 60 秒，实盘可设为 900 秒）
+        :param reconcile_interval_seconds: 交易所对账与 OMS 过期单清理间隔秒数（默认 30 秒）
         :return: 是否成功启动
         """
         bot_id = bot.bot_id
 
-        # 若已在运行中，避免重复创建任务
         if self.is_running(bot_id):
             logger.warning("[Scheduler] 机器人 %s 的后台调度器已经在运行中，无需重复启动", bot_id)
             return True
 
-        # 将机器人状态置为正常运行
         bot.status = AgentStatus.RUNNING
         self._bot_intervals[bot_id] = interval_seconds
+        self._reconcile_intervals[bot_id] = reconcile_interval_seconds
 
-        # 启动后台异步任务
         task = asyncio.create_task(
             self._daemon_loop(bot, interval_seconds),
             name=f"daemon_{bot_id}",
         )
         self._active_tasks[bot_id] = task
 
+        reconcile_task = asyncio.create_task(
+            self._reconcile_loop(bot, reconcile_interval_seconds),
+            name=f"reconcile_{bot_id}",
+        )
+        self._reconcile_tasks[bot_id] = reconcile_task
+
         logger.info(
-            "🚀 [Scheduler] 成功启动机器人后台常驻守护调度！bot_id=%s, 标的=%s, 周期=%d秒",
+            "🚀 [Scheduler] 成功启动机器人后台守护调度！bot_id=%s, 标的=%s, 决策周期=%d秒, 对账周期=%d秒",
             bot_id,
             bot.symbol,
             interval_seconds,
+            reconcile_interval_seconds,
         )
         return True
 
     async def stop_bot_loop(self, bot_id: str) -> bool:
         """
-        安全优雅地停止机器人的后台调度循环
+        安全优雅地停止机器人的后台决策循环与对账循环
         """
-        task = self._active_tasks.get(bot_id)
-        if task and not task.done():
-            task.cancel()
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass
-            logger.info("🛑 [Scheduler] 机器人 %s 的后台轮询协程已安全关停", bot_id)
+        for pool in (self._active_tasks, self._reconcile_tasks):
+            task = pool.get(bot_id)
+            if task and not task.done():
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+            pool.pop(bot_id, None)
 
-        self._active_tasks.pop(bot_id, None)
+        logger.info("🛑 [Scheduler] 机器人 %s 的决策与对账协程已全部安全关停", bot_id)
         return True
+
+    async def _reconcile_loop(self, bot: TradingBotInstance, reconcile_interval_seconds: float):
+        """
+        独立高频对账守护协程（每 30~60 秒执行一次）：
+        - 清理超时未成交限价单并释放组合敞口
+        - 查单恢复 OMS UNKNOWN 订单
+        - 比对交易所真实持仓（发现幽灵持仓立即暂停 Bot，发现外部平仓自动撤残留条件单）
+        """
+        bot_id = bot.bot_id
+        try:
+            while bot.status == AgentStatus.RUNNING:
+                try:
+                    if hasattr(bot, "reconcile_once"):
+                        rep = await bot.reconcile_once()
+                        if rep and not rep.get("is_clean", True):
+                            logger.warning(
+                                "[Scheduler · Reconciler 差异同步] bot=%s | paused=%s | diffs=%s",
+                                bot_id,
+                                rep.get("bot_paused"),
+                                rep.get("diffs"),
+                            )
+                            # P2-1: 对账检出幽灵持仓或仓位差异时，实时通过 WebSocket 推送风险告警
+                            try:
+                                await ws_manager.broadcast("risk", {
+                                    "event": WsEventType.RISK_ALERT,
+                                    "bot_id": bot_id,
+                                    "data": rep,
+                                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                                })
+                            except Exception as ws_err:
+                                logger.warning("[Scheduler WebSocket] 广播对账风险告警失败: %s", ws_err)
+                        if bot.status in (AgentStatus.PAUSED, AgentStatus.CIRCUIT_BROKEN, AgentStatus.STOPPED):
+                            logger.warning(
+                                "[Scheduler · Reconciler] 机器人 %s 状态已切换为 %s，退出对账守护循环",
+                                bot_id,
+                                bot.status.value,
+                            )
+                            break
+                except Exception as rec_err:
+                    logger.error("[Scheduler · Reconciler 异常] bot=%s: %s", bot_id, rec_err)
+
+                await asyncio.sleep(max(0.05, float(reconcile_interval_seconds)))
+        except asyncio.CancelledError:
+            raise
+        finally:
+            self._reconcile_tasks.pop(bot_id, None)
 
     async def _daemon_loop(self, bot: TradingBotInstance, interval_seconds: int):
         """
         底层常驻执行协程主循环（The Infinite Sentinel Loop）
+        每轮巡检完成后自动广播 steps / orders / risk 实时事件至 WebSocket 订阅端。
         """
         bot_id = bot.bot_id
         cycle_counter = 0
@@ -111,7 +175,7 @@ class BotScheduler:
         try:
             while bot.status == AgentStatus.RUNNING:
                 cycle_counter += 1
-                cycle_start_time = datetime.utcnow()
+                cycle_start_time = datetime.now(timezone.utc)
                 logger.info(
                     "⏰ [Scheduler 闹钟触发 #%d] 机器人 %s 开始执行第 %d 轮巡检决策...",
                     cycle_counter,
@@ -120,32 +184,60 @@ class BotScheduler:
                 )
 
                 try:
-                    # 1. 触发机器人单步决策评估流水线 (Step Pipeline)
+                    # 1. 触发机器人单步决策评估流水线 (Step Pipeline，内部已完成 NAV 快照与成交落库)
                     record = await bot.step()
+                    now_iso = datetime.now(timezone.utc).isoformat()
 
-                    # 2. 检查是否触发单日最大回撤熔断 (Circuit Breaker)
-                    if bot.status == AgentStatus.CIRCUIT_BROKEN:
+                    # 2. P2-1: 打通后台巡检 WebSocket 实时广播（steps / orders / risk）
+                    if record and "error" not in record:
+                        try:
+                            await ws_manager.broadcast("steps", {
+                                "event": WsEventType.AGENT_STEP,
+                                "bot_id": bot_id,
+                                "data": record,
+                                "timestamp": now_iso,
+                            })
+                            if record.get("execution_id"):
+                                await ws_manager.broadcast("orders", {
+                                    "event": WsEventType.ORDER_FILLED,
+                                    "bot_id": bot_id,
+                                    "execution_id": record.get("execution_id"),
+                                    "symbol": bot.symbol,
+                                    "data": record.get("trade_proposal"),
+                                    "timestamp": now_iso,
+                                })
+                                logger.info("[Scheduler WebSocket] 已广播成交通知 | bot=%s | exec_id=%s", bot_id, record.get("execution_id"))
+                            if record.get("proposal_generated") and not record.get("risk_approved"):
+                                await ws_manager.broadcast("risk", {
+                                    "event": WsEventType.RISK_ALERT,
+                                    "bot_id": bot_id,
+                                    "data": record.get("risk_review"),
+                                    "timestamp": now_iso,
+                                })
+                                logger.info("[Scheduler WebSocket] 已广播风控拦截事件 | bot=%s", bot_id)
+                        except Exception as ws_err:
+                            logger.warning("[Scheduler WebSocket] 广播巡检事件失败: %s", ws_err)
+
+                    # 3. 检查是否触发单日最大回撤熔断或对账暂停
+                    if bot.status in (AgentStatus.CIRCUIT_BROKEN, AgentStatus.PAUSED):
                         logger.critical(
-                            "🚨 [Scheduler 紧急制动] 机器人 %s 已触发硬风控熔断，自动切断后台定时器并锁定！",
+                            "🚨 [Scheduler 紧急制动] 机器人 %s 状态已变为 %s，自动切断后台定时器！",
                             bot_id,
+                            bot.status.value,
                         )
+                        try:
+                            await ws_manager.broadcast("risk", {
+                                "event": WsEventType.RISK_ALERT,
+                                "bot_id": bot_id,
+                                "data": {"status": bot.status.value, "message": f"机器人 {bot_id} 触发 {bot.status.value} 制动"},
+                                "timestamp": now_iso,
+                            })
+                        except Exception:
+                            pass
                         break
 
-                    # 3. 自动将决策思维链、成交流水和 NAV 快照持久化存入数据库！
+                    # 4. 持久化本轮决策思维链日志（避免重复写 trades 引发主键冲突）
                     if record and "error" not in record:
-                        # 记录最新净值快照
-                        if bot.nav_engine.snapshots:
-                            latest_snap = bot.nav_engine.snapshots[-1]
-                            await trading_repo.record_equity_snapshot(bot_id, latest_snap)
-
-                        # 记录成交单据
-                        if bot.executed_trades:
-                            latest_trade = bot.executed_trades[-1]
-                            # 如果该单据是这轮刚产生的新单
-                            if record.get("execution_id") == latest_trade.trade_id:
-                                await trading_repo.record_trade(latest_trade, bot_id, record.get("execution_id"))
-
-                        # 记录决策思维链日志
                         await trading_repo.record_decision(
                             decision_id=f"dec_{cycle_start_time.strftime('%Y%m%d%H%M%S')}_{bot_id[:6]}",
                             agent_id=bot_id,
@@ -164,19 +256,15 @@ class BotScheduler:
                         err,
                         traceback.format_exc(),
                     )
-                    # 遭遇不可控异常时进行短暂休眠降级，避免死循环疯狂报错刷屏
                     await asyncio.sleep(5.0)
 
-                # 计算本轮耗时，精确休眠至下一个周期
-                elapsed = (datetime.utcnow() - cycle_start_time).total_seconds()
+                elapsed = (datetime.now(timezone.utc) - cycle_start_time).total_seconds()
                 sleep_duration = max(1.0, interval_seconds - elapsed)
                 logger.info(
                     "[Scheduler 周期完成] 本轮耗时 %.2f 秒，距离下次决策进入休眠: %.1f 秒",
                     elapsed,
                     sleep_duration,
                 )
-
-                # 休眠等待下个时间窗口
                 await asyncio.sleep(sleep_duration)
 
         except asyncio.CancelledError:
@@ -187,21 +275,23 @@ class BotScheduler:
             logger.info("[Scheduler] 机器人 %s 守护进程已安全释放退出", bot_id)
 
     async def shutdown_all(self):
-        """应用关停时一键平稳终止所有正在运行的后台调度任务"""
+        """应用关停时一键平稳终止所有正在运行的后台调度与对账任务"""
         logger.info("[Scheduler] 正在平稳终止全局所有后台守护任务...")
-        running_ids = list(self._active_tasks.keys())
+        running_ids = list(set(self._active_tasks.keys()) | set(self._reconcile_tasks.keys()))
         for bot_id in running_ids:
             await self.stop_bot_loop(bot_id)
         logger.info("[Scheduler] 全局后台守护任务已全部安全撤出")
 
     def list_active_jobs(self) -> List[Dict[str, Any]]:
-        """获取当前正在活跃运行的后台调度任务列表"""
+        """获取当前正在活跃运行的后台调度与对账任务列表"""
         jobs = []
         for bot_id, task in self._active_tasks.items():
             jobs.append({
                 "bot_id": bot_id,
                 "is_running": not task.done(),
                 "interval_seconds": self._bot_intervals.get(bot_id, 60),
+                "reconcile_running": self.is_reconciling(bot_id),
+                "reconcile_interval_seconds": self._reconcile_intervals.get(bot_id, 30),
                 "task_name": task.get_name(),
             })
         return jobs

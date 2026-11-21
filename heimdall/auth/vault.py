@@ -105,7 +105,17 @@ class CryptoVault:
         self.master_key = self._resolve_master_key(master_key_hex)
 
     def _resolve_master_key(self, custom_hex: Optional[str]) -> bytes:
-        """解析或自动派生 256 位 (32 字节) 主加密密钥"""
+        """解析或自动派生 256 位 (32 字节) 主加密密钥，并对本地 .vault.key 强制执行 0600 权限加固"""
+        project_root = Path(__file__).resolve().parent.parent.parent
+        key_file = project_root / "data" / ".vault.key"
+        # 无论密钥来源是环境变量还是本地文件，只要磁盘存在 .vault.key 一律收紧为 0600
+        if key_file.exists():
+            try:
+                os.chmod(key_file, 0o600)
+                logger.debug("[CryptoVault 安全权限] 已核验并收紧主密钥文件权限为 0600: %s", key_file)
+            except OSError as chmod_err:
+                logger.warning("[CryptoVault 安全权限] 收紧密钥文件权限失败: %s", chmod_err)
+
         if custom_hex and len(custom_hex) >= 64:
             try:
                 return bytes.fromhex(custom_hex[:64])
@@ -119,11 +129,16 @@ class CryptoVault:
             except ValueError:
                 pass
 
-        # 本地自动持久化生成并存储在 data/.vault.key (权限建议只读)
+        # 本地自动持久化生成并存储在 data/.vault.key，并强制收缩文件权限为 0600（仅文件所有者可读写）
         project_root = Path(__file__).resolve().parent.parent.parent
         key_file = project_root / "data" / ".vault.key"
-        
+
         if key_file.exists():
+            try:
+                os.chmod(key_file, 0o600)
+                logger.debug("[CryptoVault 安全权限] 已核验并收紧主密钥文件权限为 0600: %s", key_file)
+            except OSError as chmod_err:
+                logger.warning("[CryptoVault 安全权限] 收紧密钥文件权限失败: %s", chmod_err)
             try:
                 with open(key_file, "rb") as f:
                     raw_key = f.read().strip()
@@ -134,13 +149,14 @@ class CryptoVault:
             except Exception as e:
                 logger.warning("[CryptoVault] 读取本地密钥文件失败，将重新派生: %s", e)
 
-        # 全新派生 32 字节随机熵
+        # 全新派生 32 字节随机熵并落盘 0600 权限文件
         new_key = secrets.token_bytes(32)
         try:
             key_file.parent.mkdir(parents=True, exist_ok=True)
             with open(key_file, "wb") as f:
                 f.write(new_key)
-            logger.info("[CryptoVault] 已为本机生成新的安全金库主密钥: %s", key_file)
+            os.chmod(key_file, 0o600)
+            logger.info("[CryptoVault] 已为本机生成新的安全金库主密钥并设置 0600 权限: %s", key_file)
         except Exception as e:
             logger.warning("[CryptoVault] 保存本地密钥文件失败 (内存保持可用): %s", e)
 
@@ -191,18 +207,79 @@ async def test_key_connectivity(provider: str, credentials: Dict[str, Any]) -> T
     :return: (is_success, message, latency_ms)
     """
     import aiohttp
+    import hmac
+    import hashlib
+    from urllib.parse import urlencode
     start_time = time.time()
-    
+
+    async def _probe_binance_signed(session: aiohttp.ClientSession, rest_base: str, api_key: str, secret_key: str) -> Tuple[int, Dict[str, Any]]:
+        params = {"timestamp": int(time.time() * 1000), "recvWindow": 5000}
+        qs = urlencode(sorted(params.items()))
+        sig = hmac.new(secret_key.encode("utf-8"), qs.encode("utf-8"), hashlib.sha256).hexdigest()
+        url = f"{rest_base}/api/v3/account?{qs}&signature={sig}"
+        async with session.get(url, headers={"X-MBX-APIKEY": api_key}) as resp:
+            try:
+                body = await resp.json()
+            except Exception:
+                body = {}
+            return resp.status, body if isinstance(body, dict) else {}
+
     try:
-        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=4.0)) as session:
-            # 1. Binance
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=5.0)) as session:
+            # 1a. Binance Spot Demo / Testnet (显式开启测试网/模拟盘开关或 binance_demo 分类)
+            explicit_testnet = credentials.get("is_testnet")
+            explicit_mode = str(credentials.get("mode", "")).lower()
+            is_demo_or_testnet = (
+                provider == "binance_demo"
+                or explicit_testnet is True
+                or explicit_mode in ("demo", "testnet")
+                or "demo-api.binance.com" in str(credentials.get("base_url", "")).lower()
+            )
+            if provider in ("binance", "binance_demo") and is_demo_or_testnet:
+                api_key = str(credentials.get("api_key") or "").strip()
+                secret_key = str(credentials.get("secret_key") or "").strip()
+                if not api_key or not secret_key:
+                    latency = round((time.time() - start_time) * 1000, 1)
+                    return False, "缺少币安测试网/模拟交易 API Key 或 Secret Key", latency
+                status_code, body = await _probe_binance_signed(
+                    session, "https://demo-api.binance.com", api_key, secret_key
+                )
+                latency = round((time.time() - start_time) * 1000, 1)
+                if status_code == 200:
+                    usdt = next((b for b in (body.get("balances") or []) if b.get("asset") == "USDT"), None)
+                    usdt_free = float(usdt.get("free", 0.0)) if usdt else 0.0
+                    return True, f"币安测试网/模拟盘 (Demo) 验签成功！USDT 可用余额: ${usdt_free:,.2f}", latency
+                return False, f"币安测试网/模拟盘验签失败 (HTTP {status_code}): {body.get('msg', '请检查 Key 权限与模拟盘状态')}", latency
+
+            # 1b. Binance 正式网 (若显式设为正式网则严格只测正式网；未设置过开关的旧 Key 保留自动识别)
             if provider == "binance":
-                api_key = credentials.get("api_key", "")
+                api_key = str(credentials.get("api_key") or "").strip()
+                secret_key = str(credentials.get("secret_key") or "").strip()
+                if api_key and secret_key:
+                    status_code, body = await _probe_binance_signed(
+                        session, "https://api.binance.com", api_key, secret_key
+                    )
+                    if status_code == 200:
+                        latency = round((time.time() - start_time) * 1000, 1)
+                        return True, "币安正式网 API 验签成功 (HTTP 200)", latency
+                    if explicit_testnet is False or explicit_mode == "mainnet":
+                        latency = round((time.time() - start_time) * 1000, 1)
+                        return False, f"币安正式网验签失败 (HTTP {status_code}): {body.get('msg') or '请确认是否为测试网密钥'}", latency
+                    demo_code, demo_body = await _probe_binance_signed(
+                        session, "https://demo-api.binance.com", api_key, secret_key
+                    )
+                    latency = round((time.time() - start_time) * 1000, 1)
+                    if demo_code == 200:
+                        usdt = next((b for b in (demo_body.get("balances") or []) if b.get("asset") == "USDT"), None)
+                        usdt_free = float(usdt.get("free", 0.0)) if usdt else 0.0
+                        return True, f"已自动识别为币安模拟交易 (Demo) 密钥！USDT 可用余额: ${usdt_free:,.2f}", latency
+                    return False, f"币安验签失败 (正式网 HTTP {status_code} / 模拟盘 HTTP {demo_code}): {demo_body.get('msg') or body.get('msg') or 'Key 无效'}", latency
+
                 headers = {"X-MBX-APIKEY": api_key} if api_key else {}
                 async with session.get("https://api.binance.com/api/v3/ping", headers=headers) as resp:
                     latency = round((time.time() - start_time) * 1000, 1)
                     if resp.status == 200:
-                        return True, f"币安网关连通正常 (HTTP 200)", latency
+                        return True, "币安网关连通正常 (HTTP 200)", latency
                     return False, f"币安返回异常: {resp.status}", latency
 
             # 2. Hyperliquid

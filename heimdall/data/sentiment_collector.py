@@ -27,6 +27,8 @@ from typing import Dict, Any, List, Optional
 import httpx
 from pydantic import BaseModel, Field
 
+from heimdall.data.market_data import _create_http_client
+
 logger = logging.getLogger(__name__)
 
 
@@ -91,6 +93,10 @@ class SentimentContext(BaseModel):
         default=0.0,
         description="全网主流稳定币 (USDT/USDC) 24h 净铸造/增发流入金额，代表场外弹药充盈度"
     )
+    data_provenance: Dict[str, str] = Field(
+        default_factory=dict,
+        description="各情报源数据可信度溯源标记：LIVE(实时外部接口) / DERIVED(由真实行情推演) / UNAVAILABLE(无外部源中性兜底)"
+    )
 
 
 class SentimentDataCollector:
@@ -132,7 +138,7 @@ class SentimentDataCollector:
 
         url = "https://api.alternative.me/fng/?limit=7&format=json"
         try:
-            async with httpx.AsyncClient(timeout=self.timeout, trust_env=False) as client:
+            async with _create_http_client(timeout=self.timeout) as client:
                 resp = await client.get(url)
                 if resp.status_code == 200:
                     payload = resp.json()
@@ -148,6 +154,7 @@ class SentimentDataCollector:
                             "value": current_val,
                             "classification": sentiment_label,
                             "trend_7d": trend,
+                            "provenance": "LIVE",
                         }
                         self._cache[cache_key] = {"timestamp": now, "data": result}
                         logger.info(
@@ -164,6 +171,7 @@ class SentimentDataCollector:
             "value": 50.0,
             "classification": "Neutral",
             "trend_7d": [50, 50, 50, 50, 50, 50, 50],
+            "provenance": "UNAVAILABLE",
         }
         return fallback
 
@@ -181,7 +189,7 @@ class SentimentDataCollector:
         if self.cryptopanic_token:
             url = f"https://cryptopanic.com/api/free/v1/posts/?auth_token={self.cryptopanic_token}&currencies={symbol}&filter=hot"
             try:
-                async with httpx.AsyncClient(timeout=self.timeout, trust_env=False) as client:
+                async with _create_http_client(timeout=self.timeout) as client:
                     resp = await client.get(url)
                     if resp.status_code == 200:
                         posts = resp.json().get("results", [])
@@ -192,15 +200,12 @@ class SentimentDataCollector:
             except Exception as e:
                 logger.warning("[SentimentCollector] CryptoPanic API 访问受限: %s", e)
 
-        # 默认优质行业基准快讯（确保智能体在网络隔离沙盒或无 Key 环境下具备真实认知材料）
-        default_headlines = [
-            f"以太坊网络最新质押量突破历史新高，总锁仓比例稳步提升",
-            f"宏观流动性预期边际改善，多家机构提交加密资产现货衍生品方案",
-            f"链上监测显示某长期沉睡巨鲸向冷钱包分散划转，暂无二级市场抛压",
-            f"主要交易所多空持仓费率保持健康区间，未出现极端单边拥挤",
+        # 无外部新闻源时返回严格中性无方向偏见的占位说明（防止虚构利好诱导多头幻觉）
+        neutral_headlines = [
+            f"[NEUTRAL/UNAVAILABLE] 暂未接入 {symbol} 实时外部新闻流，新闻情绪因子按中性处理",
         ]
-        self._cache[cache_key] = {"timestamp": now, "data": default_headlines}
-        return default_headlines
+        self._cache[cache_key] = {"timestamp": now, "data": neutral_headlines}
+        return neutral_headlines
 
     async def fetch_derivatives_metrics(
         self,
@@ -231,12 +236,14 @@ class SentimentDataCollector:
 
     async def fetch_whale_and_stablecoin_metrics(self, symbol: str) -> Dict[str, Any]:
         """
-        获取链上大单划转与稳定币弹药（Dry Powder）储备
+        获取链上大单划转与稳定币弹药储备。
+        【零幻觉原则】：未接入真实付费链上巨鲸数据源时严格返回中性 0 值，
+        绝不伪造“-$12.5M 净提现 / +$85M 增发”诱导多头偏见。
         """
         return {
-            "exchange_net_inflow_usd": -12_500_000.0,  # 默认呈现温和提现净流出 (良性筹码锁仓)
-            "whale_large_tx_count": 8,                  # 8 笔超百万 U 大额转移
-            "stablecoin_mint_inflow_usd": 85_000_000.0, # 8500 万 USDT 净增发注入流动性
+            "exchange_net_inflow_usd": 0.0,
+            "whale_large_tx_count": 0,
+            "stablecoin_mint_inflow_usd": 0.0,
         }
 
     async def collect_context(
@@ -278,6 +285,14 @@ class SentimentDataCollector:
             else whale_res.get("exchange_net_inflow_usd", 0.0)
         )
 
+        news_prov = "LIVE" if (self.cryptopanic_token and news_res and not news_res[0].startswith("[NEUTRAL/UNAVAILABLE]")) else "UNAVAILABLE"
+        provenance = {
+            "fear_greed": "LIVE" if fear_greed_index is not None else fng_res.get("provenance", "UNAVAILABLE"),
+            "news": news_prov,
+            "derivatives": "DERIVED",
+            "whale_flow": "LIVE" if exchange_net_inflow_usd is not None else "UNAVAILABLE",
+        }
+
         context = SentimentContext(
             symbol=symbol,
             fear_greed_index=resolved_fg,
@@ -291,5 +306,6 @@ class SentimentDataCollector:
             exchange_net_inflow_usd=resolved_inflow,
             whale_large_tx_count=whale_res.get("whale_large_tx_count", 0),
             stablecoin_mint_inflow_usd=whale_res.get("stablecoin_mint_inflow_usd", 0.0),
+            data_provenance=provenance,
         )
         return context

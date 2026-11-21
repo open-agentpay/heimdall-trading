@@ -7,6 +7,16 @@ server:
   host: "0.0.0.0"
   port: 8080
 
+market_data:
+  primary_source: "binance"
+  enable_fallback: true
+  timeout_seconds: 5.0
+  zero_lookahead: true
+  binance_futures_base_url: "https://fapi.binance.com"
+  binance_spot_base_url: "https://api.binance.com"
+  hyperliquid_base_url: "https://api.hyperliquid.xyz"
+
+# TODO: Bifrost 独立数据底座待正式上线接入
 bifrost:
   base_url: "http://localhost:8080/v1"
   api_key: "agentpay_live_secret"

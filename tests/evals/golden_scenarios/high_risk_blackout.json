@@ -1,0 +1,67 @@
+[
+  {
+    "scenario_id": "risk_01_bifrost_isolated",
+    "category": "high_risk_blackout",
+    "description": "全数据源断网返回 ISOLATED 安全红线（必须 0-Token 拦截）",
+    "symbol": "ETH",
+    "account_equity": 10000.0,
+    "daily_drawdown_pct": 0.0,
+    "guard_status": {"status": "ISOLATED", "spread_pct": 9.9},
+    "funding": {"funding_rate": 0.0001, "annualized_rate": 0.1095},
+    "kline_pattern": {"type": "uptrend", "bars": 30, "start": 3000.0, "step": 3.0, "vol_boost": false},
+    "expected_actions": ["NEUTRAL"],
+    "expected_blocked": true
+  },
+  {
+    "scenario_id": "risk_02_bifrost_degraded",
+    "category": "high_risk_blackout",
+    "description": "Binance 与 Hyperliquid 跨所价差异常 DEGRADED（必须 0-Token 拦截）",
+    "symbol": "BTC",
+    "account_equity": 10000.0,
+    "daily_drawdown_pct": 0.0,
+    "guard_status": {"status": "DEGRADED", "spread_pct": 4.2},
+    "funding": {"funding_rate": 0.0001, "annualized_rate": 0.1095},
+    "kline_pattern": {"type": "uptrend", "bars": 30, "start": 90000.0, "step": 50.0, "vol_boost": false},
+    "expected_actions": ["NEUTRAL"],
+    "expected_blocked": true
+  },
+  {
+    "scenario_id": "risk_03_daily_drawdown_breaker",
+    "category": "high_risk_blackout",
+    "description": "当日累计回撤达到 5.5% 触发硬熔断（必须 0-Token 拦截）",
+    "symbol": "ETH",
+    "account_equity": 10000.0,
+    "daily_drawdown_pct": 0.055,
+    "guard_status": {"status": "HEALTHY", "spread_pct": 0.02},
+    "funding": {"funding_rate": 0.0001, "annualized_rate": 0.1095},
+    "kline_pattern": {"type": "uptrend", "bars": 30, "start": 3000.0, "step": 3.0, "vol_boost": false},
+    "expected_actions": ["NEUTRAL"],
+    "expected_blocked": true
+  },
+  {
+    "scenario_id": "risk_04_flash_crash_spike",
+    "category": "high_risk_blackout",
+    "description": "单根 K 线暴跌 6% 极端插针（必须 0-Token 拦截）",
+    "symbol": "SOL",
+    "account_equity": 10000.0,
+    "daily_drawdown_pct": 0.0,
+    "guard_status": {"status": "HEALTHY", "spread_pct": 0.04},
+    "funding": {"funding_rate": 0.0001, "annualized_rate": 0.1095},
+    "kline_pattern": {"type": "flash_spike", "bars": 30, "start": 200.0},
+    "expected_actions": ["NEUTRAL"],
+    "expected_blocked": true
+  },
+  {
+    "scenario_id": "risk_05_combined_drawdown_and_degraded",
+    "category": "high_risk_blackout",
+    "description": "回撤熔断叠加跨所异常双重高危（必须 0-Token 拦截）",
+    "symbol": "ETH",
+    "account_equity": 10000.0,
+    "daily_drawdown_pct": 0.08,
+    "guard_status": {"status": "DEGRADED", "spread_pct": 3.5},
+    "funding": {"funding_rate": 0.0001, "annualized_rate": 0.1095},
+    "kline_pattern": {"type": "uptrend", "bars": 30, "start": 3100.0, "step": 2.0, "vol_boost": false},
+    "expected_actions": ["NEUTRAL"],
+    "expected_blocked": true
+  }
+]

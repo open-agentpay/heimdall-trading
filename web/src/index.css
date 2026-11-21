@@ -14,6 +14,24 @@ body {
   padding: 0;
   overflow: hidden;
   user-select: none;
+  transition: background-color 0.2s ease, filter 0.2s ease;
+}
+
+/* 夜间量化暗黑终端主题 (Theme Switcher: p2-3) */
+html[data-theme="dark"] {
+  background-color: #121110;
+}
+
+html[data-theme="dark"] body {
+  background-color: #121110;
+  filter: invert(0.91) hue-rotate(180deg);
+}
+
+/* 保持图表、Emoji 与强语义徽章在暗黑模式下色彩自然不失真 */
+html[data-theme="dark"] img,
+html[data-theme="dark"] svg,
+html[data-theme="dark"] canvas {
+  filter: invert(0) hue-rotate(0deg);
 }
 
 /* 扑克桌台质感 */

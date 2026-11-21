@@ -3,10 +3,14 @@ Heimdall 交易平台 - 全局配置模块
 负责加载环境变量、YAML 配置文件并提供强类型的配置对象。
 """
 
+import logging
 import os
-from typing import Optional
+from pathlib import Path
+from typing import Any, Dict, Optional
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+logger = logging.getLogger(__name__)
 
 
 class ServerConfig(BaseModel):
@@ -17,13 +21,31 @@ class ServerConfig(BaseModel):
     port: int = 8080
 
 
+class MarketDataConfig(BaseModel):
+    """多源异构行情底座配置（支持币安主源、Hyperliquid 互补源与自动容灾降级）"""
+    # 主数据源类型: "binance" | "hyperliquid" | "bifrost"
+    primary_source: str = "binance"
+    # 是否开启多源互补与自动故障降级 (Failover)
+    enable_fallback: bool = True
+    # 请求超时时间（秒）
+    timeout_seconds: float = 5.0
+    # 是否强制开启零前视偏差保护（剔除未收盘的在途 K 线）
+    zero_lookahead: bool = True
+    # 币安 USD-M 合约 API 根地址
+    binance_futures_base_url: str = "https://fapi.binance.com"
+    # 币安现货 API 根地址 (备用)
+    binance_spot_base_url: str = "https://api.binance.com"
+    # Hyperliquid 官方公共 API 根地址 (互补)
+    hyperliquid_base_url: str = "https://api.hyperliquid.xyz"
+
+
 class BifrostConfig(BaseModel):
-    """Bifrost 数据底座连接配置（提供零前视偏差时序行情与跨所状态）"""
-    # Bifrost 服务 REST API 根地址
+    """[TODO: 待正式上线] Bifrost 专有数据底座连接配置（保留向后兼容存根）"""
+    # Bifrost 服务 REST API 根地址 (待独立后端服务上线部署)
     base_url: str = "http://localhost:8080/v1"
-    # 调用凭证密钥（由 openagentpay.dev 网关发放或内网配置）
+    # 调用凭证密钥
     api_key: str = "agentpay_live_secret"
-    # 请求超时时间（秒），高频交易需保持低延迟
+    # 请求超时时间（秒）
     timeout_seconds: float = 5.0
 
 
@@ -71,6 +93,7 @@ class Settings(BaseSettings):
     
     # 嵌套配置子项
     server: ServerConfig = Field(default_factory=ServerConfig)
+    market_data: MarketDataConfig = Field(default_factory=MarketDataConfig)
     bifrost: BifrostConfig = Field(default_factory=BifrostConfig)
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)
     risk: RiskConfig = Field(default_factory=RiskConfig)
@@ -87,6 +110,42 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
+    @classmethod
+    def from_yaml(cls, config_path: Optional[Path] = None) -> "Settings":
+        """
+        统一配置加载入口：先读取 config/default.yaml 作为基准配置，再允许环境变量覆盖。
+        """
+        project_root = Path(__file__).resolve().parent.parent
+        target_path = config_path or (project_root / "config" / "default.yaml")
+        yaml_data: Dict[str, Any] = {}
 
-# 实例化单例配置对象，供全系统各模块导入使用
-settings = Settings()
+        if target_path.exists():
+            try:
+                import yaml
+                raw = yaml.safe_load(target_path.read_text(encoding="utf-8")) or {}
+                if isinstance(raw, dict):
+                    # 将 YAML 中的 app.env / app.debug 映射到顶层字段
+                    app_cfg = raw.get("app") or {}
+                    if "env" in app_cfg:
+                        yaml_data["env"] = app_cfg["env"]
+                    if "debug" in app_cfg:
+                        yaml_data["debug"] = app_cfg["debug"]
+                    for section in ("server", "market_data", "bifrost", "database", "risk", "llm"):
+                        if isinstance(raw.get(section), dict):
+                            yaml_data[section] = raw[section]
+                    logger.info("[全局配置加载] 已成功加载基准 YAML 配置文件: %s", target_path)
+            except Exception as err:
+                logger.warning("[全局配置加载] 解析 YAML 配置失败（回退至代码默认值）: %s", err)
+        else:
+            logger.debug("[全局配置加载] 未找到配置文件 %s，使用默认配置", target_path)
+
+        # 环境变量优先于 YAML：仅当环境变量未显式覆盖时保留 YAML 字段
+        if os.getenv("HEIMDALL_ENV"):
+            yaml_data.pop("env", None)
+        if os.getenv("HEIMDALL_DEBUG"):
+            yaml_data.pop("debug", None)
+        return cls(**yaml_data)
+
+
+# 实例化单例配置对象（优先融合 config/default.yaml 与环境变量），供全系统各模块导入使用
+settings = Settings.from_yaml()

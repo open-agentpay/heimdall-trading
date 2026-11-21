@@ -1,0 +1,36 @@
+# Git & IDE
+.git
+.gitignore
+.idea
+.vscode
+.DS_Store
+.superpowers
+
+# Python 虚拟环境与缓存
+.venv
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache
+.mypy_cache
+.ruff_cache
+
+# 前端依赖与构建缓存（前端由 web/Dockerfile 独立构建）
+web/node_modules
+web/dist
+
+# 严禁将本地敏感配置、密钥文件与本地 SQLite 数据库打入镜像层
+.env
+.env.*
+!.env.example
+data/
+*.db
+*.db-wal
+*.db-shm
+*.key
+
+# 测试与文档（非运行时必需）
+tests/
+docs/
+skills/

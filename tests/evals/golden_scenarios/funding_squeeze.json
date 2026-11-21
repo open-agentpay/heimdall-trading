@@ -1,0 +1,67 @@
+[
+  {
+    "scenario_id": "funding_01_extreme_long_crowding",
+    "category": "funding_squeeze",
+    "description": "ETH 年化资金费率 +65% 多头极端拥挤（抑制盲目追多）",
+    "symbol": "ETH",
+    "account_equity": 10000.0,
+    "daily_drawdown_pct": 0.0,
+    "guard_status": {"status": "HEALTHY", "spread_pct": 0.04},
+    "funding": {"funding_rate": 0.0006, "annualized_rate": 0.657},
+    "kline_pattern": {"type": "range_flat", "bars": 35, "start": 3300.0, "amp": 12.0},
+    "expected_actions": ["SHORT", "NEUTRAL"],
+    "expected_blocked": false
+  },
+  {
+    "scenario_id": "funding_02_btc_high_positive_funding",
+    "category": "funding_squeeze",
+    "description": "BTC 年化资金费率 +55% 杠杆过热",
+    "symbol": "BTC",
+    "account_equity": 15000.0,
+    "daily_drawdown_pct": 0.0,
+    "guard_status": {"status": "HEALTHY", "spread_pct": 0.03},
+    "funding": {"funding_rate": 0.0005, "annualized_rate": 0.5475},
+    "kline_pattern": {"type": "range_flat", "bars": 35, "start": 95000.0, "amp": 200.0},
+    "expected_actions": ["SHORT", "NEUTRAL"],
+    "expected_blocked": false
+  },
+  {
+    "scenario_id": "funding_03_sol_overheated_funding",
+    "category": "funding_squeeze",
+    "description": "SOL 年化资金费率 +80% 多头踩踏风险",
+    "symbol": "SOL",
+    "account_equity": 10000.0,
+    "daily_drawdown_pct": 0.0,
+    "guard_status": {"status": "HEALTHY", "spread_pct": 0.05},
+    "funding": {"funding_rate": 0.00073, "annualized_rate": 0.799},
+    "kline_pattern": {"type": "range_flat", "bars": 35, "start": 205.0, "amp": 1.5},
+    "expected_actions": ["SHORT", "NEUTRAL"],
+    "expected_blocked": false
+  },
+  {
+    "scenario_id": "funding_04_eth_negative_short_squeeze",
+    "category": "funding_squeeze",
+    "description": "ETH 深度负资金费率 -40% 空头拥挤轧空预期",
+    "symbol": "ETH",
+    "account_equity": 10000.0,
+    "daily_drawdown_pct": 0.0,
+    "guard_status": {"status": "HEALTHY", "spread_pct": 0.04},
+    "funding": {"funding_rate": -0.00037, "annualized_rate": -0.405},
+    "kline_pattern": {"type": "range_flat", "bars": 35, "start": 2900.0, "amp": 10.0},
+    "expected_actions": ["LONG", "NEUTRAL"],
+    "expected_blocked": false
+  },
+  {
+    "scenario_id": "funding_05_btc_negative_funding",
+    "category": "funding_squeeze",
+    "description": "BTC 深度负资金费率 -35% 空头拥挤（拒绝低位盲目追空）",
+    "symbol": "BTC",
+    "account_equity": 15000.0,
+    "daily_drawdown_pct": 0.0,
+    "guard_status": {"status": "HEALTHY", "spread_pct": 0.03},
+    "funding": {"funding_rate": -0.00032, "annualized_rate": -0.35},
+    "kline_pattern": {"type": "range_flat", "bars": 35, "start": 88000.0, "amp": 180.0},
+    "expected_actions": ["LONG", "NEUTRAL"],
+    "expected_blocked": false
+  }
+]

@@ -21,7 +21,7 @@ Heimdall 交易平台 - 确定性硬风控引擎模块 (Deterministic Hard Risk 
 import logging
 from datetime import datetime
 from typing import Dict, Any, Optional, List
-from heimdall.models.schemas import TradeProposal, RiskReviewResult
+from heimdall.models.schemas import TradeProposal, RiskReviewResult, VetoSeverity
 from heimdall.risk.macro_guard import MacroEventCalendar
 from heimdall.risk.flash_guard import FlashCrashDetector
 
@@ -68,6 +68,94 @@ class HardRiskGuard:
         self.flash_detector = flash_detector or FlashCrashDetector()
         self.enable_flash_guard = enable_flash_guard
 
+    def check_environment_gate(
+        self,
+        current_daily_drawdown_pct: float,
+        bifrost_status: Dict[str, Any],
+        market_klines: Optional[List[Dict[str, Any]]] = None,
+        as_of_time: Optional[datetime] = None,
+        bid_ask_spread_pct: Optional[float] = None,
+    ) -> RiskReviewResult:
+        """
+        P0 前置环境硬门控 (Pre-flight Environment Gate)。
+        在调用任何 LLM 之前以 0 Token 成本执行 4 项环境级铁律（规则 1/2/6/7）：
+        - 当日回撤熔断
+        - Bifrost 跨所状态健康度
+        - 宏观重大事件避险静默期
+        - 极端插针与盘口流动性骤降
+        任一触发即返回 FATAL 拦截，直接短路整条认知流水线。
+        """
+        checked_rules: Dict[str, bool] = {}
+
+        if current_daily_drawdown_pct >= self.daily_drawdown_limit_pct:
+            checked_rules["daily_drawdown"] = False
+            reason = (
+                f"[Pre-flight 熔断] 当日净值回撤已达熔断阈值 "
+                f"({current_daily_drawdown_pct:.2%} >= {self.daily_drawdown_limit_pct:.2%})，跳过 LLM 认知流水线"
+            )
+            logger.warning("[前置风控短路] %s", reason)
+            return RiskReviewResult(
+                approved=False,
+                rejection_reason=reason,
+                veto_severity=VetoSeverity.FATAL,
+                checked_rules=checked_rules,
+            )
+        checked_rules["daily_drawdown"] = True
+
+        health_status = (bifrost_status or {}).get("status", "HEALTHY")
+        if health_status in ["DEGRADED", "ISOLATED"]:
+            checked_rules["bifrost_guard"] = False
+            reason = (
+                f"[Pre-flight 拦截] Bifrost 数据底座跨所偏差异常 ({health_status})，跳过 LLM 认知流水线"
+            )
+            logger.warning("[前置风控短路] %s", reason)
+            return RiskReviewResult(
+                approved=False,
+                rejection_reason=reason,
+                veto_severity=VetoSeverity.FATAL,
+                checked_rules=checked_rules,
+            )
+        checked_rules["bifrost_guard"] = True
+
+        if self.enable_macro_guard and self.macro_calendar:
+            in_blackout, _active_event, blackout_reason = self.macro_calendar.check_blackout_window(
+                as_of=as_of_time
+            )
+            if in_blackout:
+                checked_rules["macro_event_blackout"] = False
+                reason = f"[Pre-flight 静默] {blackout_reason}"
+                logger.warning("[前置风控短路] %s", reason)
+                return RiskReviewResult(
+                    approved=False,
+                    rejection_reason=reason,
+                    veto_severity=VetoSeverity.FATAL,
+                    checked_rules=checked_rules,
+                )
+        checked_rules["macro_event_blackout"] = True
+
+        if self.enable_flash_guard and market_klines:
+            is_stable, flash_reason = self.flash_detector.check_market_stability(
+                klines=market_klines,
+                bid_ask_spread_pct=bid_ask_spread_pct,
+            )
+            if not is_stable:
+                checked_rules["flash_crash_guard"] = False
+                reason = f"[Pre-flight 插针拦截] {flash_reason}"
+                logger.warning("[前置风控短路] %s", reason)
+                return RiskReviewResult(
+                    approved=False,
+                    rejection_reason=reason,
+                    veto_severity=VetoSeverity.FATAL,
+                    checked_rules=checked_rules,
+                )
+        checked_rules["flash_crash_guard"] = True
+
+        return RiskReviewResult(
+            approved=True,
+            veto_severity=VetoSeverity.NONE,
+            checked_rules=checked_rules,
+        )
+
     def review_proposal(
         self,
         proposal: TradeProposal,
@@ -107,15 +195,12 @@ class HardRiskGuard:
             return RiskReviewResult(
                 approved=False,
                 rejection_reason=reason,
+                veto_severity=VetoSeverity.FATAL,
                 checked_rules=checked_rules,
             )
         checked_rules["daily_drawdown"] = True
 
-        # =========================================================================
         # 铁律 2: Bifrost 跨交易所价格偏差守卫 (Data Integrity Guard)
-        # 当 Hyperliquid 与 Binance/OKX 的价差过大（DEGRADED / ISOLATED）时，说明存在严重插针、
-        # 闪电贷操纵或流动性枯竭，此时任何技术指标均失真，严禁新建仓位
-        # =========================================================================
         health_status = bifrost_status.get("status", "HEALTHY")
         if health_status in ["DEGRADED", "ISOLATED"]:
             checked_rules["bifrost_guard"] = False
@@ -126,68 +211,64 @@ class HardRiskGuard:
             return RiskReviewResult(
                 approved=False,
                 rejection_reason=reason,
+                veto_severity=VetoSeverity.FATAL,
                 checked_rules=checked_rules,
             )
         checked_rules["bifrost_guard"] = True
 
-        # =========================================================================
-        # 铁律 3: 杠杆倍数天花板审查 (Leverage Ceiling)
-        # 杜绝大语言模型在高确信度幻觉下提出 10x、20x 等激进杠杆
-        # =========================================================================
+        # 铁律 3: 杠杆倍数天花板审查 (Leverage Ceiling) - 可修复 (REPAIRABLE)
         if action.leverage > self.max_leverage:
             checked_rules["max_leverage"] = False
             reason = (
                 f"申请使用的杠杆倍数 ({action.leverage}x) 超出系统安全上限 ({self.max_leverage}x)"
             )
-            logger.warning("[风控拦截] %s | proposal_id=%s", reason, proposal.proposal_id)
+            logger.warning("[风控拦截·可修复] %s | proposal_id=%s", reason, proposal.proposal_id)
             return RiskReviewResult(
                 approved=False,
                 rejection_reason=reason,
+                veto_severity=VetoSeverity.REPAIRABLE,
+                repair_constraints={"max_leverage": self.max_leverage},
                 checked_rules=checked_rules,
             )
         checked_rules["max_leverage"] = True
 
-        # =========================================================================
-        # 铁律 4: 单笔头寸敞口比例限制 (Position Sizing Cap)
-        # 避免单次下注过重，确保多品种或多笔交易的风险平摊
-        # =========================================================================
-        max_allowed_size = account_equity * self.max_position_size_pct
+        # 铁律 4: 单笔头寸敞口比例限制 (Position Sizing Cap) - 可修复 (REPAIRABLE)
+        max_allowed_size = round(account_equity * self.max_position_size_pct, 2)
         if action.size_in_usd > max_allowed_size:
             checked_rules["position_size"] = False
             reason = (
                 f"订单名义价值 (${action.size_in_usd:,.2f}) 超过单笔持仓上限 "
                 f"(${max_allowed_size:,.2f}，即账户总权益的 {self.max_position_size_pct:.1%})"
             )
-            logger.warning("[风控拦截] %s | proposal_id=%s", reason, proposal.proposal_id)
+            logger.warning("[风控拦截·可修复] %s | proposal_id=%s", reason, proposal.proposal_id)
             return RiskReviewResult(
                 approved=False,
                 rejection_reason=reason,
+                veto_severity=VetoSeverity.REPAIRABLE,
+                repair_constraints={"max_allowed_size_usd": max_allowed_size},
+                adjusted_size_usd=max_allowed_size,
                 checked_rules=checked_rules,
             )
         checked_rules["position_size"] = True
 
-        # =========================================================================
-        # 铁律 5: 滑点与盘口保护 (Slippage Tolerance)
-        # 限制委托价格与基准价格的容忍滑点，防止被恶意前置夹子（Sandwich Attack）或击穿盘口
-        # =========================================================================
+        # 铁律 5: 滑点与盘口保护 (Slippage Tolerance) - 可修复 (REPAIRABLE)
         if action.max_slippage_pct > self.max_slippage_pct:
             checked_rules["slippage"] = False
             reason = (
                 f"申请滑点 ({action.max_slippage_pct:.3%}) 超过系统最大容忍阈值 "
                 f"({self.max_slippage_pct:.3%})"
             )
-            logger.warning("[风控拦截] %s | proposal_id=%s", reason, proposal.proposal_id)
+            logger.warning("[风控拦截·可修复] %s | proposal_id=%s", reason, proposal.proposal_id)
             return RiskReviewResult(
                 approved=False,
                 rejection_reason=reason,
+                veto_severity=VetoSeverity.REPAIRABLE,
+                repair_constraints={"max_slippage_pct": self.max_slippage_pct},
                 checked_rules=checked_rules,
             )
         checked_rules["slippage"] = True
 
-        # =========================================================================
-        # 铁律 6: 🚨 宏观重大事件避险静默期审查 (Macro Event Blackout Guard)
-        # 检查当前时刻是否处于 FOMC 加息、CPI 通胀公布前后 15 分钟内，防止被天地针双向扫损
-        # =========================================================================
+        # 铁律 6: 宏观重大事件避险静默期审查 (Macro Event Blackout Guard) - 致命
         if self.enable_macro_guard and self.macro_calendar:
             in_blackout, active_event, blackout_reason = self.macro_calendar.check_blackout_window(
                 as_of=as_of_time
@@ -198,14 +279,12 @@ class HardRiskGuard:
                 return RiskReviewResult(
                     approved=False,
                     rejection_reason=blackout_reason,
+                    veto_severity=VetoSeverity.FATAL,
                     checked_rules=checked_rules,
                 )
         checked_rules["macro_event_blackout"] = True
 
-        # =========================================================================
-        # 铁律 7: ⚡ 极端插针与流动性骤降拦截 (Flash Spike & Volatility Shield)
-        # 诊断最新 K 线是否存在超长上下影线、单根振幅剧烈放大或盘口价差真空
-        # =========================================================================
+        # 铁律 7: 极端插针与流动性骤降拦截 (Flash Spike & Volatility Shield) - 致命
         if self.enable_flash_guard and market_klines:
             is_stable, flash_reason = self.flash_detector.check_market_stability(
                 klines=market_klines,
@@ -217,13 +296,11 @@ class HardRiskGuard:
                 return RiskReviewResult(
                     approved=False,
                     rejection_reason=flash_reason,
+                    veto_severity=VetoSeverity.FATAL,
                     checked_rules=checked_rules,
                 )
         checked_rules["flash_crash_guard"] = True
 
-        # =========================================================================
-        # 所有硬风控规则全票通过，放行至执行网关
-        # =========================================================================
         logger.info(
             "[风控通过] 提案审核全票合规 | proposal_id=%s, symbol=%s, size=$%.2f, leverage=%.1fx",
             proposal.proposal_id,
@@ -233,6 +310,7 @@ class HardRiskGuard:
         )
         return RiskReviewResult(
             approved=True,
+            veto_severity=VetoSeverity.NONE,
             adjusted_size_usd=action.size_in_usd,
             checked_rules=checked_rules,
         )

@@ -14,89 +14,29 @@
  *    - 针对 Hyperliquid，强烈推荐使用其官方派生的专用【Agent Wallet】私钥，而非主钱包私钥！
  */
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Key, ShieldCheck, Lock, Eye, EyeOff, Plus, Trash2, CheckCircle2, 
   AlertCircle, ExternalLink, RefreshCw, Copy, Check, Sparkles, 
   Cpu, Building2, HelpCircle, Activity, ChevronRight, CheckCircle
 } from 'lucide-react';
+import { listVaultKeys, createVaultKey, testVaultKey, deleteVaultKey, updateVaultKeyNetwork } from '../api/endpoints';
 
-export default function KeyVaultModal({ isOpen, onClose, walletState }) {
+export default function KeyVaultModal({ isOpen, onClose, walletState, onConnectWallet }) {
   if (!isOpen) return null;
+
+  const isWalletConnected = Boolean(walletState?.isConnected && walletState?.address);
 
   const [activeCategory, setActiveCategory] = useState('exchanges'); // exchanges | llms | security
   const [showAddModal, setShowAddModal] = useState(false);
   const [testingKeyId, setTestingKeyId] = useState(null);
+  const [togglingKeyId, setTogglingKeyId] = useState(null);
   const [revealedKeys, setRevealedKeys] = useState({});
   const [copiedId, setCopiedId] = useState(null);
+  const [isLoading, setIsLoading] = useState(false);
 
-  // 初始预置的密钥列表 (脱敏状态)
-  const [keysList, setKeysList] = useState([
-    {
-      id: 'key_hl_01',
-      category: 'exchanges',
-      provider: 'hyperliquid',
-      providerName: 'Hyperliquid L1 (推荐底座)',
-      label: '主网专用 Agent 交易钱包',
-      mask: '0x49B2••••••••••••••••••••7F8C',
-      fullSecretMock: '0x49B2e84719283749102938475829102938477F8C',
-      status: 'OK',
-      latency: 82,
-      lastTested: '1 分钟前',
-      permissions: ['合约交易', '限价单/止损单', '零前视撤单'],
-      badge: '原生纳秒撮合',
-      badgeColor: 'bg-[#F3EBF9] text-[#7E429B] border-[#E3CEEF]',
-      icon: '⚡',
-    },
-    {
-      id: 'key_binance_01',
-      category: 'exchanges',
-      provider: 'binance',
-      providerName: 'Binance Futures (币安合约)',
-      label: '跨所对冲与深度只读网关',
-      mask: 'vm84••••••••••••••••••••92aK',
-      fullSecretMock: 'vm84k9s8d7f6g5h4j3k2l1m0n9b8v7c6x5z492aK',
-      status: 'OK',
-      latency: 114,
-      lastTested: '5 分钟前',
-      permissions: ['现货/U本位合约只读', '深度盘口推送'],
-      badge: '备用行情源',
-      badgeColor: 'bg-[#FAF4EB] text-[#B07B28] border-[#EBD6B5]',
-      icon: '🟡',
-    },
-    {
-      id: 'key_claude_01',
-      category: 'llms',
-      provider: 'anthropic',
-      providerName: 'Anthropic Claude 3.5 Sonnet',
-      label: '多智能体多空辩论主思考核心',
-      mask: 'sk-ant-api03-••••••••••••••••••••4f8e',
-      fullSecretMock: 'sk-ant-api03-abcdef1234567890abcdef123456784f8e',
-      status: 'OK',
-      latency: 320,
-      lastTested: '刚刚',
-      permissions: ['多轮 COT 逻辑推演', '结构化 JSON 输出'],
-      badge: '主力推理 (95% 胜率权重)',
-      badgeColor: 'bg-[#FBEFEA] text-[#DE6438] border-[#F2D6CA]',
-      icon: '🧠',
-    },
-    {
-      id: 'key_deepseek_01',
-      category: 'llms',
-      provider: 'deepseek',
-      providerName: 'DeepSeek V3 / R1 (深度求索)',
-      label: '高频特征提取与极速舆情快筛',
-      mask: 'sk-deepseek-••••••••••••••••••••8819',
-      fullSecretMock: 'sk-deepseek-99887766554433221100aabbccdd8819',
-      status: 'OK',
-      latency: 98,
-      lastTested: '10 分钟前',
-      permissions: ['秒级快讯过滤', '宏观点评分析'],
-      badge: '极速辅助 (超高性价比)',
-      badgeColor: 'bg-[#EBF5EE] text-[#3D784E] border-[#D1E8D7]',
-      icon: '🌊',
-    },
-  ]);
+  // 密钥列表 (仅属于当前连接钱包的脱敏数据，绝不展示未授权的 Mock 数据)
+  const [keysList, setKeysList] = useState([]);
 
   // 新增表单状态
   const [newKeyForm, setNewKeyForm] = useState({
@@ -106,6 +46,8 @@ export default function KeyVaultModal({ isOpen, onClose, walletState }) {
     apiKey: '',
     secretKey: '',
     passphrase: '',
+    baseUrl: '',
+    isTestnet: true,
   });
 
   // 复制密钥掩码
@@ -120,54 +62,213 @@ export default function KeyVaultModal({ isOpen, onClose, walletState }) {
     setRevealedKeys(prev => ({ ...prev, [id]: !prev[id] }));
   };
 
-  // 测试单项凭据连通性 (实时探针)
+  // 异步加载后端密钥 (严格多租户隔离)
+  const loadVaultKeys = async () => {
+    if (!walletState?.isConnected || !walletState?.address) {
+      setKeysList([]);
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      const deletedIds = JSON.parse(localStorage.getItem('heimdall_deleted_vault_keys') || '[]');
+      const remoteKeys = await listVaultKeys(walletState.address);
+      if (Array.isArray(remoteKeys)) {
+        const mapped = remoteKeys
+          .filter(k => !deletedIds.includes(k.key_id || k.id))
+          .map(k => {
+            const actualId = k.key_id || k.id;
+            const prov = String(k.provider || '').toLowerCase();
+            const isTestnet = prov === 'binance_demo' ? true : Boolean(k.is_testnet);
+            return {
+              id: actualId,
+              key_id: actualId,
+              category: k.category,
+              provider: prov,
+              providerName: prov.toUpperCase(),
+              isTestnet,
+              label: k.label,
+              mask: k.key_mask || k.mask || '••••••••••••••••',
+              fullSecretMock: k.key_mask || '••••••••••••••••',
+              status: k.last_test_status || k.status || 'OK',
+              lastMessage: '',
+              latency: Math.round(k.last_test_latency_ms || k.latency || 80),
+              lastTested: k.last_tested_at ? '已校验' : '刚刚',
+              permissions: ['全权限配置'],
+              badge: '硬件认证加密',
+              badgeColor: 'bg-[#EBF5EE] text-[#3D784E] border-[#D1E8D7]',
+              icon: k.category === 'exchanges' ? '⚡' : '🧠',
+            };
+          });
+        setKeysList(mapped);
+      } else {
+        setKeysList([]);
+      }
+    } catch (e) {
+      console.warn("拉取金库密钥失败:", e);
+      setKeysList([]);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (isOpen) {
+      if (walletState?.isConnected && walletState?.address) {
+        loadVaultKeys();
+      } else {
+        setKeysList([]);
+      }
+    }
+  }, [isOpen, walletState?.isConnected, walletState?.address]);
+
+  // 测试单项凭据连通性 (真实后端探针)
   const handleTestKey = async (id) => {
     setTestingKeyId(id);
     try {
-      // 模拟向后端 /api/v1/vault/keys/{id}/test 发送测试请求
-      await new Promise(r => setTimeout(r, 900));
-      const simulatedLatency = Math.floor(Math.random() * 80) + 60;
-      
+      const res = await testVaultKey(id);
+      const actualLatency = (res && res.latency_ms) ? Math.round(res.latency_ms) : 0;
+      const resStatus = (res && res.status) || 'OK';
+      const resMsg = (res && res.message) || '';
       setKeysList(prev => prev.map(k => {
-        if (k.id === id) {
+        if (k.id === id || k.key_id === id) {
           return {
             ...k,
-            status: 'OK',
-            latency: simulatedLatency,
+            status: resStatus,
+            latency: actualLatency,
             lastTested: '刚刚',
+            lastMessage: resMsg,
           };
         }
         return k;
       }));
     } catch (e) {
-      alert("连通性测试未响应");
+      setKeysList(prev => prev.map(k => (k.id === id || k.key_id === id) ? { ...k, status: 'FAILED', lastMessage: e.message || '探针请求异常', lastTested: '刚刚' } : k));
     } finally {
       setTestingKeyId(null);
     }
   };
 
-  // 删除凭据
-  const handleDeleteKey = (id, label) => {
-    if (window.confirm(`确定要安全物理销毁凭据【${label}】吗？删除后正在运行的关联机器人可能会降级停止。`)) {
-      setKeysList(prev => prev.filter(k => k.id !== id));
+  // 切换已有币安密钥的网络环境（测试网/模拟盘 <-> 正式网）
+  const handleToggleBinanceNetwork = async (keyObj) => {
+    const nextIsTestnet = !keyObj.isTestnet;
+    setTogglingKeyId(keyObj.id);
+    try {
+      const res = await updateVaultKeyNetwork(keyObj.id, nextIsTestnet);
+      setKeysList(prev => prev.map(k => (k.id === keyObj.id || k.key_id === keyObj.id) ? {
+        ...k,
+        isTestnet: Boolean(res?.is_testnet ?? nextIsTestnet),
+        lastMessage: res?.message || (nextIsTestnet ? '已切换为测试网/模拟盘密钥' : '已切换为正式网密钥'),
+      } : k));
+    } catch (e) {
+      alert(`切换密钥网络环境失败: ${e.message}`);
+    } finally {
+      setTogglingKeyId(null);
     }
   };
 
-  // 提交新增凭证
-  const handleSaveNewKey = (e) => {
-    e.preventDefault();
-    if (!newKeyForm.label || (!newKeyForm.apiKey && !newKeyForm.secretKey)) {
-      alert("请填写完整的凭证名称与密钥内容");
+  // 物理销毁凭据
+  const handleDeleteKey = async (id, label) => {
+    if (!window.confirm(`确定要安全物理销毁凭据【${label}】吗？删除后正在运行的关联机器人可能会降级停止。`)) {
       return;
     }
 
-    const rawSecret = newKeyForm.secretKey || newKeyForm.apiKey;
-    const prefix = rawSecret.slice(0, 6);
-    const suffix = rawSecret.slice(-4);
+    try {
+      await deleteVaultKey(id, walletState?.address);
+    } catch (err) {
+      console.warn("调用后端销毁凭证:", err);
+    }
+
+    // 记录被删除的预置凭据 ID，防止重新加载时恢复
+    try {
+      const deletedIds = JSON.parse(localStorage.getItem('heimdall_deleted_vault_keys') || '[]');
+      if (!deletedIds.includes(id)) {
+        deletedIds.push(id);
+        localStorage.setItem('heimdall_deleted_vault_keys', JSON.stringify(deletedIds));
+      }
+    } catch (e) {}
+
+    // 本地状态同步剔除
+    setKeysList(prev => prev.filter(k => (k.id !== id && k.key_id !== id)));
+  };
+
+  // 提交新增凭证 (真实验密入库)
+  const handleSaveNewKey = async (e) => {
+    e.preventDefault();
+    if (!isWalletConnected) {
+      alert("请先连接 Web3 钱包后再新增金库凭据");
+      return;
+    }
+
+    if (!newKeyForm.label) {
+      alert("请填写自定义别名备注");
+      return;
+    }
+
+    // 校验凭证必填项
+    if (newKeyForm.category === 'exchanges') {
+      if (newKeyForm.provider === 'hyperliquid') {
+        if (!newKeyForm.secretKey) {
+          alert("请填写 Hyperliquid Agent 派生私钥");
+          return;
+        }
+      } else {
+        // Binance / OKX / Bybit
+        if (!newKeyForm.apiKey || !newKeyForm.secretKey) {
+          alert(`请同时填写 ${newKeyForm.provider.toUpperCase()} 的 API Key (公钥) 与 API Secret (密钥)`);
+          return;
+        }
+        if (newKeyForm.provider === 'okx' && !newKeyForm.passphrase) {
+          alert("欧易 OKX 要求填写 Passphrase API 密码口令");
+          return;
+        }
+      }
+    } else {
+      // LLMs
+      if (!newKeyForm.apiKey) {
+        alert("请填写 AI 大模型的 API 访问密钥 (Key)");
+        return;
+      }
+    }
+
+    const rawSecret = newKeyForm.apiKey || newKeyForm.secretKey;
+    const prefix = rawSecret.slice(0, Math.min(6, rawSecret.length));
+    const suffix = rawSecret.slice(-Math.min(4, rawSecret.length));
     const generatedMask = `${prefix}••••••••••••••••••••${suffix}`;
 
+    let createdKeyId = null;
+    try {
+      const isBinanceTestnet = newKeyForm.provider === 'binance_demo' ? true : (newKeyForm.provider === 'binance' ? Boolean(newKeyForm.isTestnet) : false);
+      const res = await createVaultKey({
+        wallet_address: walletState.address,
+        category: newKeyForm.category,
+        provider: newKeyForm.provider,
+        label: newKeyForm.label,
+        payload: {
+          api_key: newKeyForm.apiKey,
+          secret_key: newKeyForm.secretKey,
+          private_key: newKeyForm.secretKey,
+          passphrase: newKeyForm.passphrase,
+          base_url: newKeyForm.baseUrl,
+          ...(newKeyForm.provider === 'binance' || newKeyForm.provider === 'binance_demo'
+            ? { is_testnet: isBinanceTestnet, mode: isBinanceTestnet ? 'demo' : 'mainnet' }
+            : {}),
+        }
+      });
+      if (res && res.key_id) {
+        createdKeyId = res.key_id;
+      }
+    } catch (err) {
+      console.warn("调用后端入库凭证失败:", err);
+      alert("保存凭据失败，请确保后端服务正常且钱包状态有效");
+      return;
+    }
+
+    const actualId = createdKeyId || `key_${Date.now()}`;
+
     const newKeyObj = {
-      id: `key_${Date.now()}`,
+      id: actualId,
+      key_id: actualId,
       category: newKeyForm.category,
       provider: newKeyForm.provider,
       providerName: newKeyForm.provider.toUpperCase(),
@@ -192,6 +293,7 @@ export default function KeyVaultModal({ isOpen, onClose, walletState }) {
       apiKey: '',
       secretKey: '',
       passphrase: '',
+      baseUrl: '',
     });
   };
 
@@ -226,13 +328,20 @@ export default function KeyVaultModal({ isOpen, onClose, walletState }) {
           </div>
 
           <div className="flex items-center space-x-2">
-            <button
-              onClick={() => setShowAddModal(true)}
-              className="px-3 py-1.5 rounded-xl bg-[#DE6438] hover:bg-[#C95328] text-white text-xs font-bold shadow-xs transition flex items-center space-x-1.5"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              <span>新增凭据</span>
-            </button>
+            {isWalletConnected ? (
+              <button
+                onClick={() => setShowAddModal(true)}
+                className="px-3 py-1.5 rounded-xl bg-[#DE6438] hover:bg-[#C95328] text-white text-xs font-bold shadow-xs transition flex items-center space-x-1.5"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>新增凭据</span>
+              </button>
+            ) : (
+              <span className="px-2.5 py-1 rounded-xl bg-[#FBF0EA] border border-[#F2D7CA] text-[#DE6438] text-[11px] font-bold flex items-center space-x-1.5">
+                <Lock className="w-3 h-3" />
+                <span>金库已锁定</span>
+              </span>
+            )}
             <button 
               onClick={onClose}
               className="w-7 h-7 rounded-lg hover:bg-[#E5DFD4] text-[#7E7469] hover:text-[#2E2823] flex items-center justify-center text-xs transition"
@@ -242,6 +351,37 @@ export default function KeyVaultModal({ isOpen, onClose, walletState }) {
           </div>
         </div>
 
+        {!isWalletConnected ? (
+          /* 未连接钱包时的多租户强隔离锁定界面 */
+          <div className="p-10 flex flex-col items-center justify-center text-center space-y-4 my-auto">
+            <div className="w-16 h-16 rounded-2xl bg-[#FBF0EA] border border-[#F2D7CA] text-[#DE6438] flex items-center justify-center shadow-xs">
+              <Lock className="w-8 h-8" />
+            </div>
+            <div className="space-y-1.5 max-w-md">
+              <h3 className="text-base font-bold text-[#2E2823]">
+                个人加密凭证金库已锁定
+              </h3>
+              <p className="text-xs text-[#7E7469] leading-relaxed">
+                当前处于未登录状态。根据 Heimdall 安全架构规范，所有交易所私钥（Hyperliquid / Binance / OKX）与大模型 API Key 均采用 AES-256-GCM 硬件级认证加密，并与用户的 Web3 钱包公钥地址一对一隔离。
+              </p>
+              <p className="text-[11px] text-[#A89F91]">
+                系统严格禁止未授权跨租户检索或展示凭证。请先连接 Web3 钱包并完成身份签名，以解锁属于您的私有金库。
+              </p>
+            </div>
+            <div className="pt-2">
+              <button
+                onClick={() => {
+                  if (onConnectWallet) onConnectWallet();
+                }}
+                className="px-5 py-2.5 rounded-xl bg-[#DE6438] hover:bg-[#C95328] text-white text-xs font-bold shadow-sm transition flex items-center space-x-2"
+              >
+                <ShieldCheck className="w-4 h-4" />
+                <span>立即连接钱包解锁金库</span>
+              </button>
+            </div>
+          </div>
+        ) : (
+          <>
         {/* 2. 二级分类切换胶囊 */}
         <div className="px-6 pt-3 pb-2 bg-[#F6F2EB] border-b border-[#EAE3D7] flex items-center justify-between">
           <div className="flex space-x-1.5 bg-[#EAE3D7] p-1 rounded-xl">
@@ -458,15 +598,55 @@ export default function KeyVaultModal({ isOpen, onClose, walletState }) {
                       </div>
                     </div>
 
-                    {/* 权限清单标签 */}
-                    <div className="flex items-center space-x-1.5 text-[10px] text-[#7E7469]">
-                      <span className="font-semibold text-[#2E2823]">生效权限:</span>
-                      {k.permissions.map((p, idx) => (
-                        <span key={idx} className="bg-[#FAF7F2] border border-[#EAE3D8] px-2 py-0.5 rounded-md">
-                          {p}
-                        </span>
-                      ))}
+                    {/* 权限清单 + 币安测试网/正式网环境开关 */}
+                    <div className="flex flex-wrap items-center justify-between gap-2 text-[10px] text-[#7E7469]">
+                      <div className="flex items-center space-x-1.5">
+                        <span className="font-semibold text-[#2E2823]">生效权限:</span>
+                        {k.permissions.map((p, idx) => (
+                          <span key={idx} className="bg-[#FAF7F2] border border-[#EAE3D8] px-2 py-0.5 rounded-md">
+                            {p}
+                          </span>
+                        ))}
+                      </div>
+
+                      {(k.provider === 'binance' || k.provider === 'binance_demo') && (
+                        <div className="flex items-center space-x-2 bg-[#FAF7F2] border border-[#E6DFD5] px-2.5 py-1 rounded-lg">
+                          <span className={`font-semibold ${!k.isTestnet ? 'text-[#DE6438]' : 'text-[#9E9486]'}`}>
+                            正式密钥
+                          </span>
+                          <button
+                            type="button"
+                            role="switch"
+                            aria-checked={Boolean(k.isTestnet)}
+                            disabled={togglingKeyId === k.id}
+                            onClick={() => handleToggleBinanceNetwork(k)}
+                            title="切换该币安密钥为测试网/模拟盘或正式网密钥"
+                            className={`relative inline-flex h-4 w-8 items-center rounded-full transition-colors cursor-pointer disabled:opacity-50 ${
+                              k.isTestnet ? 'bg-[#3D784E]' : 'bg-[#DE6438]'
+                            }`}
+                          >
+                            <span
+                              className={`inline-block h-3 w-3 transform rounded-full bg-white shadow-xs transition-transform ${
+                                k.isTestnet ? 'translate-x-4' : 'translate-x-0.5'
+                              }`}
+                            />
+                          </button>
+                          <span className={`font-semibold ${k.isTestnet ? 'text-[#3D784E]' : 'text-[#9E9486]'}`}>
+                            测试网/模拟盘
+                          </span>
+                        </div>
+                      )}
                     </div>
+
+                    {k.lastMessage && (
+                      <div className={`text-[11px] px-2.5 py-1.5 rounded-lg border ${
+                        k.status === 'FAILED'
+                          ? 'bg-[#FDF2F2] border-[#F5C6C6] text-[#C24D4D]'
+                          : 'bg-[#EBF5EE] border-[#D1E8D7] text-[#2A5D37]'
+                      }`}>
+                        {k.lastMessage}
+                      </div>
+                    )}
 
                   </div>
                 );
@@ -483,6 +663,8 @@ export default function KeyVaultModal({ isOpen, onClose, walletState }) {
           )}
 
         </div>
+          </>
+        )}
 
         {/* 4. 弹窗底栏 */}
         <div className="px-6 py-3.5 bg-[#F2EDE4] border-t border-[#E4DDD1] flex items-center justify-between text-[11px] text-[#7E7469]">
@@ -557,7 +739,8 @@ export default function KeyVaultModal({ isOpen, onClose, walletState }) {
                   {newKeyForm.category === 'exchanges' ? (
                     <>
                       <option value="hyperliquid">Hyperliquid L1 (Agent 代理私钥)</option>
-                      <option value="binance">Binance (币安现货/合约 API Key)</option>
+                      <option value="binance_demo">Binance Demo (币安现货模拟交易 · demo-api.binance.com)</option>
+                      <option value="binance">Binance (币安正式网/测试网 API Key)</option>
                       <option value="okx">OKX (欧易 API Key)</option>
                       <option value="bybit">Bybit 衍生品 API</option>
                     </>
@@ -577,26 +760,151 @@ export default function KeyVaultModal({ isOpen, onClose, walletState }) {
                 <label className="block text-xs font-semibold text-[#2E2823] mb-1">自定义别名备注</label>
                 <input
                   type="text"
-                  placeholder="如：Hyperliquid 实盘小号 / Claude 主脑"
+                  placeholder="如：币安主交易账户 / DeepSeek-V3 核心"
                   value={newKeyForm.label}
                   onChange={(e) => setNewKeyForm(f => ({ ...f, label: e.target.value }))}
                   className="w-full p-2.5 rounded-xl bg-white border border-[#DDD5C8] text-xs text-[#2E2823] focus:outline-hidden focus:ring-2 focus:ring-[#DE6438]/20 font-medium"
+                  required
                 />
               </div>
 
-              {/* 密钥内容 */}
-              <div>
-                <label className="block text-xs font-semibold text-[#2E2823] mb-1">
-                  {newKeyForm.category === 'exchanges' ? "API Secret / Agent 派生私钥" : "API 访问密钥 (Key)"}
-                </label>
-                <input
-                  type="password"
-                  placeholder={newKeyForm.category === 'exchanges' ? "0x... 或私钥 Hex 字符" : "sk-ant-... / sk-..."}
-                  value={newKeyForm.secretKey}
-                  onChange={(e) => setNewKeyForm(f => ({ ...f, secretKey: e.target.value }))}
-                  className="w-full p-2.5 rounded-xl bg-white border border-[#DDD5C8] text-xs text-[#2E2823] font-mono focus:outline-hidden focus:ring-2 focus:ring-[#DE6438]/20"
-                />
-              </div>
+              {/* 交易所凭证：Hyperliquid vs 传统交易所 (Binance / OKX / Bybit) */}
+              {newKeyForm.category === 'exchanges' && (
+                <>
+                  {newKeyForm.provider === 'hyperliquid' ? (
+                    <>
+                      <div>
+                        <label className="block text-xs font-semibold text-[#2E2823] mb-1">
+                          Agent 派生私钥 (Private Key) <span className="text-[#DE6438]">*</span>
+                        </label>
+                        <input
+                          type="password"
+                          placeholder="0x... 派生私钥 Hex 字符"
+                          value={newKeyForm.secretKey}
+                          onChange={(e) => setNewKeyForm(f => ({ ...f, secretKey: e.target.value }))}
+                          className="w-full p-2.5 rounded-xl bg-white border border-[#DDD5C8] text-xs text-[#2E2823] font-mono focus:outline-hidden focus:ring-2 focus:ring-[#DE6438]/20"
+                          required
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-[#2E2823] mb-1">
+                          主账户钱包公钥地址 (可选)
+                        </label>
+                        <input
+                          type="text"
+                          placeholder="0x... EVM 钱包地址 (选填，留空则由私钥自动推导)"
+                          value={newKeyForm.apiKey}
+                          onChange={(e) => setNewKeyForm(f => ({ ...f, apiKey: e.target.value }))}
+                          className="w-full p-2.5 rounded-xl bg-white border border-[#DDD5C8] text-xs text-[#2E2823] font-mono focus:outline-hidden focus:ring-2 focus:ring-[#DE6438]/20"
+                        />
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      {/* Binance / OKX / Bybit 均需要 API Key (公钥) 与 API Secret (私钥) */}
+                      <div>
+                        <label className="block text-xs font-semibold text-[#2E2823] mb-1">
+                          API Key (访问公钥) <span className="text-[#DE6438]">*</span>
+                        </label>
+                        <input
+                          type="text"
+                          placeholder={`输入 ${newKeyForm.provider.toUpperCase()} 平台生成的 API Key`}
+                          value={newKeyForm.apiKey}
+                          onChange={(e) => setNewKeyForm(f => ({ ...f, apiKey: e.target.value }))}
+                          className="w-full p-2.5 rounded-xl bg-white border border-[#DDD5C8] text-xs text-[#2E2823] font-mono focus:outline-hidden focus:ring-2 focus:ring-[#DE6438]/20"
+                          required
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-[#2E2823] mb-1">
+                          API Secret (密钥 / 私钥) <span className="text-[#DE6438]">*</span>
+                        </label>
+                        <input
+                          type="password"
+                          placeholder={`输入 ${newKeyForm.provider.toUpperCase()} 对应的 Secret Key`}
+                          value={newKeyForm.secretKey}
+                          onChange={(e) => setNewKeyForm(f => ({ ...f, secretKey: e.target.value }))}
+                          className="w-full p-2.5 rounded-xl bg-white border border-[#DDD5C8] text-xs text-[#2E2823] font-mono focus:outline-hidden focus:ring-2 focus:ring-[#DE6438]/20"
+                          required
+                        />
+                      </div>
+                      {newKeyForm.provider === 'binance' && (
+                        <div className="flex items-center justify-between p-2.5 rounded-xl bg-white border border-[#DDD5C8] text-xs">
+                          <div>
+                            <div className="font-semibold text-[#2E2823]">密钥所属网络环境</div>
+                            <div className="text-[10px] text-[#7E7469]">测试网/模拟盘走 demo-api.binance.com，正式密钥走 api.binance.com</div>
+                          </div>
+                          <div className="flex items-center space-x-2 shrink-0 ml-2">
+                            <span className={`text-[11px] font-semibold ${!newKeyForm.isTestnet ? 'text-[#DE6438]' : 'text-[#9E9486]'}`}>正式</span>
+                            <button
+                              type="button"
+                              role="switch"
+                              aria-checked={Boolean(newKeyForm.isTestnet)}
+                              onClick={() => setNewKeyForm(f => ({ ...f, isTestnet: !f.isTestnet }))}
+                              className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors cursor-pointer ${
+                                newKeyForm.isTestnet ? 'bg-[#3D784E]' : 'bg-[#DE6438]'
+                              }`}
+                            >
+                              <span
+                                className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow-xs transition-transform ${
+                                  newKeyForm.isTestnet ? 'translate-x-5' : 'translate-x-0.5'
+                                }`}
+                              />
+                            </button>
+                            <span className={`text-[11px] font-semibold ${newKeyForm.isTestnet ? 'text-[#3D784E]' : 'text-[#9E9486]'}`}>测试网</span>
+                          </div>
+                        </div>
+                      )}
+                      {newKeyForm.provider === 'okx' && (
+                        <div>
+                          <label className="block text-xs font-semibold text-[#2E2823] mb-1">
+                            Passphrase (API 密码口令) <span className="text-[#DE6438]">*</span>
+                          </label>
+                          <input
+                            type="password"
+                            placeholder="OKX 独立创建 API 时的 Passphrase 口令"
+                            value={newKeyForm.passphrase}
+                            onChange={(e) => setNewKeyForm(f => ({ ...f, passphrase: e.target.value }))}
+                            className="w-full p-2.5 rounded-xl bg-white border border-[#DDD5C8] text-xs text-[#2E2823] font-mono focus:outline-hidden focus:ring-2 focus:ring-[#DE6438]/20"
+                            required
+                          />
+                        </div>
+                      )}
+                    </>
+                  )}
+                </>
+              )}
+
+              {/* AI 大模型凭证 */}
+              {newKeyForm.category === 'llms' && (
+                <>
+                  <div>
+                    <label className="block text-xs font-semibold text-[#2E2823] mb-1">
+                      API 访问密钥 (API Key) <span className="text-[#DE6438]">*</span>
+                    </label>
+                    <input
+                      type="password"
+                      placeholder="sk-ant-... / sk-... / AIza..."
+                      value={newKeyForm.apiKey}
+                      onChange={(e) => setNewKeyForm(f => ({ ...f, apiKey: e.target.value }))}
+                      className="w-full p-2.5 rounded-xl bg-white border border-[#DDD5C8] text-xs text-[#2E2823] font-mono focus:outline-hidden focus:ring-2 focus:ring-[#DE6438]/20"
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-[#2E2823] mb-1">
+                      API Base URL (自定义代理中转 - 可选)
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="如：https://api.deepseek.com/v1 (留空则使用官方默认端点)"
+                      value={newKeyForm.baseUrl}
+                      onChange={(e) => setNewKeyForm(f => ({ ...f, baseUrl: e.target.value }))}
+                      className="w-full p-2.5 rounded-xl bg-white border border-[#DDD5C8] text-xs text-[#2E2823] font-mono focus:outline-hidden focus:ring-2 focus:ring-[#DE6438]/20"
+                    />
+                  </div>
+                </>
+              )}
 
               {/* 提交按钮 */}
               <div className="pt-2 flex items-center space-x-2">

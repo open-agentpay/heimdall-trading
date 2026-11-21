@@ -1,0 +1,67 @@
+[
+  {
+    "scenario_id": "trend_01_eth_breakout",
+    "category": "trend_breakout",
+    "description": "ETH 温和放量单边上涨突破（健康动量）",
+    "symbol": "ETH",
+    "account_equity": 10000.0,
+    "daily_drawdown_pct": 0.0,
+    "guard_status": {"status": "HEALTHY", "spread_pct": 0.03},
+    "funding": {"funding_rate": 0.0001, "annualized_rate": 0.1095},
+    "kline_pattern": {"type": "uptrend", "bars": 40, "start": 3000.0, "step": 4.5, "vol_boost": true},
+    "expected_actions": ["LONG"],
+    "expected_blocked": false
+  },
+  {
+    "scenario_id": "trend_02_btc_breakout",
+    "category": "trend_breakout",
+    "description": "BTC 均线多头排列持续推进",
+    "symbol": "BTC",
+    "account_equity": 20000.0,
+    "daily_drawdown_pct": 0.005,
+    "guard_status": {"status": "HEALTHY", "spread_pct": 0.02},
+    "funding": {"funding_rate": 0.00008, "annualized_rate": 0.0876},
+    "kline_pattern": {"type": "uptrend", "bars": 40, "start": 90000.0, "step": 110.0, "vol_boost": true},
+    "expected_actions": ["LONG"],
+    "expected_blocked": false
+  },
+  {
+    "scenario_id": "trend_03_sol_breakout",
+    "category": "trend_breakout",
+    "description": "SOL 放量突破前高延续上涨",
+    "symbol": "SOL",
+    "account_equity": 10000.0,
+    "daily_drawdown_pct": 0.0,
+    "guard_status": {"status": "HEALTHY", "spread_pct": 0.04},
+    "funding": {"funding_rate": 0.00005, "annualized_rate": 0.0547},
+    "kline_pattern": {"type": "uptrend", "bars": 40, "start": 180.0, "step": 0.35, "vol_boost": true},
+    "expected_actions": ["LONG"],
+    "expected_blocked": false
+  },
+  {
+    "scenario_id": "trend_04_eth_downtrend",
+    "category": "trend_breakout",
+    "description": "ETH 单边空头排列顺势下跌（不可逆势抄底）",
+    "symbol": "ETH",
+    "account_equity": 10000.0,
+    "daily_drawdown_pct": 0.01,
+    "guard_status": {"status": "HEALTHY", "spread_pct": 0.04},
+    "funding": {"funding_rate": -0.00005, "annualized_rate": -0.0547},
+    "kline_pattern": {"type": "downtrend", "bars": 40, "start": 3400.0, "step": -5.0, "vol_boost": false},
+    "expected_actions": ["SHORT", "NEUTRAL"],
+    "expected_blocked": false
+  },
+  {
+    "scenario_id": "trend_05_btc_downtrend",
+    "category": "trend_breakout",
+    "description": "BTC 破位下行趋势（拒绝逆势接飞刀）",
+    "symbol": "BTC",
+    "account_equity": 20000.0,
+    "daily_drawdown_pct": 0.01,
+    "guard_status": {"status": "HEALTHY", "spread_pct": 0.03},
+    "funding": {"funding_rate": -0.00002, "annualized_rate": -0.0219},
+    "kline_pattern": {"type": "downtrend", "bars": 40, "start": 96000.0, "step": -120.0, "vol_boost": false},
+    "expected_actions": ["SHORT", "NEUTRAL"],
+    "expected_blocked": false
+  }
+]

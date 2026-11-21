@@ -140,7 +140,7 @@ export default function AgentModal({ agent, onClose }) {
           <div className="bg-[#241F1C] p-3 rounded-xl border border-[#3D352E] space-y-1 text-[#EAE2D8] font-mono text-[10px]">
             <div className="flex items-center justify-between text-[#8E8276] border-b border-[#3D352E] pb-1">
               <span>🧠 LLM Chain-of-Thought Stream</span>
-              <span>Latency: 45ms</span>
+              <span>Latency: {agent.latency || '45ms'}</span>
             </div>
             <p className="leading-relaxed pt-1 text-[#D2C8BC]">
               {agent.thinkingMonologue}
@@ -152,7 +152,7 @@ export default function AgentModal({ agent, onClose }) {
         {/* 弹窗底栏操作 */}
         <div className="p-3 bg-white border-t border-[#EBE3D7] flex items-center justify-between">
           <span className="text-[10px] text-[#9E917F]">
-            审计追踪 ID: <code className="bg-[#EFE9DF] px-1 rounded">cot_agent_{agent.id}_v1</code>
+            审计追踪 ID: <code className="bg-[#EFE9DF] px-1 rounded">{agent.traceId || `cot_agent_${agent.id}_v1`}</code>
           </span>
           <button 
             onClick={onClose}

@@ -1,26 +1,40 @@
 """
 ================================================================================
-Heimdall 交易平台 - 多空对抗辩论与风险博弈引擎 (Debate & Risk Swarm)
+Heimdall 交易平台 - 多空对抗辩论与认知博弈引擎 (Debate & Cognitive Swarm)
 ================================================================================
 
-【小白速懂通俗解释】：
-为什么量化交易要让两个 AI 吵架？
-1. 大模型（LLM）有一个致命弱点叫“确认偏差 (Confirmation Bias)”：
-   如果它看到价格涨了一点，它就会自己骗自己，满脑子都是“买入理由”，忽视了暴跌的风险。
-2. 借鉴 MIT 与 Tauric Research 开源项目 TradingAgents 的精髓，我们设计了：
-   - 🐂【多头研究员 (Bull Researcher)】：专门找买入机会，寻找上涨催化剂。
-   - 🐻【空头研究员 (Bear Researcher)】：专门找茬，揭穿多头的谎言，寻找下跌陷阱。
-   - 🛡️【保守风控员 (Conservative Officer)】：宁可少赚钱，绝不承担大回撤（保命第一）。
-   - 🚀【进取风控员 (Aggressive Officer)】：只要盈亏比足够大，就敢于承担合理风险。
-   - ⚖️【投资总监/裁判 (Debate Moderator / CIO)】：听完双方神仙打架后，冷静做出最终裁决！
+【为什么必须引入多空对抗辩论？(Why We Do This)】：
+在单智能体 (Single Agent) 系统中，LLM 在金融研判与复杂决策任务上存在一个致命的认知心理学缺陷：
+【确认偏差 (Confirmation Bias) 与过度拟合自我假设】：
+- 当模型观察到“均线金叉”或单条正面推特时，其生成概率分布会迅速向“看涨”塌缩；
+- 在接下来的思考中，它会自发寻找成百上千个支持看涨的理由，而对阻力位放量滞涨、资金费严重倒挂、
+  巨鲸充值砸盘等反向危险信号视而不见。
+- 最终生成的结论充满自信，实盘一进场却瞬间遭遇暴跌割肉。
 
-本模块支持多轮往复辩论（Multi-Turn Debate）与历史教训反思注入（Past Lessons Reflection）。
+借鉴 MIT 与 Tauric Research 开源项目 TradingAgents 的前沿博弈设计，
+Heimdall 采用【红蓝对抗多智能体激辩 (Red Team vs Blue Team Debate)】：
+1. 🐂【多头研究员 (Bull Researcher - Blue Team)】：
+   专门负责从多维数据中提取上涨催化剂，极力寻找进攻与做多理由；
+2. 🐻【空头研究员 (Bear Researcher - Red Team)】：
+   扮演“找茬狂人”与挑剔审计员，专门攻击多头的漏洞，寻找阻力位诱多、踩踏清算与下行陷阱；
+3. 🔄【多轮往复反驳 (Multi-Round Rebuttal)】：
+   第一轮各自亮明初始观点，第二轮强制阅读对方的核心论点并进行定向反驳（辩论深化）；
+4. ⚖️【辩论裁判员 / 投资总监 (Debate Moderator / CIO)】：
+   站在绝对客观中立的资金管理视角，裁定多空谁的证据链更完整、置信度更高；
+   并拥有【三选一】决策权（LONG / SHORT / NEUTRAL）。
+   *特别注意*：当双方势均力敌、或市场处于 HIGH_VOLATILITY 剧烈震荡时，裁判必须果断裁定
+   【NEUTRAL (空仓观望)】！在量化领域，“现金也是一种仓位”，不亏钱是赚钱的前提！
 """
 
+import time
 import logging
 from typing import Dict, Any, List, Optional
 from pydantic import BaseModel, Field
 from heimdall.llm.client import LLMService
+from heimdall.agents.tools import (
+    inspect_bull_momentum_evidence,
+    inspect_bear_exhaustion_evidence,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +99,10 @@ class ModeratorLLMOutput(BaseModel):
     verdict: str = Field(
         description="【终审判词】：用专业清晰的话解释为什么采纳多方/空方，或者为什么选择按兵不动"
     )
+    evidence_audit: str = Field(
+        default="",
+        description="【原始证据交叉审计】：裁判直接核验原始指标与链上情绪后，指出双方论据是否与底层客观事实存在矛盾"
+    )
 
 
 # =============================================================================
@@ -107,16 +125,13 @@ class BullResearcher:
         opponent_point: Optional[str] = None,
         lessons_learned: Optional[str] = None,
         sentiment_report: Optional[Dict[str, Any]] = None,
+        raw_klines: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         """
-        发起做多辩护或反驳空头观点
-
-        :param analyst_brief: 宏观分析师整理的市场背景（K线均线、资金费率、跨所基差）
-        :param opponent_point: 上一轮辩论中空头研究员提出的刁钻质问（用于多轮对抗反驳）
-        :param lessons_learned: 历史类似行情的交易复盘教训（防范在同一个坑摔倒两次）
-        :param sentiment_report: 情绪与链上巨鲸异动研报（巨鲸吸筹/砸盘、持仓挤压度）
-        :return: 包含做多立论、目标点位与失效止损价的字典
+        发起做多辩护或反驳空头观点（配备多头专属只读取证工具）
         """
+        start_time = time.perf_counter()
+        symbol = analyst_brief.get("symbol", "ETH")
         regime = analyst_brief.get("regime", "RANGE")
         latest_price = analyst_brief.get("latest_price", 0.0)
         support = analyst_brief.get("support", latest_price * 0.98)
@@ -124,51 +139,78 @@ class BullResearcher:
         indicators = analyst_brief.get("indicators", {})
         rsi = indicators.get("rsi14", 50.0)
 
-        # ---------------------------------------------------------------------
-        # 模式 1：接入真实大模型进行深度逻辑推演 (LLM Agent Reasoning)
-        # ---------------------------------------------------------------------
+        bull_evidence = inspect_bull_momentum_evidence(raw_klines or [])
+
+        logger.info("=== [BullResearcher 发起做多辩护] 标的=%s | 当前价格=$%.2f ===", symbol, latest_price)
+        fallback_reason = "LLM 未启用 (未检测到有效 API 密钥)"
+
+        if not self.llm.is_enabled:
+            await self.llm.ensure_credentials()
+
         if self.llm.is_enabled:
             system_prompt = (
                 "You are the Senior Bullish Quant Researcher at Heimdall Capital. "
                 "Your role is to build a high-conviction, evidence-based argument for taking a LONG position. "
-                "Synthesize technical indicators and on-chain whale sentiment, and directly refute any bear concerns."
+                "Synthesize technical indicators, bull momentum microstructure evidence, and on-chain whale sentiment, "
+                "and directly refute any bear concerns."
             )
             rebuttal_context = f"\n[Opponent Bear Argument]: {opponent_point}\n" if opponent_point else ""
             lessons_context = f"\n[Historical Lessons]: {lessons_learned}\n" if lessons_learned else ""
             sentiment_context = f"\n[Sentiment & On-Chain Whale Report]: {sentiment_report.get('summary')}\n" if sentiment_report else ""
+            evidence_context = f"\n[Bull Momentum Tool Evidence]: {bull_evidence}\n" if bull_evidence.get("available") else ""
 
             user_prompt = (
-                f"Asset: {analyst_brief.get('symbol', 'ETH')}, Price: ${latest_price:,.2f}\n"
+                f"Asset: {symbol}, Price: ${latest_price:,.2f}\n"
                 f"Market Regime: {regime}\n"
                 f"Key Technicals: Support=${support:,.2f}, Resistance=${resistance:,.2f}, RSI={rsi:.1f}, "
                 f"EMA20=${indicators.get('ema20')}, EMA50=${indicators.get('ema50')}\n"
                 f"Annualized Funding Rate: {indicators.get('annualized_funding', 0):.2%}\n"
-                f"{sentiment_context}{rebuttal_context}{lessons_context}\n"
+                f"{evidence_context}{sentiment_context}{rebuttal_context}{lessons_context}\n"
                 "Provide your bullish thesis, confidence score (0.0 to 1.0), upside target, and invalidation stop."
             )
+            full_prompt_log = f"[System Prompt]:\n{system_prompt}\n\n[User Prompt]:\n{user_prompt}"
+            logger.info("[BullResearcher 提交提示词] 标的=%s\n%s", symbol, full_prompt_log)
 
-            llm_result: Optional[BullDebateLLMOutput] = await self.llm.generate_structured(
-                prompt=user_prompt,
-                system_prompt=system_prompt,
-                schema_cls=BullDebateLLMOutput,
-            )
-            if llm_result:
-                logger.info("[Bull Researcher · LLM 思考完毕] 置信度=%.2f | %s", llm_result.confidence, llm_result.key_thesis)
-                return {
-                    "standpoint": "BULL",
-                    "confidence": llm_result.confidence,
-                    "key_thesis": f"[LLM 多头立论] {llm_result.key_thesis}",
-                    "target_price": llm_result.target_price,
-                    "invalidation_price": llm_result.invalidation_price,
-                }
+            try:
+                llm_result: Optional[BullDebateLLMOutput] = await self.llm.generate_structured(
+                    prompt=user_prompt,
+                    system_prompt=system_prompt,
+                    schema_cls=BullDebateLLMOutput,
+                )
+                if llm_result:
+                    elapsed_ms = round((time.perf_counter() - start_time) * 1000, 2)
+                    llm_resp_text = llm_result.model_dump_json()
+                    usage = getattr(self.llm, "last_usage", None)
+                    logger.info(
+                        "<<< [BullResearcher LLM 响应] (耗时 %.1fms) 置信度=%.2f | 目标价=$%.2f | 止损价=$%.2f\n[多头论据]: %s\n[原始结构化响应]: %s",
+                        elapsed_ms, llm_result.confidence, llm_result.target_price, llm_result.invalidation_price, llm_result.key_thesis, llm_resp_text
+                    )
+                    return {
+                        "standpoint": "BULL",
+                        "confidence": llm_result.confidence,
+                        "key_thesis": f"[LLM 多头立论] {llm_result.key_thesis}",
+                        "target_price": llm_result.target_price,
+                        "invalidation_price": llm_result.invalidation_price,
+                        "evidence_used": bull_evidence,
+                        "telemetry": {
+                            "latency_ms": elapsed_ms,
+                            "fallback_used": False,
+                            "prompt": full_prompt_log,
+                            "llm_response": llm_resp_text,
+                            "tokens_used": getattr(usage, "total_tokens", 0),
+                            "prompt_tokens": getattr(usage, "prompt_tokens", 0),
+                            "completion_tokens": getattr(usage, "completion_tokens", 0),
+                        },
+                    }
+                else:
+                    fallback_reason = "LLM 推理返回空结果或解析结构化 Schema 失败"
+            except Exception as e:
+                fallback_reason = f"LLM 接口调用异常: {str(e)}"
+                logger.warning("[Bull Researcher LLM 异常: %s]，激活规则兜底", e)
 
-        # ---------------------------------------------------------------------
-        # 模式 2：确定性量化算法规则兜底 (Local Quant Rule Fallback)
-        # ---------------------------------------------------------------------
         thesis = []
-        confidence = 0.5  # 基础基准分
+        confidence = 0.5
 
-        # 链上与情绪面支持
         if sentiment_report:
             whale_act = sentiment_report.get("whale_activity")
             if whale_act == "ACCUMULATION":
@@ -178,7 +220,6 @@ class BullResearcher:
                 thesis.append("空头极端拥挤，具备巨大轧空爆发潜力")
                 confidence += 0.10
 
-        # 【小白知识点】：TREND_UP 叫单边多头上升趋势，均线多头排列（短期均线在上，长期均线在下），做多胜率高
         if regime == "TREND_UP":
             thesis.append("当前处于强势上升趋势 (TREND_UP)，均线系统形成坚固多头支撑")
             confidence += 0.25
@@ -193,7 +234,6 @@ class BullResearcher:
             thesis.append("高波动行情下存在剧烈上影线反弹脉冲机会，但需极其轻仓")
             confidence -= 0.20
 
-        # 【小白知识点】：RSI 是相对强弱指标，在 52-72 之间属于“健康的多头动能区间”，说明买盘充沛且未过度透支
         if rsi < 35.0:
             thesis.append(f"RSI={rsi:.1f} 处于超卖区间，随时可能引发超跌反弹")
             confidence += 0.15
@@ -204,12 +244,32 @@ class BullResearcher:
             thesis.append(f"RSI={rsi:.1f} 处于极度强势区，多方控盘但需提防高位震荡")
             confidence += 0.05
 
+        if bull_evidence.get("available") and bull_evidence.get("breakout_imminent"):
+            thesis.append(
+                f"微结构取证显示放量逼近20根高点 (量比={bull_evidence.get('volume_expansion_ratio')}x)"
+            )
+            confidence += 0.05
+
+        elapsed_ms = round((time.perf_counter() - start_time) * 1000, 2)
+        logger.info(
+            "[BullResearcher 本地规则兜底] 标的=%s | 置信度=%.2f | 耗时=%.1fms | 触发原因=%s",
+            symbol, confidence, elapsed_ms, fallback_reason
+        )
         return {
             "standpoint": "BULL",
             "confidence": round(min(1.0, max(0.0, confidence)), 2),
             "key_thesis": "；".join(thesis) if thesis else "目前多头无显著压倒性优势",
-            "target_price": round(resistance * 1.015, 2),  # 目标向上突破阻力位 1.5%
-            "invalidation_price": round(support * 0.99, 2), # 跌破支撑位下方 1% 则多头逻辑彻底破产
+            "target_price": round(resistance * 1.015, 2),
+            "invalidation_price": round(support * 0.99, 2),
+            "evidence_used": bull_evidence,
+            "telemetry": {
+                "latency_ms": elapsed_ms,
+                "fallback_used": True,
+                "fallback_reason": fallback_reason,
+                "tokens_used": 0,
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+            },
         }
 
 
@@ -229,16 +289,13 @@ class BearResearcher:
         opponent_point: Optional[str] = None,
         lessons_learned: Optional[str] = None,
         sentiment_report: Optional[Dict[str, Any]] = None,
+        raw_klines: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         """
-        发起做空/防守指控，反驳多头乐观情绪
-
-        :param analyst_brief: 宏观分析师整理的市场背景（K线均线、资金费率、跨所基差）
-        :param opponent_point: 上一轮辩论中多头研究员的立论（用于针锋相对反驳）
-        :param lessons_learned: 历史类似行情的交易复盘教训
-        :param sentiment_report: 情绪与链上巨鲸异动研报
-        :return: 包含做空/防守立论、目标点位与失效止损价的字典
+        发起做空/防守指控，反驳多头乐观情绪（配备空头专属衰竭取证工具）
         """
+        start_time = time.perf_counter()
+        symbol = analyst_brief.get("symbol", "ETH")
         regime = analyst_brief.get("regime", "RANGE")
         latest_price = analyst_brief.get("latest_price", 0.0)
         support = analyst_brief.get("support", latest_price * 0.98)
@@ -247,55 +304,83 @@ class BearResearcher:
         rsi = indicators.get("rsi14", 50.0)
         funding = indicators.get("annualized_funding", 0.0)
 
-        # ---------------------------------------------------------------------
-        # 模式 1：LLM 批判性思考模式
-        # ---------------------------------------------------------------------
+        bear_evidence = inspect_bear_exhaustion_evidence(
+            raw_klines or [], annualized_funding=funding * 100.0
+        )
+
+        logger.info("=== [BearResearcher 发起空头反驳] 标的=%s | 当前价格=$%.2f ===", symbol, latest_price)
+        fallback_reason = "LLM 未启用 (未检测到有效 API 密钥)"
+
+        if not self.llm.is_enabled:
+            await self.llm.ensure_credentials()
+
         if self.llm.is_enabled:
             system_prompt = (
-                "You are the Senior Bearish Quant Researcher at Heimdall Capital. "
-                "Your mission is to rigorously interrogate the bullish narrative, identify hidden tail risks, "
-                "liquidity traps, and distribution patterns. Make the strongest case for a SHORT or defensive cash stance."
+                "You are the Senior Bearish Quant Researcher & Risk Contrarian at Heimdall Capital. "
+                "Your role is to poke holes in the bullish narrative, identify distribution traps, resistance levels, "
+                "overbought momentum, and argue for a SHORT or defensive posture. Directly challenge the bull argument."
             )
             rebuttal_context = f"\n[Opponent Bull Argument]: {opponent_point}\n" if opponent_point else ""
             lessons_context = f"\n[Historical Lessons]: {lessons_learned}\n" if lessons_learned else ""
             sentiment_context = f"\n[Sentiment & On-Chain Whale Report]: {sentiment_report.get('summary')}\n" if sentiment_report else ""
+            evidence_context = f"\n[Bear Exhaustion Tool Evidence]: {bear_evidence}\n" if bear_evidence.get("available") else ""
 
             user_prompt = (
-                f"Asset: {analyst_brief.get('symbol', 'ETH')}, Price: ${latest_price:,.2f}\n"
+                f"Asset: {symbol}, Price: ${latest_price:,.2f}\n"
                 f"Market Regime: {regime}\n"
                 f"Key Technicals: Support=${support:,.2f}, Resistance=${resistance:,.2f}, RSI={rsi:.1f}, "
                 f"EMA20=${indicators.get('ema20')}, EMA50=${indicators.get('ema50')}\n"
                 f"Annualized Funding Rate: {funding:.2%}\n"
-                f"{sentiment_context}{rebuttal_context}{lessons_context}\n"
+                f"{evidence_context}{sentiment_context}{rebuttal_context}{lessons_context}\n"
                 "Provide your bearish thesis, confidence score (0.0 to 1.0), downside target, and invalidation stop."
             )
+            full_prompt_log = f"[System Prompt]:\n{system_prompt}\n\n[User Prompt]:\n{user_prompt}"
+            logger.info("[BearResearcher 提交提示词] 标的=%s\n%s", symbol, full_prompt_log)
 
-            llm_result: Optional[BearDebateLLMOutput] = await self.llm.generate_structured(
-                prompt=user_prompt,
-                system_prompt=system_prompt,
-                schema_cls=BearDebateLLMOutput,
-            )
-            if llm_result:
-                logger.info("[Bear Researcher · LLM 思考完毕] 置信度=%.2f | %s", llm_result.confidence, llm_result.key_thesis)
-                return {
-                    "standpoint": "BEAR",
-                    "confidence": llm_result.confidence,
-                    "key_thesis": f"[LLM 空头质疑] {llm_result.key_thesis}",
-                    "target_price": llm_result.target_price,
-                    "invalidation_price": llm_result.invalidation_price,
-                }
+            try:
+                llm_result: Optional[BearDebateLLMOutput] = await self.llm.generate_structured(
+                    prompt=user_prompt,
+                    system_prompt=system_prompt,
+                    schema_cls=BearDebateLLMOutput,
+                )
+                if llm_result:
+                    elapsed_ms = round((time.perf_counter() - start_time) * 1000, 2)
+                    llm_resp_text = llm_result.model_dump_json()
+                    usage = getattr(self.llm, "last_usage", None)
+                    logger.info(
+                        "<<< [BearResearcher LLM 响应] (耗时 %.1fms) 置信度=%.2f | 目标价=$%.2f | 失效价=$%.2f\n[空头论据]: %s\n[原始结构化响应]: %s",
+                        elapsed_ms, llm_result.confidence, llm_result.target_price, llm_result.invalidation_price, llm_result.key_thesis, llm_resp_text
+                    )
+                    return {
+                        "standpoint": "BEAR",
+                        "confidence": llm_result.confidence,
+                        "key_thesis": f"[LLM 空头立论] {llm_result.key_thesis}",
+                        "target_price": llm_result.target_price,
+                        "invalidation_price": llm_result.invalidation_price,
+                        "evidence_used": bear_evidence,
+                        "telemetry": {
+                            "latency_ms": elapsed_ms,
+                            "fallback_used": False,
+                            "prompt": full_prompt_log,
+                            "llm_response": llm_resp_text,
+                            "tokens_used": getattr(usage, "total_tokens", 0),
+                            "prompt_tokens": getattr(usage, "prompt_tokens", 0),
+                            "completion_tokens": getattr(usage, "completion_tokens", 0),
+                        },
+                    }
+                else:
+                    fallback_reason = "LLM 推理返回空结果或解析结构化 Schema 失败"
+            except Exception as e:
+                fallback_reason = f"LLM 接口调用异常: {str(e)}"
+                logger.warning("[Bear Researcher LLM 异常: %s]，激活规则兜底", e)
 
-        # ---------------------------------------------------------------------
-        # 模式 2：确定性算法兜底
-        # ---------------------------------------------------------------------
         thesis = []
         confidence = 0.5
 
-        # 链上与情绪面做空警示
         if sentiment_report:
             whale_act = sentiment_report.get("whale_activity")
             if whale_act == "DISTRIBUTION":
-                thesis.append("链上巨鲸向中心化交易所大额充值代币，筹码呈出货砸盘形态")
+                thesis.append("链上巨鲸大额充币进交易所，主力出货砸盘动机强烈")
                 confidence += 0.15
             elif sentiment_report.get("crowding_risk") == "HIGH_LONG_CROWDING":
                 thesis.append("做多杠杆过度狂热拥挤，面临多头踩踏清算风险")
@@ -315,32 +400,48 @@ class BearResearcher:
             thesis.append("市场跨所价差或波动过大，极易发生多头杠杆连环踩踏清算")
             confidence += 0.20
 
-        # 【小白知识点】：在真正的多头趋势中，RSI 到 70 属于正常强势；只有超过 76 才是极度超买、强弩之末
         overbought_thresh = 76.0 if regime == "TREND_UP" else 65.0
         if rsi > overbought_thresh:
             thesis.append(f"RSI={rsi:.1f} 严重超买 (超过 {overbought_thresh:.0f})，上行动能衰竭，技术性回调风险极高")
             confidence += 0.15
 
-        # 【小白知识点】：永续合约资金费率如果过高（如年化 > 30%），做多每 8 小时都要向空头交巨额利息，成本极高
         if funding > 0.3:
             thesis.append(f"年化资金费率高达 {funding:.1%}，做多面临极重的持仓资金费侵蚀")
             confidence += 0.15
 
+        if bear_evidence.get("available") and bear_evidence.get("exhaustion_warning"):
+            thesis.append(
+                f"微结构取证触发衰竭预警 (上影线均值={bear_evidence.get('avg_upper_wick_ratio_3bar')}, 缩量背离={bear_evidence.get('volume_fade_on_rally')})"
+            )
+            confidence += 0.05
+
+        elapsed_ms = round((time.perf_counter() - start_time) * 1000, 2)
+        logger.info(
+            "[BearResearcher 本地规则兜底] 标的=%s | 置信度=%.2f | 耗时=%.1fms | 触发原因=%s",
+            symbol, confidence, elapsed_ms, fallback_reason
+        )
         return {
             "standpoint": "BEAR",
             "confidence": round(min(1.0, max(0.0, confidence)), 2),
             "key_thesis": "；".join(thesis) if thesis else "目前空头无显著阻击机会",
             "target_price": round(support * 0.985, 2),
             "invalidation_price": round(resistance * 1.01, 2),
+            "evidence_used": bear_evidence,
+            "telemetry": {
+                "latency_ms": elapsed_ms,
+                "fallback_used": True,
+                "fallback_reason": fallback_reason,
+                "tokens_used": 0,
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+            },
         }
 
 
 class DebateModerator:
     """
     ⚖️ 辩论裁判员 Agent (Chief Investment Officer / Portfolio Moderator)
-    【角色设定】：冷酷无情的大管家 / 投资总监。
-    【职责】：听完多头与空头神仙打架后，消除一切情绪与主观偏见，
-             权衡“收益/风险比”与“胜率”，裁定最终行动（LONG, SHORT, 或 NEUTRAL 观望）。
+    【职责】：综合多空两派激辩，并直接交叉核验原始技术指标与链上情绪，裁定 LONG / SHORT / NEUTRAL。
     """
 
     def __init__(self, llm_service: Optional[LLMService] = None):
@@ -352,67 +453,127 @@ class DebateModerator:
         bull_view: Dict[str, Any],
         bear_view: Dict[str, Any],
         lessons_learned: Optional[str] = None,
+        sentiment_report: Optional[Dict[str, Any]] = None,
+        debate_history: Optional[List[Dict[str, Any]]] = None,
+        raw_evidence: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
-        对多空辩论成果进行综合裁决
+        对多空辩论成果进行综合裁决（P0: 裁判直接交叉核验原始指标与情绪，消除电话传话失真）
         """
+        start_time = time.perf_counter()
+        symbol = analyst_brief.get("symbol", "ETH")
         bull_score = bull_view.get("confidence", 0.5)
         bear_score = bear_view.get("confidence", 0.5)
         regime = analyst_brief.get("regime", "RANGE")
+        indicators = analyst_brief.get("indicators", {})
+        rsi = indicators.get("rsi14", 50.0)
+        funding = indicators.get("annualized_funding", 0.0)
+        sentiment_score = (sentiment_report or {}).get("sentiment_score")
+        whale_activity = (sentiment_report or {}).get("whale_activity")
 
-        # ---------------------------------------------------------------------
-        # 模式 1：LLM 投资总监终审裁决
-        # ---------------------------------------------------------------------
+        audit_notes: List[str] = [
+            f"Regime={regime}",
+            f"RSI14={rsi:.1f}",
+            f"AnnualFunding={funding:.2%}",
+        ]
+        if sentiment_report:
+            audit_notes.append(f"SentimentScore={sentiment_score}, Whale={whale_activity}")
+        if raw_evidence and raw_evidence.get("guard_status"):
+            audit_notes.append(f"Bifrost={raw_evidence['guard_status'].get('status', 'HEALTHY')}")
+        deterministic_audit = " | ".join(audit_notes)
+
+        logger.info(
+            "=== [DebateModerator 辩论裁判终审裁决开始] 标的=%s | 多方得分=%.2f vs 空方得分=%.2f ===",
+            symbol, bull_score, bear_score
+        )
+        fallback_reason = "LLM 未启用 (未检测到有效 API 密钥)"
+
+        if not self.llm.is_enabled:
+            await self.llm.ensure_credentials()
+
         if self.llm.is_enabled:
             system_prompt = (
                 "You are the Chief Investment Officer (CIO) and Debate Arbitrator at Heimdall Capital. "
-                "Synthesize the adversarial arguments between the Bull and Bear researchers. "
+                "Synthesize the adversarial arguments between the Bull and Bear researchers, AND independently "
+                "cross-verify their claims against the raw quantitative indicators and sentiment data provided below. "
+                "Flag any claim that contradicts raw facts in evidence_audit.\n"
                 "Decision Rules:\n"
-                "- If the bull case decisively wins: consensus_action='LONG'\n"
-                "- If the bear case decisively wins: consensus_action='SHORT'\n"
-                "- If arguments are closely matched, or market is HIGH_VOLATILITY: consensus_action='NEUTRAL' (Cash is a position!)\n"
+                "- If the bull case decisively wins and matches raw evidence: consensus_action='LONG'\n"
+                "- If the bear case decisively wins and matches raw evidence: consensus_action='SHORT'\n"
+                "- If arguments are closely matched, contradicted by raw data, or market is HIGH_VOLATILITY: consensus_action='NEUTRAL'\n"
                 "Never force a trade when conviction is low."
             )
             lessons_line = f"\n[Lessons from Prior Trades]: {lessons_learned}\n" if lessons_learned else ""
+            sentiment_line = (
+                f"\n[Direct Raw Sentiment & Whale Evidence]: score={sentiment_score}, "
+                f"whale={whale_activity}, summary={sentiment_report.get('summary')}\n"
+                if sentiment_report else ""
+            )
+            history_line = ""
+            if debate_history and len(debate_history) > 1:
+                rounds_txt = "\n".join(
+                    f"  Round {r.get('round')}: Bull({r.get('bull', {}).get('confidence')}) vs Bear({r.get('bear', {}).get('confidence')})"
+                    for r in debate_history
+                )
+                history_line = f"\n[Multi-Round Debate Progression]:\n{rounds_txt}\n"
 
             user_prompt = (
-                f"Market Regime: {regime}\n"
+                f"Asset: {symbol}, Market Regime: {regime}, Price: ${analyst_brief.get('latest_price', 0):,.2f}\n"
+                f"[Direct Raw Quantitative Evidence]: {deterministic_audit}\n"
+                f"{sentiment_line}{history_line}"
                 f"Bull Case (Confidence {bull_score:.2f}):\n{bull_view.get('key_thesis')}\n"
                 f"Bull Target: ${bull_view.get('target_price')}, Stop: ${bull_view.get('invalidation_price')}\n\n"
                 f"Bear Case (Confidence {bear_score:.2f}):\n{bear_view.get('key_thesis')}\n"
                 f"Bear Target: ${bear_view.get('target_price')}, Stop: ${bear_view.get('invalidation_price')}\n\n"
                 f"{lessons_line}"
-                "Deliver your final decision (LONG, SHORT, or NEUTRAL), final confidence score (0.0 to 1.0), and verdict rationale."
+                "Deliver your final decision (LONG, SHORT, or NEUTRAL), final confidence score (0.0 to 1.0), verdict rationale, and evidence_audit."
             )
+            full_prompt_log = f"[System Prompt]:\n{system_prompt}\n\n[User Prompt]:\n{user_prompt}"
+            logger.info("[DebateModerator 提交提示词] 标的=%s\n%s", symbol, full_prompt_log)
 
-            llm_result: Optional[ModeratorLLMOutput] = await self.llm.generate_structured(
-                prompt=user_prompt,
-                system_prompt=system_prompt,
-                schema_cls=ModeratorLLMOutput,
-            )
-            if llm_result and llm_result.consensus_action in ["LONG", "SHORT", "NEUTRAL"]:
-                logger.info(
-                    "[Debate Moderator · LLM 裁决下达] 方向=%s, 置信度=%.2f | %s",
-                    llm_result.consensus_action, llm_result.final_confidence, llm_result.verdict
+            try:
+                llm_result: Optional[ModeratorLLMOutput] = await self.llm.generate_structured(
+                    prompt=user_prompt,
+                    system_prompt=system_prompt,
+                    schema_cls=ModeratorLLMOutput,
                 )
-                return {
-                    "consensus_action": llm_result.consensus_action,
-                    "final_confidence": llm_result.final_confidence,
-                    "bull_score": bull_score,
-                    "bear_score": bear_score,
-                    "verdict": f"[LLM 裁判书] {llm_result.verdict}",
-                    "target_price": bull_view.get("target_price") if llm_result.consensus_action == "LONG" else bear_view.get("target_price"),
-                    "invalidation_price": bull_view.get("invalidation_price") if llm_result.consensus_action == "LONG" else bear_view.get("invalidation_price"),
-                }
+                if llm_result and llm_result.consensus_action in ["LONG", "SHORT", "NEUTRAL"]:
+                    elapsed_ms = round((time.perf_counter() - start_time) * 1000, 2)
+                    llm_resp_text = llm_result.model_dump_json()
+                    usage = getattr(self.llm, "last_usage", None)
+                    logger.info(
+                        "<<< [DebateModerator LLM 裁决下达] (耗时 %.1fms) 方向=%s | 置信度=%.2f\n[裁判书结论]: %s\n[原始结构化响应]: %s",
+                        elapsed_ms, llm_result.consensus_action, llm_result.final_confidence, llm_result.verdict, llm_resp_text
+                    )
+                    return {
+                        "consensus_action": llm_result.consensus_action,
+                        "final_confidence": llm_result.final_confidence,
+                        "bull_score": bull_score,
+                        "bear_score": bear_score,
+                        "verdict": f"[LLM 裁判书] {llm_result.verdict}",
+                        "evidence_audit": llm_result.evidence_audit or deterministic_audit,
+                        "target_price": bull_view.get("target_price") if llm_result.consensus_action == "LONG" else bear_view.get("target_price"),
+                        "invalidation_price": bull_view.get("invalidation_price") if llm_result.consensus_action == "LONG" else bear_view.get("invalidation_price"),
+                        "telemetry": {
+                            "latency_ms": elapsed_ms,
+                            "fallback_used": False,
+                            "prompt": full_prompt_log,
+                            "llm_response": llm_resp_text,
+                            "tokens_used": getattr(usage, "total_tokens", 0),
+                            "prompt_tokens": getattr(usage, "prompt_tokens", 0),
+                            "completion_tokens": getattr(usage, "completion_tokens", 0),
+                        },
+                    }
+                else:
+                    fallback_reason = "LLM 推理返回空结果或解析结构化 Schema 失败"
+            except Exception as e:
+                fallback_reason = f"LLM 接口调用异常: {str(e)}"
+                logger.warning("[Debate Moderator LLM 异常: %s]，激活规则兜底", e)
 
-        # ---------------------------------------------------------------------
-        # 模式 2：确定性数学打分裁决兜底
-        # ---------------------------------------------------------------------
         score_diff = bull_score - bear_score
         consensus_action = "NEUTRAL"
         final_confidence = 0.5
 
-        # 铁律：高危行情坚决观望
         if regime == "HIGH_VOLATILITY":
             consensus_action = "NEUTRAL"
             verdict_text = "市场处于 HIGH_VOLATILITY 危险期，尽管双方各有论据，裁判组判定避险为上，维持空仓观望。"
@@ -432,19 +593,32 @@ class DebateModerator:
                 f"理由: {bear_view.get('key_thesis')}。采纳做空提案。"
             )
         else:
-            # 势均力敌时不开仓，防止频繁手续费磨损
             consensus_action = "NEUTRAL"
             verdict_text = (
                 f"多空实力势均力敌 (多方得分 {bull_score:.2f} vs 空方得分 {bear_score:.2f})，"
                 f"胜率优势不足以覆盖手续费与滑点成本，裁判组判定维持观望状态。"
             )
 
+        elapsed_ms = round((time.perf_counter() - start_time) * 1000, 2)
+        logger.info(
+            "[DebateModerator 本地规则兜底] 标的=%s | 裁决方向=%s | 置信度=%.2f | 耗时=%.1fms | 触发原因=%s",
+            symbol, consensus_action, final_confidence, elapsed_ms, fallback_reason
+        )
         return {
             "consensus_action": consensus_action,
             "final_confidence": round(final_confidence, 2),
             "bull_score": bull_score,
             "bear_score": bear_score,
             "verdict": verdict_text,
+            "evidence_audit": deterministic_audit,
             "target_price": bull_view.get("target_price") if consensus_action == "LONG" else bear_view.get("target_price"),
             "invalidation_price": bull_view.get("invalidation_price") if consensus_action == "LONG" else bear_view.get("invalidation_price"),
+            "telemetry": {
+                "latency_ms": elapsed_ms,
+                "fallback_used": True,
+                "fallback_reason": fallback_reason,
+                "tokens_used": 0,
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+            },
         }

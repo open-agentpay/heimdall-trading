@@ -3,23 +3,24 @@
 Heimdall 交易平台 - 情绪与链上巨鲸异动分析师 (Sentiment & Whale Flow Analyst)
 ================================================================================
 
-【小白速懂】：
-为什么光看 K 线图（技术面）不够用？
-1. 在加密货币市场中，有四大维度的“场外不可见信息”往往能在暴涨暴跌前给出关键指引：
-   - 😨【宏观情绪与逆向反转 (Fear & Greed Index)】：
-     * 巴菲特名言：“别人恐惧我贪婪，别人贪婪我恐惧”。
-     * 极度恐慌 (< 25) 伴随情绪探底回升，往往是黄金坑抄底契机；极度狂热 (> 75) 则是庄家诱多派发的高危期。
-   - 📰【行业重大事件与快讯 (Crypto News)】：
-     * 突发黑天鹅（监管立案、协议被盗）或重磅利好（ETF 获批、现货质押通过），直接颠覆技术形态。
-   - ⚡【衍生品持仓与多空扎堆挤压 (Derivatives Crowding & Squeeze)】：
-     * 未平仓合约 (OI) 激增 + 多空比过度偏向一方，主力最喜欢顺势“插针洗盘”，引爆多头踩踏或空头轧空！
-   - 🐋【链上巨鲸资金与稳定币弹药 (On-Chain Whale & Stablecoin Flow)】：
-     * 巨鲸把币提到冷钱包锁仓 = 供给紧缩利好；巨鲸把币充进交易所 = 准备砸盘变现；
-     * 稳定币 (USDT/USDC) 大额增发 = 场外新增流动性（子弹充盈）。
-2. 本智能体挂载多源情报采集器 (SentimentDataCollector)，融合四大维度信息，
-   支持大模型结构化研报生成与确定性量化特征算法双轨兜底！
+【为什么必须结合链上多源异构情报？(Why We Do This)】：
+在纯技术面量化中，交易员很容易陷入“后视镜陷阱 (Looking in the Rearview Mirror)”：
+K 线图记录的是已经发生的成交结果，而在加密货币这类高波动新兴市场中，
+真正的变盘往往源自场外增量变量与结构性失衡：
+
+1. 【衍生品拥挤度与扎堆清算 (Derivatives Crowding & Squeeze)】：
+   当未平仓合约 (OI) 创历史新高且多空比达到极端失衡时，主力机构非常容易利用低流动性窗口发起
+   “反向插针”，引爆数十亿美元的多头杠杆连环踩踏清算。
+2. 【链上巨鲸与冷钱包异动 (Whale Wallet & Stablecoin Movement)】：
+   交易所内现货净流出（提现到冷钱包）意味着现货流通盘锁仓与真实抛压减轻；
+   反之，巨额代币突然充入交易所通常是庄家出货套现的前兆。
+3. 【异步并发 I/O 汇聚架构 (Async Concurrent Gathering)】：
+   若让大模型逐个调用外部工具读取情绪、新闻、链上指标，网络往返延迟 (RTT) 会高达数千毫秒。
+   生产级 Agent Runtime 采用确定性 Python 异步并发采集器 (SentimentDataCollector)，
+   在一次 I/O 事件循环中并发拉取四大维度情报并完成特征清洗，瞬间压缩输入向量，交付大模型一次性研判！
 """
 
+import time
 import logging
 from typing import Dict, Any, Optional, List
 from pydantic import BaseModel, Field
@@ -87,6 +88,9 @@ class SentimentWhaleAnalyst:
         :param exchange_net_inflow_usd: 过去 24 小时交易所净流入 (USD，显式指定时优先级高于采集器)
         :return: 包含综合情绪打分、巨鲸行为、挤压风险、研报综述与全量上下文的字典
         """
+        start_time = time.perf_counter()
+        logger.info("=== [SentimentWhaleAnalyst 开始情绪巨鲸感知] 标的=%s ===", symbol)
+
         # 1. 若未传入上下文，调度采集器并发拉取四大维度数据
         if context is None:
             context = await self.collector.collect_context(
@@ -104,63 +108,72 @@ class SentimentWhaleAnalyst:
             if funding_rate_annualized != 0.0:
                 context.funding_rate_annualized = funding_rate_annualized
 
-        # ---------------------------------------------------------------------
-        # 模式 1：接入真实大模型进行深度语义与宏观情绪推演 (LLM Reasoning)
-        # ---------------------------------------------------------------------
+        fallback_reason = "LLM 未启用 (未检测到有效 API 密钥)"
+
+        # 2. 尝试调用真实大语言模型 (LLM) 进行深度跨模态语义推理 (未启用时先尝试异步从金库恢复凭证)
+        if not self.llm.is_enabled:
+            await self.llm.ensure_credentials()
+
         if self.llm.is_enabled:
             system_prompt = (
-                "You are the Chief Crypto Sentiment & Alternative Data Analyst at Heimdall Capital. "
-                "Your role is to synthesize multi-source intelligence:\n"
-                "1. Market Psychology: Fear & Greed Index and its 7-day trajectory;\n"
-                "2. Breaking News & Catalysts: Recent news headlines for macro shocks;\n"
-                "3. Derivatives Crowding: Open Interest changes, long/short ratio, and funding rates;\n"
-                "4. On-chain Liquidity: Whale exchange net flows and stablecoin minting/dry powder.\n"
-                "Evaluate the overall market sentiment score (-1.0 to 1.0), whale activity, crowding risk, and write a concise professional summary."
+                "You are the Senior Crypto Sentiment & On-Chain Whale Analyst at Heimdall Capital. "
+                "Synthesize multi-source off-chain intelligence (Fear & Greed Index, Exchange Whale Inflow/Outflow, "
+                "Stablecoin Minting, Perpetual Funding Rates, and Recent News) to evaluate market crowding and institutional bias. "
+                "Deliver a structured report with sentiment_score (-1.0 to 1.0), whale_activity, and crowding_risk."
             )
-
-            news_str = "\n".join([f"- {h}" for h in context.news_headlines]) or "- 无突发重大异动"
-            trend_str = " -> ".join([str(v) for v in context.fear_greed_7d_trend])
-
             user_prompt = (
-                f"=== Asset Intelligence Brief: {context.symbol} ===\n"
-                f"[1. Market Psychology]\n"
-                f"• Fear & Greed Index: {context.fear_greed_index:.0f}/100 ({context.fear_greed_sentiment})\n"
-                f"• 7-Day Trend Trajectory: [{trend_str}]\n\n"
-                f"[2. Derivatives & Leverage Structure]\n"
-                f"• Annualized Funding Rate: {context.funding_rate_annualized:.2%}\n"
-                f"• Open Interest (OI): ${context.open_interest_usd:,.0f} (24h Change: {context.open_interest_24h_change_pct:+.1%})\n"
-                f"• Top Trader Long/Short Ratio: {context.long_short_ratio:.2f}\n\n"
-                f"[3. On-Chain Smart Money & Liquidity]\n"
-                f"• 24h Exchange Net Inflow: ${context.exchange_net_inflow_usd:,.2f} USD "
-                f"({'Net Deposit / Sell Pressure' if context.exchange_net_inflow_usd > 0 else 'Net Withdrawal / Cold Storage Accumulation'})\n"
-                f"• Large Whale Transfers (> $1M): {context.whale_large_tx_count} events\n"
-                f"• 24h Stablecoin Net Minting: ${context.stablecoin_mint_inflow_usd:,.0f} USD\n\n"
-                f"[4. Recent Breaking News Headlines]\n"
-                f"{news_str}\n\n"
-                "Please output a structured JSON evaluation."
+                f"Target Asset: {context.symbol}\n"
+                f"1. Fear & Greed Index: {context.fear_greed_index:.0f}/100 ({context.fear_greed_sentiment})\n"
+                f"2. Whale Flow: 24h Exchange Net Inflow = ${context.exchange_net_inflow_usd:,.0f} USD, "
+                f"Large Transfers Count = {context.whale_large_tx_count}, "
+                f"Stablecoin 24h Mint Inflow = ${context.stablecoin_mint_inflow_usd:,.0f} USD\n"
+                f"3. Derivatives: Annualized Funding Rate = {context.funding_rate_annualized:.2%}, "
+                f"Long/Short Ratio = {context.long_short_ratio:.2f}, 24h OI Change = {context.open_interest_24h_change_pct:+.2%}\n"
+                f"4. Breaking Headlines: {'; '.join(context.news_headlines[:3])}\n"
+                "Please deliver the structured sentiment and on-chain intelligence report."
             )
+            full_prompt_log = f"[System Prompt]:\n{system_prompt}\n\n[User Prompt]:\n{user_prompt}"
+            logger.info("[SentimentWhaleAnalyst 提交提示词] 标的=%s\n%s", symbol, full_prompt_log)
 
-            llm_result: Optional[SentimentWhaleOutput] = await self.llm.generate_structured(
-                prompt=user_prompt,
-                system_prompt=system_prompt,
-                schema_cls=SentimentWhaleOutput,
-            )
-            if llm_result:
-                logger.info(
-                    "[SentimentWhaleAnalyst · LLM 推理成功] 标的=%s, 情绪得分=%.2f, 巨鲸=%s, 挤压风险=%s",
-                    context.symbol,
-                    llm_result.sentiment_score,
-                    llm_result.whale_activity,
-                    llm_result.crowding_risk,
+            try:
+                llm_result: Optional[SentimentWhaleOutput] = await self.llm.generate_structured(
+                    prompt=user_prompt,
+                    system_prompt=system_prompt,
+                    schema_cls=SentimentWhaleOutput,
                 )
-                return {
-                    "sentiment_score": llm_result.sentiment_score,
-                    "whale_activity": llm_result.whale_activity,
-                    "crowding_risk": llm_result.crowding_risk,
-                    "summary": f"[多源情报研报] {llm_result.summary}",
-                    "fear_greed_index": context.fear_greed_index,
-                    "context": context.model_dump(),
-                }
+
+                if llm_result:
+                    elapsed_ms = round((time.perf_counter() - start_time) * 1000, 2)
+                    llm_resp_text = llm_result.model_dump_json()
+                    logger.info(
+                        "<<< [SentimentWhaleAnalyst LLM 响应研报] (耗时 %.1fms) 标的=%s | 得分=%.2f | 巨鲸=%s | 挤压风险=%s\n[研报结论]: %s\n[原始结构化响应]: %s",
+                        elapsed_ms,
+                        context.symbol,
+                        llm_result.sentiment_score,
+                        llm_result.whale_activity,
+                        llm_result.crowding_risk,
+                        llm_result.summary,
+                        llm_resp_text,
+                    )
+                    return {
+                        "sentiment_score": llm_result.sentiment_score,
+                        "whale_activity": llm_result.whale_activity,
+                        "crowding_risk": llm_result.crowding_risk,
+                        "summary": f"[多源情报研报] {llm_result.summary}",
+                        "fear_greed_index": context.fear_greed_index,
+                        "context": context.model_dump(),
+                        "telemetry": {
+                            "latency_ms": elapsed_ms,
+                            "fallback_used": False,
+                            "prompt": full_prompt_log,
+                            "llm_response": llm_resp_text,
+                        },
+                    }
+                else:
+                    fallback_reason = "LLM 推理返回空结果或解析结构化 Schema 失败"
+            except Exception as e:
+                fallback_reason = f"LLM 接口调用异常: {str(e)}"
+                logger.warning("[SentimentWhaleAnalyst LLM 异常: %s]，激活确定性特征降级", e)
 
         # ---------------------------------------------------------------------
         # 模式 2：确定性量化特征算法兜底 (Local Multi-Factor Rule Fallback)
@@ -235,6 +248,11 @@ class SentimentWhaleAnalyst:
         final_score = round(max(-1.0, min(1.0, score)), 2)
         summary = f"情绪面: {fg_desc}。链上动向: {whale_desc}。持仓拥挤度: {crowd_desc}。"
 
+        elapsed_ms = round((time.perf_counter() - start_time) * 1000, 2)
+        logger.info(
+            "[SentimentWhaleAnalyst 本地规则兜底] 标的=%s | 综合得分=%.2f | 巨鲸=%s | 挤压风险=%s | 耗时=%.1fms | 触发原因=%s",
+            symbol, final_score, whale_activity, crowding_risk, elapsed_ms, fallback_reason
+        )
         return {
             "sentiment_score": final_score,
             "whale_activity": whale_activity,
@@ -242,4 +260,9 @@ class SentimentWhaleAnalyst:
             "summary": summary,
             "fear_greed_index": fg,
             "context": context.model_dump(),
+            "telemetry": {
+                "latency_ms": elapsed_ms,
+                "fallback_used": True,
+                "fallback_reason": fallback_reason,
+            },
         }

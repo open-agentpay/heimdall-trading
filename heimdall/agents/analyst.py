@@ -1,12 +1,29 @@
 """
+================================================================================
 Heimdall 交易平台 - 宏观与异动分析师智能体 (Analyst Agent)
-职责：
-1. 消费来自 Bifrost 的零前视 K 线、资金费率与跨所偏离数据；
-2. 计算基础量化指标（EMA20/50, RSI14, ATR, 支撑/阻力通道）；
-3. 接入大语言模型 (LLM)，让模型结合技术指标与市场状态生成深度定性研报；
-4. 内置双轨制降级：若未配置大模型 API Key，自动无缝切换至确定性本地量化算法。
+================================================================================
+
+【为什么必须对行情做“确定性特征提纯”，而非裸传原始 K 线？(Why We Do This)】：
+在很多初级 Agent 实现中，开发者习惯于把几十上百根原始 K 线的完整 JSON 字符串直接塞进 Prompt：
+"这是最近 200 根 K 线：[{open: 3000, high: 3010, ...}, ...]，请帮我分析……"
+这种做法存在三大致命软件工程缺陷：
+1. 【上下文稀释与注意力丢失 (Context Dilution & Attention Degeneracy)】：
+   大语言模型是基于自注意力机制 (Self-Attention) 的网络。面对密密麻麻的数千个浮点数字符串，
+   模型的注意力权重会被极度稀释，产生“迷失在中间 (Lost in the Middle)”现象，无法精准捕捉形态异动。
+2. 【高昂的 Token 成本与不可忍受的高延迟 (Token Bloat & Latency Spike)】：
+   全量原始数据每次请求会消耗上万 Token，往返响应耗时可飙升至 5~15 秒，导致错失毫秒级盘口机会。
+3. 【确定性特征提取必须由纯代码执行 (Feature Engineering by Code)】：
+   EMA20、EMA50、RSI14、近 20 根最高最低支撑阻力通道，是经典的客观数学公式。
+   将确定的数学运算交给代码计算（纯 CPU 纳秒级完成），将高信噪比的提纯特征交给大模型做非线性语义研判，
+   这才是人机协同与 Agent Runtime 的最佳实践！
+
+本模块集成了：
+- 确定性特征提取器（EMA, RSI, Channel）
+- 结构化大模型宏观研报生成
+- 本地量化算法双轨降级与 Telemetry 追踪
 """
 
+import time
 import logging
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel, Field
@@ -101,8 +118,9 @@ class AnalystAgent:
     async def analyze(self, state: MultiAgentState) -> Dict[str, Any]:
         """
         执行分析主流程：
-        提取特征 -> (优先请求 LLM 智能体研判) -> 本地数学算法兜底 -> 输出标准化研报
+        提取特征 -> (优先请求 LLM 智能体研判) -> 本地数学算法兜底 -> 输出标准化研报与 Telemetry 指标
         """
+        start_time = time.perf_counter()
         klines = state.raw_klines
         symbol = state.symbol
 
@@ -121,11 +139,19 @@ class AnalystAgent:
                 "latest_price": 0.0,
                 "summary": "无充足 K 线数据，建议空仓观望",
                 "indicators": {},
+                "telemetry": {
+                    "latency_ms": round((time.perf_counter() - start_time) * 1000, 2),
+                    "fallback_used": True,
+                },
             }
 
         latest_price = close_prices[-1]
+        logger.info(
+            "=== [AnalystAgent 开始宏观技术分析] 标的=%s | 当前价格=$%.2f | K线数=%d ===",
+            symbol, latest_price, len(klines)
+        )
 
-        # 2. 计算客观量化技术特征
+        # 2. 由确定性代码计算高信噪比量化技术特征
         ema20 = calculate_ema(close_prices, 20)
         ema50 = calculate_ema(close_prices, 50)
         rsi14 = calculate_rsi(close_prices, 14)
@@ -139,7 +165,12 @@ class AnalystAgent:
         guard_status = state.raw_guard_status.get("status", "HEALTHY")
         spread_pct = float(state.raw_guard_status.get("spread_pct", 0.0))
 
-        # 3. 尝试调用真实大语言模型 (LLM) 进行深度投研与市场状态定性
+        fallback_reason = "LLM 未启用 (未检测到有效 API 密钥)"
+
+        # 3. 尝试调用大语言模型 (LLM) 进行深度定性推理 (未启用时先尝试异步从金库恢复凭证)
+        if not self.llm.is_enabled:
+            await self.llm.ensure_credentials()
+
         if self.llm.is_enabled:
             system_prompt = (
                 "You are the Senior Quantitative & Macro Crypto Analyst at Heimdall Capital. "
@@ -157,31 +188,50 @@ class AnalystAgent:
                 f"Recent 20-bar Low: ${calc_support:,.2f}, High: ${calc_resistance:,.2f}\n"
                 "Please analyze the market state and return the structured report."
             )
+            full_prompt_log = f"[System Prompt]:\n{system_prompt}\n\n[User Prompt]:\n{user_prompt}"
+            logger.info("[AnalystAgent 提交提示词] 标的=%s\n%s", symbol, full_prompt_log)
 
-            llm_result: Optional[AnalystLLMOutput] = await self.llm.generate_structured(
-                prompt=user_prompt,
-                system_prompt=system_prompt,
-                schema_cls=AnalystLLMOutput,
-            )
+            try:
+                llm_result: Optional[AnalystLLMOutput] = await self.llm.generate_structured(
+                    prompt=user_prompt,
+                    system_prompt=system_prompt,
+                    schema_cls=AnalystLLMOutput,
+                )
 
-            if llm_result:
-                logger.info("[Analyst Agent · LLM 推理成功] Regime=%s | Summary: %s", llm_result.regime, llm_result.summary)
-                return {
-                    "regime": llm_result.regime,
-                    "latest_price": latest_price,
-                    "support": llm_result.support,
-                    "resistance": llm_result.resistance,
-                    "indicators": {
-                        "ema20": round(ema20, 2),
-                        "ema50": round(ema50, 2),
-                        "rsi14": round(rsi14, 2),
-                        "annualized_funding": round(annualized_funding, 4),
-                        "spread_pct": round(spread_pct, 4),
-                    },
-                    "summary": f"[LLM 研报] {llm_result.summary}",
-                }
+                if llm_result:
+                    elapsed_ms = round((time.perf_counter() - start_time) * 1000, 2)
+                    llm_resp_text = llm_result.model_dump_json()
+                    logger.info(
+                        "<<< [AnalystAgent LLM 响应研报] (耗时 %.1fms) 标的=%s | Regime=%s | 支撑=$%.2f | 阻力=$%.2f\n[研报结论]: %s\n[原始结构化响应]: %s",
+                        elapsed_ms, symbol, llm_result.regime, llm_result.support, llm_result.resistance, llm_result.summary, llm_resp_text
+                    )
+                    return {
+                        "regime": llm_result.regime,
+                        "latest_price": latest_price,
+                        "support": llm_result.support,
+                        "resistance": llm_result.resistance,
+                        "indicators": {
+                            "ema20": round(ema20, 2),
+                            "ema50": round(ema50, 2),
+                            "rsi14": round(rsi14, 2),
+                            "annualized_funding": round(annualized_funding, 4),
+                            "spread_pct": round(spread_pct, 4),
+                        },
+                        "summary": f"[LLM 研报] {llm_result.summary}",
+                        "telemetry": {
+                            "latency_ms": elapsed_ms,
+                            "fallback_used": False,
+                            "prompt": full_prompt_log,
+                            "llm_response": llm_resp_text,
+                        },
+                    }
+                else:
+                    fallback_reason = "LLM 推理返回空结果或解析结构化 Schema 失败"
+            except Exception as e:
+                fallback_reason = f"LLM 接口调用异常: {str(e)}"
+                logger.warning("[Analyst Agent LLM 异常: %s]，无缝切换确定性算法兜底", e)
 
-        # 4. 本地量化确定性算法兜底逻辑 (当未配置 LLM 或 LLM 离线时激活)
+        # 4. 本地量化确定性算法兜底逻辑 (当未配置 LLM、LLM 超时或解析失败时激活)
         regime = "RANGE"
         if guard_status in ["DEGRADED", "ISOLATED"] or abs(annualized_funding) > 0.8:
             regime = "HIGH_VOLATILITY"
@@ -197,6 +247,11 @@ class AnalystAgent:
             f"资金面: 年化资金费率 {annualized_funding:.2%}，Bifrost 跨所状态为 {guard_status} (价差 {spread_pct:.3%})。"
         )
 
+        elapsed_ms = round((time.perf_counter() - start_time) * 1000, 2)
+        logger.info(
+            "[AnalystAgent 本地量化算法兜底] 标的=%s | 状态定性=[%s] | 耗时=%.1fms | 触发原因=%s",
+            symbol, regime, elapsed_ms, fallback_reason
+        )
         return {
             "regime": regime,
             "latest_price": latest_price,
@@ -210,4 +265,9 @@ class AnalystAgent:
                 "spread_pct": round(spread_pct, 4),
             },
             "summary": summary,
+            "telemetry": {
+                "latency_ms": elapsed_ms,
+                "fallback_used": True,
+                "fallback_reason": fallback_reason,
+            },
         }

@@ -16,12 +16,14 @@ from heimdall.engine.bot_manager import BotManager
 from heimdall.models.schemas import StrategyType
 from heimdall.bifrost.client import BifrostClient
 
-# 配置命令行交互日志输出格式
+# 配置命令行交互日志输出格式，并默认挂载敏感凭据脱敏过滤器
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s - %(message)s",
     datefmt="%H:%M:%S",
 )
+from heimdall.utils.logging_security import install_secret_redaction_filter
+install_secret_redaction_filter()
 logger = logging.getLogger("heimdall.cli")
 
 
@@ -102,6 +104,40 @@ def cmd_run_demo(args: argparse.Namespace):
     asyncio.run(_execute_demo())
 
 
+def cmd_backtest(args: argparse.Namespace):
+    """运行零前视历史回测"""
+    async def _run_bt():
+        from heimdall.strategies import StrategyRouter
+        from heimdall.backtest import BacktestEngine, HistoricalDataFeed
+
+        stype = StrategyType(args.strategy.upper())
+        strategy = StrategyRouter.create(stype, bot_id=f"bt_{stype.value.lower()}")
+        feed = HistoricalDataFeed.generate_synthetic(
+            symbol=args.symbol,
+            bars=args.bars,
+            timeframe=args.timeframe,
+        )
+        engine = BacktestEngine()
+        report = await engine.run(
+            strategy=strategy,
+            feed=feed,
+            initial_capital=args.capital,
+            warmup_bars=args.warmup,
+        )
+        print("=" * 70)
+        print(f"  Heimdall Zero-Lookahead Backtest | {report.strategy_type.value} | {report.symbol} ({report.timeframe})")
+        print("=" * 70)
+        print(f"  • 回测 K 线数: {report.bars_evaluated} | 跨度天数: {report.calendar_days} 天")
+        print(f"  • 初始本金: ${report.initial_capital:,.2f} -> 终态权益: ${report.final_equity:,.2f} (净盈亏: ${report.net_pnl_usd:+,.2f})")
+        print(f"  • 累计收益: {report.cumulative_return_pct:+.2f}% | 最大回撤: {report.max_drawdown_pct:.2f}%")
+        print(f"  • 年化夏普: {report.annualized_sharpe_ratio:.2f} | 年化索提诺: {report.annualized_sortino_ratio:.2f} | 卡玛: {report.calmar_ratio:.2f}")
+        print(f"  • 总成交: {report.total_trades} 笔 (平仓 {report.closing_trades} 笔) | 胜率: {report.win_rate_pct:.1f}% | 盈亏比: {report.profit_factor:.2f}")
+        print(f"  • 累计手续费: ${report.total_fees_usd:.2f} | 资金费净收益: ${report.total_funding_pnl_usd:+.2f}")
+        print("=" * 70)
+
+    asyncio.run(_run_bt())
+
+
 def cmd_version(args: argparse.Namespace):
     """打印平台当前版本"""
     print(f"Heimdall Trading Platform Version: {__version__}")
@@ -128,7 +164,17 @@ def main():
     demo_parser.add_argument("--capital", type=float, default=10000.0, help="初始测试本金 (USD)")
     demo_parser.set_defaults(func=cmd_run_demo)
 
-    # 3. version 命令
+    # 3. backtest 命令
+    bt_parser = subparsers.add_parser("backtest", help="运行零前视事件驱动历史回测")
+    bt_parser.add_argument("--strategy", default="TREND_FOLLOW", help="策略类型: TREND_FOLLOW / GRID / FUNDING_ARB / BULL_BEAR_DEBATE")
+    bt_parser.add_argument("--symbol", default="ETH", help="交易标的")
+    bt_parser.add_argument("--timeframe", default="15m", help="K 线周期")
+    bt_parser.add_argument("--bars", type=int, default=240, help="回测 K 线根数")
+    bt_parser.add_argument("--warmup", type=int, default=30, help="预热 K 线根数")
+    bt_parser.add_argument("--capital", type=float, default=10000.0, help="初始本金 (USD)")
+    bt_parser.set_defaults(func=cmd_backtest)
+
+    # 4. version 命令
     version_parser = subparsers.add_parser("version", help="查看平台版本")
     version_parser.set_defaults(func=cmd_version)
 
