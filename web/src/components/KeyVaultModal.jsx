@@ -271,7 +271,14 @@ export default function KeyVaultModal({ isOpen, onClose, walletState, onConnectW
       const isBinanceTestnet = newKeyForm.provider === 'binance_demo' ? true : (newKeyForm.provider === 'binance' ? Boolean(newKeyForm.isTestnet) : false);
       const isLlm = newKeyForm.category === 'llms';
       const effectiveModel = isLlm ? (newKeyForm.model.trim() || (newKeyForm.provider === 'deepseek' ? 'deepseek-chat' : newKeyForm.provider === 'anthropic' ? 'claude-3-5-sonnet-20241022' : 'gpt-4o')) : '';
-      const effectiveBaseUrl = newKeyForm.baseUrl.trim();
+      let rawBaseUrl = newKeyForm.baseUrl.trim().replace(/\/+$/, '');
+      if (rawBaseUrl.endsWith('/chat/completions')) {
+        rawBaseUrl = rawBaseUrl.replace(/\/chat\/completions$/, '');
+      }
+      if (rawBaseUrl.includes('openrouter.ai') && (rawBaseUrl.endsWith('openrouter.ai') || rawBaseUrl.endsWith('openrouter.ai/api'))) {
+        rawBaseUrl = 'https://openrouter.ai/api/v1';
+      }
+      const effectiveBaseUrl = rawBaseUrl;
 
       const res = await createVaultKey({
         wallet_address: walletState.address,
@@ -1038,13 +1045,44 @@ export default function KeyVaultModal({ isOpen, onClose, walletState, onConnectW
                     </label>
                     <input
                       type="text"
-                      placeholder="如：https://api.deepseek.com、https://api.openai.com/v1、http://localhost:11434/v1"
+                      placeholder="如：https://openrouter.ai/api/v1、https://api.deepseek.com、http://localhost:11434/v1"
                       value={newKeyForm.baseUrl}
                       onChange={(e) => setNewKeyForm(f => ({ ...f, baseUrl: e.target.value }))}
                       className="w-full p-2.5 rounded-xl bg-white border border-[#DDD5C8] text-xs text-[#2E2823] font-mono focus:outline-hidden focus:ring-2 focus:ring-[#DE6438]/20"
                     />
+                    <div className="flex items-center space-x-1.5 mt-1 text-[10px] text-[#7E7469] flex-wrap gap-1">
+                      <span>常用端点:</span>
+                      <button 
+                        type="button" 
+                        onClick={() => setNewKeyForm(f => ({ ...f, baseUrl: 'https://openrouter.ai/api/v1' }))}
+                        className="px-1.5 py-0.5 rounded bg-[#FAF7F2] border border-[#DDD5C8] hover:border-[#DE6438] text-[#DE6438]"
+                      >
+                        OpenRouter (/v1)
+                      </button>
+                      <button 
+                        type="button" 
+                        onClick={() => setNewKeyForm(f => ({ ...f, baseUrl: 'https://api.deepseek.com' }))}
+                        className="px-1.5 py-0.5 rounded bg-[#FAF7F2] border border-[#DDD5C8] hover:border-[#DE6438] text-[#DE6438]"
+                      >
+                        DeepSeek
+                      </button>
+                      <button 
+                        type="button" 
+                        onClick={() => setNewKeyForm(f => ({ ...f, baseUrl: 'https://api.openai.com/v1' }))}
+                        className="px-1.5 py-0.5 rounded bg-[#FAF7F2] border border-[#DDD5C8] hover:border-[#DE6438] text-[#DE6438]"
+                      >
+                        OpenAI
+                      </button>
+                      <button 
+                        type="button" 
+                        onClick={() => setNewKeyForm(f => ({ ...f, baseUrl: 'http://localhost:11434/v1' }))}
+                        className="px-1.5 py-0.5 rounded bg-[#FAF7F2] border border-[#DDD5C8] hover:border-[#DE6438] text-[#DE6438]"
+                      >
+                        Ollama (本地)
+                      </button>
+                    </div>
                     <p className="text-[10px] text-[#7E7469] mt-0.5">
-                      支持 OneAPI、NewAPI、OpenRouter、任意第三方代理或本地 Ollama/vLLM 兼容端点
+                      * 提示：标准 OpenAI 兼容端点末尾请保留 /v1（系统已内置智能自动纠错与补齐）
                     </p>
                   </div>
                   <div className="flex items-center space-x-2 p-2.5 bg-white border border-[#DDD5C8] rounded-xl">

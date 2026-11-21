@@ -21,6 +21,34 @@ logger = logging.getLogger(__name__)
 T = TypeVar("T", bound=BaseModel)
 
 
+def normalize_openai_base_url(url: Optional[str]) -> Optional[str]:
+    """
+    智能归一化 OpenAI 兼容端点的 Base URL：
+    1. 剥离末尾的斜杠和冗余路径 (如 /chat/completions)
+    2. 针对 OpenRouter 等平台，自动修复缺失的 /v1 后缀 (例如 https://openrouter.ai/api -> https://openrouter.ai/api/v1)
+    3. 针对自建或中转网关，自动补齐标准 /v1 路径
+    """
+    if not url:
+        return None
+    cleaned = str(url).strip().rstrip("/")
+    if cleaned.endswith("/chat/completions"):
+        cleaned = cleaned[:-len("/chat/completions")].rstrip("/")
+    if cleaned.endswith("/completions"):
+        cleaned = cleaned[:-len("/completions")].rstrip("/")
+
+    # 针对 OpenRouter 的智能修正
+    if "openrouter.ai" in cleaned:
+        if cleaned.endswith("openrouter.ai") or cleaned.endswith("openrouter.ai/api"):
+            cleaned = "https://openrouter.ai/api/v1"
+        elif cleaned.endswith("openrouter.ai/v1"):
+            cleaned = "https://openrouter.ai/api/v1"
+    # 通用针对以 /api 结尾的自动补齐 /v1
+    elif cleaned.endswith("/api"):
+        cleaned = f"{cleaned}/v1"
+
+    return cleaned
+
+
 @dataclass
 class TokenUsage:
     """单次或累计 LLM Token 真实消耗计量对象"""
@@ -147,7 +175,7 @@ class LLMService:
                 dec = crypto_vault.decrypt_payload(r.get("encrypted_data", ""))
                 key = dec.get("api_key") or dec.get("secret_key")
                 custom_model = str(dec.get("model") or "").strip()
-                custom_base_url = str(dec.get("base_url") or "").strip()
+                custom_base_url = normalize_openai_base_url(dec.get("base_url"))
                 provider = (r.get("provider") or "").lower()
                 if key and not key.startswith("your_") and not key.startswith("••••") and len(key) > 6:
                     if provider == "anthropic":
@@ -256,7 +284,7 @@ class LLMService:
                 from openai import AsyncOpenAI
 
                 effective_key = self.openai_key or self.deepseek_key
-                effective_base = self.base_url
+                effective_base = normalize_openai_base_url(self.base_url)
                 if not effective_base and self.deepseek_key and not self.openai_key:
                     effective_base = "https://api.deepseek.com"
 
@@ -269,13 +297,31 @@ class LLMService:
                 except ImportError:
                     has_socksio = False
 
+                # 智能挂载 OpenRouter / 自定义端点专属头
+                default_headers = {}
+                if effective_base and "openrouter.ai" in effective_base:
+                    default_headers = {
+                        "HTTP-Referer": "https://trade.openagentpay.dev",
+                        "X-Title": "Heimdall Trading Platform",
+                    }
+
                 is_deepseek_endpoint = "deepseek.com" in (effective_base or "")
                 if (has_socks_proxy and not has_socksio) or is_deepseek_endpoint:
                     import httpx
                     custom_http = httpx.AsyncClient(trust_env=False, timeout=20.0)
-                    client = AsyncOpenAI(api_key=effective_key, base_url=effective_base, http_client=custom_http)
+                    client = AsyncOpenAI(
+                        api_key=effective_key,
+                        base_url=effective_base,
+                        default_headers=default_headers if default_headers else None,
+                        http_client=custom_http,
+                    )
                 else:
-                    client = AsyncOpenAI(api_key=effective_key, base_url=effective_base, timeout=20.0)
+                    client = AsyncOpenAI(
+                        api_key=effective_key,
+                        base_url=effective_base,
+                        default_headers=default_headers if default_headers else None,
+                        timeout=20.0,
+                    )
 
                 messages = [
                     {"role": "system", "content": system_prompt},
@@ -290,7 +336,20 @@ class LLMService:
                 if response_json:
                     kwargs["response_format"] = {"type": "json_object"}
 
-                response = await client.chat.completions.create(**kwargs)
+                try:
+                    response = await client.chat.completions.create(**kwargs)
+                except Exception as call_err:
+                    err_msg = str(call_err).lower()
+                    # 某些第三方端点/免费模型 (如部分 OpenRouter 免费小模型) 不支持 response_format
+                    if response_json and ("response_format" in err_msg or "json_object" in err_msg or "400" in err_msg):
+                        logger.info(
+                            "[LLMService 自适应降级] 模型 %s 不支持原生 response_format 参数，自动剥离后重试",
+                            self.model_name,
+                        )
+                        kwargs.pop("response_format", None)
+                        response = await client.chat.completions.create(**kwargs)
+                    else:
+                        raise call_err
                 content = response.choices[0].message.content
                 elapsed_ms = (time.perf_counter() - start_time) * 1000
                 usage_obj = getattr(response, "usage", None)

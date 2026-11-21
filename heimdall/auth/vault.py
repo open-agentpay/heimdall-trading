@@ -338,10 +338,15 @@ async def test_key_connectivity(provider: str, credentials: Dict[str, Any]) -> T
 
             # 6. 自定义大模型 (Custom LLM / OpenAI 兼容)
             elif provider in ("custom", "openai_compatible"):
+                from heimdall.llm.client import normalize_openai_base_url
                 api_key = str(credentials.get("api_key") or "").strip()
-                base_url = str(credentials.get("base_url") or "").strip().rstrip("/") or "https://api.openai.com/v1"
+                raw_base = credentials.get("base_url")
+                base_url = normalize_openai_base_url(raw_base) or "https://api.openai.com/v1"
                 model = str(credentials.get("model") or "gpt-4o").strip()
                 headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+                if "openrouter.ai" in base_url:
+                    headers["HTTP-Referer"] = "https://trade.openagentpay.dev"
+                    headers["X-Title"] = "Heimdall Trading Platform"
                 probe_url = f"{base_url}/models" if not base_url.endswith("/models") else base_url
                 try:
                     async with session.get(probe_url, headers=headers) as resp:
