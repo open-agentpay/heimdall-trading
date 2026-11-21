@@ -206,6 +206,7 @@ class AnalystAgent:
                         elapsed_ms, symbol, llm_result.regime, llm_result.support, llm_result.resistance, llm_result.summary, llm_resp_text
                     )
                     return {
+                        "symbol": symbol,
                         "regime": llm_result.regime,
                         "latest_price": latest_price,
                         "support": llm_result.support,
@@ -253,6 +254,7 @@ class AnalystAgent:
             symbol, regime, elapsed_ms, fallback_reason
         )
         return {
+            "symbol": symbol,
             "regime": regime,
             "latest_price": latest_price,
             "support": calc_support,

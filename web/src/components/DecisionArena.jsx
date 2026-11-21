@@ -368,26 +368,37 @@ export default function DecisionArena({
                     {consensus === 'LONG' ? '🟢 开多 LONG' : consensus === 'SHORT' ? '🔴 沽空 SHORT' : '⚪ 空仓 NEUTRAL'} · {leverage.toFixed(1)}x
                   </span>
                 </div>
-                <div className="flex justify-between font-mono">
-                  <span className="text-[#8C8276]">限价入场委托:</span>
-                  <span className="font-semibold text-[#2E2823]">${Number(targetEntry).toFixed(2)}</span>
-                </div>
-                <div className="flex justify-between font-mono">
-                  <span className="text-[#8C8276]">硬防守止损价:</span>
-                  <span className="text-[#C24D4D] font-semibold">${Number(stopLoss).toFixed(2)}</span>
-                </div>
-                <div className="flex justify-between font-mono">
-                  <span className="text-[#8C8276]">目标止盈点位:</span>
-                  <span className="text-[#4D835C] font-semibold">${Number(takeProfit).toFixed(2)}</span>
-                </div>
-                <div className="flex justify-between font-mono">
-                  <span className="text-[#8C8276]">凯利头寸价值:</span>
-                  <span className="text-[#DE6438] font-bold">${Number(sizeUsd).toFixed(2)} USD</span>
-                </div>
-                {idempotencyKey && (
-                  <div className="flex justify-between font-mono text-[10px] text-[#9E9486] pt-1 border-t border-[#F0EAE1]">
-                    <span>幂等防重放:</span>
-                    <span className="font-mono text-[#7E7469]">{idempotencyKey.slice(0, 18)}...</span>
+                {proposal ? (
+                  <>
+                    <div className="flex justify-between font-mono">
+                      <span className="text-[#8C8276]">限价入场委托:</span>
+                      <span className="font-semibold text-[#2E2823]">${Number(targetEntry).toFixed(2)}</span>
+                    </div>
+                    <div className="flex justify-between font-mono">
+                      <span className="text-[#8C8276]">硬防守止损价:</span>
+                      <span className="text-[#C24D4D] font-semibold">${Number(stopLoss).toFixed(2)}</span>
+                    </div>
+                    <div className="flex justify-between font-mono">
+                      <span className="text-[#8C8276]">目标止盈点位:</span>
+                      <span className="text-[#4D835C] font-semibold">${Number(takeProfit).toFixed(2)}</span>
+                    </div>
+                    <div className="flex justify-between font-mono">
+                      <span className="text-[#8C8276]">凯利头寸价值:</span>
+                      <span className="text-[#DE6438] font-bold">${Number(sizeUsd).toFixed(2)} USD</span>
+                    </div>
+                    {idempotencyKey && (
+                      <div className="flex justify-between font-mono text-[10px] text-[#9E9486] pt-1 border-t border-[#F0EAE1]">
+                        <span>幂等防重放:</span>
+                        <span className="font-mono text-[#7E7469]">{idempotencyKey.slice(0, 18)}...</span>
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <div className="py-2.5 px-3 bg-[#FAF7F2] rounded-xl border border-[#EDE5DA] text-center space-y-1 my-1">
+                    <p className="font-semibold text-[#7E7469] text-xs">保持空仓观望 (Cash is a position)</p>
+                    <p className="text-[11px] text-[#9E9486] leading-relaxed">
+                      {consensus === 'NEUTRAL' ? '多空对抗达成中立共识，策略层严禁盲目挂单，100% 现金防守' : '当前无有效挂单提案，维持零资金敞口暴露'}
+                    </p>
                   </div>
                 )}
               </div>

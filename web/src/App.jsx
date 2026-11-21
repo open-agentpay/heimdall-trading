@@ -260,29 +260,52 @@ export default function App() {
       }
 
       // 6. 策略执行官 (Strategy)
-      if (ag.id === "strategy" && record.trade_proposal) {
-        const p = record.trade_proposal;
-        const act = p.trade_action || {};
-        const trace = record.step_traces?.find(st => (st.agent_role || st.step_name || '').toLowerCase().includes('strategy')) || {};
-        return {
-          ...ag,
-          stance: act.side || act.order_side || 'LONG',
-          tag: `挂单 $${act.target_price} · 止损 $${act.stop_loss_price}`,
-          badge: `仓位 $${act.size_in_usd}`,
-          confidence: 0.90,
-          keyThesis: `基于多空对决裁决签发确定性交易提案 (幂等键 SHA256 签发完成)`,
-          evidence: [
-            `挂单类型: 限价委托 (LIMIT) | 方向: ${act.side || act.order_side || 'LONG'}`,
-            `计划限价挂单价格: $${act.target_price}`,
-            `确定性止损防线: $${act.stop_loss_price}`,
-            `配置资金敞口: $${act.size_in_usd} · 杠杆倍数: ${act.leverage || 1.5}x`,
-            `幂等校验 SHA256: ${(p.idempotency_key || '').slice(0, 22)}...`
-          ],
-          invalidation: `若挂单超时未撮合成交，或发单前价格已穿透止损线，该委托提案即刻作废。`,
-          thinkingMonologue: `[策略师提案] 执行方向: ${act.side || act.order_side}，挂单价格: $${act.target_price}，盈亏比: 2.17:1`,
-          latency: trace.duration_ms ? `${trace.duration_ms}ms` : '15ms',
-          traceId: p.idempotency_key || `trc_strategy_${(record.timestamp || '').slice(-6)}`,
-        };
+      if (ag.id === "strategy") {
+        if (record.trade_proposal) {
+          const p = record.trade_proposal;
+          const act = p.trade_action || {};
+          const trace = record.step_traces?.find(st => (st.agent_role || st.step_name || '').toLowerCase().includes('strategy')) || {};
+          return {
+            ...ag,
+            stance: act.side || act.order_side || 'LONG',
+            tag: `挂单 $${act.target_price} · 止损 $${act.stop_loss_price}`,
+            badge: `仓位 $${act.size_in_usd}`,
+            confidence: 0.90,
+            keyThesis: `基于多空对决裁决签发确定性交易提案 (幂等键 SHA256 签发完成)`,
+            evidence: [
+              `挂单类型: 限价委托 (LIMIT) | 方向: ${act.side || act.order_side || 'LONG'}`,
+              `计划限价挂单价格: $${act.target_price}`,
+              `确定性止损防线: $${act.stop_loss_price}`,
+              `配置资金敞口: $${act.size_in_usd} · 杠杆倍数: ${act.leverage || 1.5}x`,
+              `幂等校验 SHA256: ${(p.idempotency_key || '').slice(0, 22)}...`
+            ],
+            invalidation: `若挂单超时未撮合成交，或发单前价格已穿透止损线，该委托提案即刻作废。`,
+            thinkingMonologue: `[策略师提案] 执行方向: ${act.side || act.order_side}，挂单价格: $${act.target_price}，盈亏比: 2.17:1`,
+            latency: trace.duration_ms ? `${trace.duration_ms}ms` : '15ms',
+            traceId: p.idempotency_key || `trc_strategy_${(record.timestamp || '').slice(-6)}`,
+          };
+        } else {
+          const mo = record.debate_synthesis || {};
+          const action = mo.consensus_action || record.debate_consensus || 'NEUTRAL';
+          const trace = record.step_traces?.find(st => (st.agent_role || st.step_name || '').toLowerCase().includes('strategy')) || {};
+          return {
+            ...ag,
+            stance: action === 'NEUTRAL' ? 'NEUTRAL' : 'WAIT',
+            tag: action === 'NEUTRAL' ? '空仓防守 · 暂无挂单' : '等待信号 · 动态测算',
+            badge: action === 'NEUTRAL' ? '防守观望' : '待命',
+            confidence: 0.85,
+            keyThesis: `裁判终审定性为 ${action}，策略层严格遵守纪律，维持 100% 现金防守 (Cash is a position)，未签发任何买卖委托单。`,
+            evidence: [
+              `终审裁决: ${action} · 无须半凯利公式开仓测算`,
+              `当前资金策略: 保持 100% 现金防守，杜绝无胜率优势操作`,
+              `风控指标: 当前敞口为 $0.00，杜绝震荡市频繁磨损本金`
+            ],
+            invalidation: `下一轮若多空博弈形成高置信度突破并获裁判授权，策略师将立即计算入场限价与止损挂单。`,
+            thinkingMonologue: `[策略精算师] 裁判裁决维持 ${action}，当前无开仓期望收益，严禁盲目挂单，保持防守。`,
+            latency: trace.duration_ms ? `${trace.duration_ms}ms` : '5ms',
+            traceId: `trc_strategy_neutral_${(record.timestamp || '').slice(-6)}`,
+          };
+        }
       }
 
       // 7. 七大铁律硬风控 (Risk Officer)

@@ -181,6 +181,7 @@ class MultiAgentPipeline:
             brief = state.analyst_brief
         else:
             brief, lat_ms = parallel_results["analyst"]
+            brief["symbol"] = state.symbol
             t_tel = brief.get("telemetry", {})
             fb = t_tel.get("fallback_used", False)
             if fb:
@@ -272,6 +273,7 @@ class MultiAgentPipeline:
                         lessons_learned=state.lessons_learned,
                         sentiment_report=sentiment_report,
                         raw_klines=state.raw_klines,
+                        symbol=state.symbol,
                     ),
                     self.bear_researcher.argue_short(
                         analyst_brief=brief,
@@ -279,6 +281,7 @@ class MultiAgentPipeline:
                         lessons_learned=state.lessons_learned,
                         sentiment_report=sentiment_report,
                         raw_klines=state.raw_klines,
+                        symbol=state.symbol,
                     ),
                 )
 
@@ -386,6 +389,7 @@ class MultiAgentPipeline:
                     "bull_evidence": bull_view.get("evidence_used"),
                     "bear_evidence": bear_view.get("evidence_used"),
                 },
+                symbol=state.symbol,
             )
             lat_ms = (time.perf_counter() - t0) * 1000
             t_tel = debate_synthesis.get("telemetry", {})

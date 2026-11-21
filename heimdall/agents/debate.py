@@ -126,12 +126,14 @@ class BullResearcher:
         lessons_learned: Optional[str] = None,
         sentiment_report: Optional[Dict[str, Any]] = None,
         raw_klines: Optional[List[Dict[str, Any]]] = None,
+        symbol: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         发起做多辩护或反驳空头观点（配备多头专属只读取证工具）
         """
         start_time = time.perf_counter()
-        symbol = analyst_brief.get("symbol", "ETH")
+        target_symbol = symbol or analyst_brief.get("symbol") or "BTC"
+        symbol = target_symbol
         regime = analyst_brief.get("regime", "RANGE")
         latest_price = analyst_brief.get("latest_price", 0.0)
         support = analyst_brief.get("support", latest_price * 0.98)
@@ -290,12 +292,14 @@ class BearResearcher:
         lessons_learned: Optional[str] = None,
         sentiment_report: Optional[Dict[str, Any]] = None,
         raw_klines: Optional[List[Dict[str, Any]]] = None,
+        symbol: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         发起做空/防守指控，反驳多头乐观情绪（配备空头专属衰竭取证工具）
         """
         start_time = time.perf_counter()
-        symbol = analyst_brief.get("symbol", "ETH")
+        target_symbol = symbol or analyst_brief.get("symbol") or "BTC"
+        symbol = target_symbol
         regime = analyst_brief.get("regime", "RANGE")
         latest_price = analyst_brief.get("latest_price", 0.0)
         support = analyst_brief.get("support", latest_price * 0.98)
@@ -456,12 +460,14 @@ class DebateModerator:
         sentiment_report: Optional[Dict[str, Any]] = None,
         debate_history: Optional[List[Dict[str, Any]]] = None,
         raw_evidence: Optional[Dict[str, Any]] = None,
+        symbol: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         对多空辩论成果进行综合裁决（P0: 裁判直接交叉核验原始指标与情绪，消除电话传话失真）
         """
         start_time = time.perf_counter()
-        symbol = analyst_brief.get("symbol", "ETH")
+        target_symbol = symbol or analyst_brief.get("symbol") or "BTC"
+        symbol = target_symbol
         bull_score = bull_view.get("confidence", 0.5)
         bear_score = bear_view.get("confidence", 0.5)
         regime = analyst_brief.get("regime", "RANGE")
