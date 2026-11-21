@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# Heimdall AI Quant Trading Platform - 一键 Docker 生产部署与运维脚本
+# Heimdall AI Quant Trading Platform - 生产级 Docker 服务编排与运维脚本
 # ==============================================================================
 # 用法:
-#   ./deploy.sh up        # 构建镜像并启动 PostgreSQL + 后端 + 前端
-#   ./deploy.sh down      # 停止并移除容器（保留数据库与金库数据卷）
-#   ./deploy.sh restart   # 重新构建并重启前后端服务
-#   ./deploy.sh logs      # 实时查看容器日志（可追加服务名，如 ./deploy.sh logs backend）
+#   ./deploy.sh pull      # 从远端 Hub 拉取最新生产镜像 (后端 + 前端)
+#   ./deploy.sh up        # 启动容器栈 (PostgreSQL + 后端 + 前端)
+#   ./deploy.sh update    # 一键滚动更新 (拉取新镜像 -> 重启服务 -> 清理孤立镜像)
+#   ./deploy.sh down      # 停止并移除容器（完整保留数据库与金库数据卷）
+#   ./deploy.sh restart   # 重启容器栈
+#   ./deploy.sh logs      # 实时查看日志 (例: ./deploy.sh logs backend)
 #   ./deploy.sh status    # 查看各容器运行状态与健康检查
 #   ./deploy.sh backup    # 导出 PostgreSQL 逻辑备份至 ./backups/
 # ==============================================================================
@@ -41,21 +43,41 @@ ensure_env_file() {
   fi
 }
 
+cmd_pull() {
+  ensure_docker_running
+  ensure_env_file
+  echo ">>> [Heimdall 部署] 正在从远程 Hub 拉取最新镜像..."
+  $COMPOSE_CMD pull
+  echo "✅ 镜像拉取完成！"
+}
+
 cmd_up() {
   ensure_docker_running
   ensure_env_file
-  echo ">>> [Heimdall 部署] 正在构建前后端生产镜像并拉起服务栈..."
-  $COMPOSE_CMD up -d --build
+  echo ">>> [Heimdall 部署] 正在启动生产服务栈..."
+  $COMPOSE_CMD up -d "$@"
   $COMPOSE_CMD ps
   WEB_PORT_VAL="$(grep -E '^WEB_PORT=' .env 2>/dev/null | cut -d '=' -f2 || true)"
   WEB_PORT_VAL="${WEB_PORT_VAL:-80}"
   echo ""
   echo "=============================================================================="
-  echo " Heimdall Trading Platform 已启动！"
+  echo "🚀 Heimdall Trading Platform 服务栈已运行！"
   echo "  - Web 控制台入口 : http://localhost:${WEB_PORT_VAL}"
   echo "  - 后端健康检查   : http://localhost:${WEB_PORT_VAL}/health"
   echo "  - 实时日志查看   : ./deploy.sh logs"
   echo "=============================================================================="
+}
+
+cmd_update() {
+  ensure_docker_running
+  ensure_env_file
+  echo ">>> [Heimdall 部署] 正在执行生产滚动更新..."
+  $COMPOSE_CMD pull
+  $COMPOSE_CMD up -d --remove-orphans
+  echo ">>> [Heimdall 部署] 正在清理废弃镜像层..."
+  docker image prune -f >/dev/null 2>&1 || true
+  $COMPOSE_CMD ps
+  echo "✅ 生产服务已成功更新至最新镜像！"
 }
 
 cmd_down() {
@@ -67,8 +89,8 @@ cmd_down() {
 cmd_restart() {
   ensure_docker_running
   ensure_env_file
-  echo ">>> [Heimdall 部署] 正在重新构建并重启前后端服务..."
-  $COMPOSE_CMD up -d --build --force-recreate backend web
+  echo ">>> [Heimdall 部署] 正在重启前后端与数据库服务..."
+  $COMPOSE_CMD restart
   $COMPOSE_CMD ps
 }
 
@@ -99,7 +121,9 @@ cmd_backup() {
 
 ACTION="${1:-up}"
 case "$ACTION" in
-  up) cmd_up ;;
+  pull) cmd_pull ;;
+  up) shift || true; cmd_up "$@" ;;
+  update) cmd_update ;;
   down) cmd_down ;;
   restart) cmd_restart ;;
   logs) cmd_logs "$@" ;;
@@ -107,7 +131,7 @@ case "$ACTION" in
   backup) cmd_backup ;;
   *)
     echo "未知指令: $ACTION"
-    echo "支持指令: ./deploy.sh [up|down|restart|logs|status|backup]"
+    echo "支持指令: ./deploy.sh [pull|up|update|down|restart|logs|status|backup]"
     exit 1
     ;;
 esac

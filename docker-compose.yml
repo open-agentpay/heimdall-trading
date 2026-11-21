@@ -1,0 +1,73 @@
+# ==============================================================================
+# Heimdall AI Quant Trading Platform - Production Docker Compose Stack
+# ==============================================================================
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: heimdall-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-heimdall}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-heimdall_secure_password}
+      POSTGRES_DB: ${POSTGRES_DB:-heimdall}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-heimdall} -d ${POSTGRES_DB:-heimdall}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - heimdall-net
+
+  backend:
+    image: ${DOCKER_REGISTRY:-heimdall}/heimdall-backend:${IMAGE_TAG:-latest}
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: heimdall-backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      - HEIMDALL_DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-heimdall}:${POSTGRES_PASSWORD:-heimdall_secure_password}@postgres:5432/${POSTGRES_DB:-heimdall}
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-heimdall}:${POSTGRES_PASSWORD:-heimdall_secure_password}@postgres:5432/${POSTGRES_DB:-heimdall}
+    volumes:
+      - heimdall_data:/app/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - heimdall-net
+
+  web:
+    image: ${DOCKER_REGISTRY:-heimdall}/heimdall-web:${IMAGE_TAG:-latest}
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+    container_name: heimdall-web
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "${WEB_PORT:-80}:80"
+    networks:
+      - heimdall-net
+
+volumes:
+  postgres_data:
+    name: heimdall_postgres_data
+  heimdall_data:
+    name: heimdall_app_data
+
+networks:
+  heimdall-net:
+    name: heimdall-network
