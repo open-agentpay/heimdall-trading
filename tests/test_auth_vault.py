@@ -302,3 +302,95 @@ def test_emergency_kill_unauthorized_defense():
     res_auth = client.post("/api/v1/emergency/kill", headers=headers)
     assert res_auth.status_code == 200
     assert res_auth.json()["success"] is True
+
+
+def test_vault_custom_llm_and_key_activation():
+    """
+    测试自定义 LLM 密钥托管、字段解析与多密钥激活切换：
+    1. 支持填写 model, api_key, base_url
+    2. 多个 LLM 密钥时通过 /activate 接口单选激活
+    3. LLMService 成功挂载激活密钥的 model 与 base_url
+    """
+    import asyncio
+    from fastapi.testclient import TestClient
+    from heimdall.api.server import app
+    from heimdall.llm.client import LLMService
+
+    client = TestClient(app)
+    wallet = Account.create().address.lower()
+    headers = issue_bearer_headers(wallet)
+
+    # 1. 创建第一个 Custom LLM 密钥
+    res1 = client.post(
+        "/api/v1/vault/keys",
+        headers=headers,
+        json={
+            "category": "llms",
+            "provider": "custom",
+            "label": "我的自定义 Qwen 模型",
+            "payload": {
+                "api_key": "sk-qwen-test-12345678",
+                "model": "qwen-plus",
+                "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                "set_active": True,
+            },
+        },
+    )
+    assert res1.status_code == 200
+    key1_id = res1.json()["key_id"]
+
+    # 2. 创建第二个 LLM 密钥 (DeepSeek-R1)
+    res2 = client.post(
+        "/api/v1/vault/keys",
+        headers=headers,
+        json={
+            "category": "llms",
+            "provider": "deepseek",
+            "label": "DeepSeek R1 备用",
+            "payload": {
+                "api_key": "sk-deepseek-test-87654321",
+                "model": "deepseek-reasoner",
+                "base_url": "https://api.deepseek.com",
+                "set_active": True,
+            },
+        },
+    )
+    assert res2.status_code == 200
+    key2_id = res2.json()["key_id"]
+
+    # 3. 查询密钥列表，验证脱敏字段解析与激活状态
+    list_res = client.get("/api/v1/vault/keys", headers=headers)
+    assert list_res.status_code == 200
+    keys = list_res.json()
+    k1 = next(k for k in keys if k["key_id"] == key1_id)
+    k2 = next(k for k in keys if k["key_id"] == key2_id)
+
+    assert k1["model"] == "qwen-plus"
+    assert k1["base_url"] == "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    assert k1["is_active"] is False  # 因为 key2 set_active=True，key1 自动置为 False
+
+    assert k2["model"] == "deepseek-reasoner"
+    assert k2["is_active"] is True
+
+    # 4. 一键切换激活 key1
+    act_res = client.post(f"/api/v1/vault/keys/{key1_id}/activate", headers=headers)
+    assert act_res.status_code == 200
+    assert act_res.json()["success"] is True
+
+    # 重新查询，验证 key1 变为 active，key2 变为 inactive
+    list_res_after = client.get("/api/v1/vault/keys", headers=headers)
+    keys_after = list_res_after.json()
+    k1_after = next(k for k in keys_after if k["key_id"] == key1_id)
+    k2_after = next(k for k in keys_after if k["key_id"] == key2_id)
+    assert k1_after["is_active"] is True
+    assert k2_after["is_active"] is False
+
+    # 5. 验证 LLMService 正确热挂载该激活密钥
+    llm = LLMService(owner_wallet=wallet, allow_env_fallback=False)
+    ok = asyncio.run(llm.ensure_credentials(force_refresh=True))
+    assert ok is True
+    assert llm.is_enabled is True
+    assert llm.model_name == "qwen-plus"
+    assert llm.base_url == "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    assert llm.openai_key == "sk-qwen-test-12345678"
+

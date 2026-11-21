@@ -18,9 +18,9 @@ import React, { useState, useEffect } from 'react';
 import { 
   Key, ShieldCheck, Lock, Eye, EyeOff, Plus, Trash2, CheckCircle2, 
   AlertCircle, ExternalLink, RefreshCw, Copy, Check, Sparkles, 
-  Cpu, Building2, HelpCircle, Activity, ChevronRight, CheckCircle
+  Cpu, Building2, HelpCircle, Activity, ChevronRight, CheckCircle, Radio
 } from 'lucide-react';
-import { listVaultKeys, createVaultKey, testVaultKey, deleteVaultKey, updateVaultKeyNetwork } from '../api/endpoints';
+import { listVaultKeys, createVaultKey, testVaultKey, deleteVaultKey, updateVaultKeyNetwork, activateVaultKey } from '../api/endpoints';
 
 export default function KeyVaultModal({ isOpen, onClose, walletState, onConnectWallet }) {
   if (!isOpen) return null;
@@ -31,6 +31,7 @@ export default function KeyVaultModal({ isOpen, onClose, walletState, onConnectW
   const [showAddModal, setShowAddModal] = useState(false);
   const [testingKeyId, setTestingKeyId] = useState(null);
   const [togglingKeyId, setTogglingKeyId] = useState(null);
+  const [activatingKeyId, setActivatingKeyId] = useState(null);
   const [revealedKeys, setRevealedKeys] = useState({});
   const [copiedId, setCopiedId] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -46,7 +47,9 @@ export default function KeyVaultModal({ isOpen, onClose, walletState, onConnectW
     apiKey: '',
     secretKey: '',
     passphrase: '',
+    model: '',
     baseUrl: '',
+    setActive: true,
     isTestnet: true,
   });
 
@@ -80,6 +83,7 @@ export default function KeyVaultModal({ isOpen, onClose, walletState, onConnectW
             const actualId = k.key_id || k.id;
             const prov = String(k.provider || '').toLowerCase();
             const isTestnet = prov === 'binance_demo' ? true : Boolean(k.is_testnet);
+            const isActive = Boolean(k.is_active ?? true);
             return {
               id: actualId,
               key_id: actualId,
@@ -87,6 +91,9 @@ export default function KeyVaultModal({ isOpen, onClose, walletState, onConnectW
               provider: prov,
               providerName: prov.toUpperCase(),
               isTestnet,
+              isActive,
+              model: k.model || '',
+              baseUrl: k.base_url || '',
               label: k.label,
               mask: k.key_mask || k.mask || '••••••••••••••••',
               fullSecretMock: k.key_mask || '••••••••••••••••',
@@ -167,6 +174,29 @@ export default function KeyVaultModal({ isOpen, onClose, walletState, onConnectW
     }
   };
 
+  // 激活大模型密钥（多密钥间切换活跃生效密钥）
+  const handleActivateKey = async (id, label) => {
+    setActivatingKeyId(id);
+    try {
+      await activateVaultKey(id);
+      setKeysList(prev => prev.map(k => {
+        if (k.category === 'llms') {
+          const isTarget = (k.id === id || k.key_id === id);
+          return {
+            ...k,
+            isActive: isTarget,
+            lastMessage: isTarget ? '🟢 已切换为当前默认活跃大模型' : '',
+          };
+        }
+        return k;
+      }));
+    } catch (e) {
+      alert(`切换激活密钥失败: ${e.message}`);
+    } finally {
+      setActivatingKeyId(null);
+    }
+  };
+
   // 物理销毁凭据
   const handleDeleteKey = async (id, label) => {
     if (!window.confirm(`确定要安全物理销毁凭据【${label}】吗？删除后正在运行的关联机器人可能会降级停止。`)) {
@@ -239,6 +269,10 @@ export default function KeyVaultModal({ isOpen, onClose, walletState, onConnectW
     let createdKeyId = null;
     try {
       const isBinanceTestnet = newKeyForm.provider === 'binance_demo' ? true : (newKeyForm.provider === 'binance' ? Boolean(newKeyForm.isTestnet) : false);
+      const isLlm = newKeyForm.category === 'llms';
+      const effectiveModel = isLlm ? (newKeyForm.model.trim() || (newKeyForm.provider === 'deepseek' ? 'deepseek-chat' : newKeyForm.provider === 'anthropic' ? 'claude-3-5-sonnet-20241022' : 'gpt-4o')) : '';
+      const effectiveBaseUrl = newKeyForm.baseUrl.trim();
+
       const res = await createVaultKey({
         wallet_address: walletState.address,
         category: newKeyForm.category,
@@ -249,7 +283,8 @@ export default function KeyVaultModal({ isOpen, onClose, walletState, onConnectW
           secret_key: newKeyForm.secretKey,
           private_key: newKeyForm.secretKey,
           passphrase: newKeyForm.passphrase,
-          base_url: newKeyForm.baseUrl,
+          base_url: effectiveBaseUrl,
+          ...(isLlm ? { model: effectiveModel, set_active: Boolean(newKeyForm.setActive) } : {}),
           ...(newKeyForm.provider === 'binance' || newKeyForm.provider === 'binance_demo'
             ? { is_testnet: isBinanceTestnet, mode: isBinanceTestnet ? 'demo' : 'mainnet' }
             : {}),
@@ -265,6 +300,8 @@ export default function KeyVaultModal({ isOpen, onClose, walletState, onConnectW
     }
 
     const actualId = createdKeyId || `key_${Date.now()}`;
+    const isLlm = newKeyForm.category === 'llms';
+    const isNewActive = isLlm ? Boolean(newKeyForm.setActive) : true;
 
     const newKeyObj = {
       id: actualId,
@@ -273,6 +310,9 @@ export default function KeyVaultModal({ isOpen, onClose, walletState, onConnectW
       provider: newKeyForm.provider,
       providerName: newKeyForm.provider.toUpperCase(),
       label: newKeyForm.label,
+      isActive: isNewActive,
+      model: isLlm ? (newKeyForm.model.trim() || (newKeyForm.provider === 'deepseek' ? 'deepseek-chat' : newKeyForm.provider === 'anthropic' ? 'claude-3-5-sonnet-20241022' : 'gpt-4o')) : '',
+      baseUrl: newKeyForm.baseUrl.trim(),
       mask: generatedMask,
       fullSecretMock: rawSecret,
       status: 'OK',
@@ -284,7 +324,13 @@ export default function KeyVaultModal({ isOpen, onClose, walletState, onConnectW
       icon: newKeyForm.category === 'exchanges' ? '⚡' : '🧠',
     };
 
-    setKeysList(prev => [newKeyObj, ...prev]);
+    setKeysList(prev => {
+      let updated = prev;
+      if (isLlm && isNewActive) {
+        updated = updated.map(k => k.category === 'llms' ? { ...k, isActive: false } : k);
+      }
+      return [newKeyObj, ...updated];
+    });
     setShowAddModal(false);
     setNewKeyForm({
       category: 'exchanges',
@@ -293,7 +339,10 @@ export default function KeyVaultModal({ isOpen, onClose, walletState, onConnectW
       apiKey: '',
       secretKey: '',
       passphrase: '',
+      model: '',
       baseUrl: '',
+      setActive: true,
+      isTestnet: true,
     });
   };
 
@@ -537,8 +586,25 @@ export default function KeyVaultModal({ isOpen, onClose, walletState, onConnectW
                             <span className={`text-[10px] px-2 py-0.5 rounded-full border font-medium ${k.badgeColor}`}>
                               {k.badge}
                             </span>
+                            {k.category === 'llms' && (
+                              <span className={`text-[10px] px-2 py-0.5 rounded-full border font-semibold flex items-center space-x-1 ${
+                                k.isActive 
+                                  ? 'bg-[#EBF5EE] text-[#3D784E] border-[#D1E8D7]' 
+                                  : 'bg-[#F4EFE6] text-[#8C8276] border-[#DDD5C7]'
+                              }`}>
+                                <span className={`w-1.5 h-1.5 rounded-full ${k.isActive ? 'bg-[#3D784E] animate-pulse' : 'bg-[#A89F91]'}`}></span>
+                                <span>{k.isActive ? '当前激活' : '备用'}</span>
+                              </span>
+                            )}
                           </div>
-                          <div className="text-[11px] text-[#7E7469] mt-0.5 font-mono">{k.providerName}</div>
+                          <div className="text-[11px] text-[#7E7469] mt-0.5 font-mono flex items-center space-x-2">
+                            <span>{k.providerName}</span>
+                            {k.category === 'llms' && (
+                              <span className="bg-[#FAF7F2] border border-[#E6DFD5] px-1.5 py-0.5 rounded text-[10px] text-[#DE6438] font-semibold">
+                                模型: {k.model || (k.provider === 'deepseek' ? 'deepseek-chat' : k.provider === 'anthropic' ? 'claude-3-5-sonnet' : 'gpt-4o')}
+                              </span>
+                            )}
+                          </div>
                         </div>
                       </div>
 
@@ -598,16 +664,54 @@ export default function KeyVaultModal({ isOpen, onClose, walletState, onConnectW
                       </div>
                     </div>
 
-                    {/* 权限清单 + 币安测试网/正式网环境开关 */}
+                    {/* 权限清单 + 币安测试网/正式网环境开关 + 大模型激活选择 */}
                     <div className="flex flex-wrap items-center justify-between gap-2 text-[10px] text-[#7E7469]">
-                      <div className="flex items-center space-x-1.5">
-                        <span className="font-semibold text-[#2E2823]">生效权限:</span>
-                        {k.permissions.map((p, idx) => (
-                          <span key={idx} className="bg-[#FAF7F2] border border-[#EAE3D8] px-2 py-0.5 rounded-md">
-                            {p}
-                          </span>
-                        ))}
+                      <div className="flex items-center space-x-1.5 flex-wrap gap-1">
+                        <span className="font-semibold text-[#2E2823]">
+                          {k.category === 'llms' ? '模型配置:' : '生效权限:'}
+                        </span>
+                        {k.category === 'llms' ? (
+                          <>
+                            <span className="bg-[#FAF7F2] border border-[#EAE3D8] px-2 py-0.5 rounded-md font-mono text-[#DE6438] font-semibold">
+                              {k.model || (k.provider === 'deepseek' ? 'deepseek-chat' : k.provider === 'anthropic' ? 'claude-3-5-sonnet' : 'gpt-4o')}
+                            </span>
+                            {k.baseUrl && (
+                              <span className="bg-[#FAF7F2] border border-[#EAE3D8] px-2 py-0.5 rounded-md font-mono text-[#7E7469] max-w-[220px] truncate" title={k.baseUrl}>
+                                {k.baseUrl}
+                              </span>
+                            )}
+                          </>
+                        ) : (
+                          k.permissions.map((p, idx) => (
+                            <span key={idx} className="bg-[#FAF7F2] border border-[#EAE3D8] px-2 py-0.5 rounded-md">
+                              {p}
+                            </span>
+                          ))
+                        )}
                       </div>
+
+                      {/* 大模型激活选择控制 */}
+                      {k.category === 'llms' && (
+                        <div className="flex items-center space-x-2">
+                          {k.isActive ? (
+                            <div className="flex items-center space-x-1 bg-[#EBF5EE] border border-[#CEE5D3] px-2.5 py-1 rounded-lg text-[10px] text-[#3D784E] font-bold">
+                              <CheckCircle2 className="w-3.5 h-3.5 text-[#3D784E]" />
+                              <span>当前激活生效</span>
+                            </div>
+                          ) : (
+                            <button
+                              type="button"
+                              disabled={activatingKeyId === k.id}
+                              onClick={() => handleActivateKey(k.id, k.label)}
+                              className="px-2.5 py-1 rounded-lg bg-white border border-[#DDD5C7] hover:border-[#DE6438] hover:text-[#DE6438] text-[#5C5248] text-[10px] font-bold shadow-xs transition flex items-center space-x-1 cursor-pointer disabled:opacity-50"
+                              title="将该大模型密钥设为当前活跃生效"
+                            >
+                              <Radio className={`w-3 h-3 ${activatingKeyId === k.id ? 'animate-spin text-[#DE6438]' : ''}`} />
+                              <span>{activatingKeyId === k.id ? '切换中...' : '设为激活密钥'}</span>
+                            </button>
+                          )}
+                        </div>
+                      )}
 
                       {(k.provider === 'binance' || k.provider === 'binance_demo') && (
                         <div className="flex items-center space-x-2 bg-[#FAF7F2] border border-[#E6DFD5] px-2.5 py-1 rounded-lg">
@@ -716,7 +820,7 @@ export default function KeyVaultModal({ isOpen, onClose, walletState, onConnectW
                   </button>
                   <button
                     type="button"
-                    onClick={() => setNewKeyForm(f => ({ ...f, category: 'llms', provider: 'anthropic' }))}
+                    onClick={() => setNewKeyForm(f => ({ ...f, category: 'llms', provider: 'custom' }))}
                     className={`py-2 px-3 rounded-xl border text-xs font-bold transition flex items-center justify-center space-x-1.5 ${
                       newKeyForm.category === 'llms' 
                         ? "bg-white border-[#DE6438] text-[#DE6438] shadow-xs" 
@@ -746,9 +850,10 @@ export default function KeyVaultModal({ isOpen, onClose, walletState, onConnectW
                     </>
                   ) : (
                     <>
-                      <option value="anthropic">Anthropic (Claude 3.5 Sonnet)</option>
+                      <option value="custom">Custom LLM (自定义大模型 · OpenAI 兼容端点)</option>
                       <option value="deepseek">DeepSeek (V3 / R1 推理核心)</option>
                       <option value="openai">OpenAI (GPT-4o / o1)</option>
+                      <option value="anthropic">Anthropic (Claude 3.5 Sonnet)</option>
                       <option value="gemini">Google Gemini 2.0</option>
                     </>
                   )}
@@ -880,6 +985,42 @@ export default function KeyVaultModal({ isOpen, onClose, walletState, onConnectW
                 <>
                   <div>
                     <label className="block text-xs font-semibold text-[#2E2823] mb-1">
+                      模型名称 (Model) <span className="text-[#7E7469] font-normal">(自定义或输入模型代码)</span>
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="如：deepseek-chat、deepseek-reasoner、gpt-4o、qwen-plus、claude-3-5-sonnet"
+                      value={newKeyForm.model}
+                      onChange={(e) => setNewKeyForm(f => ({ ...f, model: e.target.value }))}
+                      className="w-full p-2.5 rounded-xl bg-white border border-[#DDD5C8] text-xs text-[#2E2823] font-mono focus:outline-hidden focus:ring-2 focus:ring-[#DE6438]/20 font-medium"
+                    />
+                    <div className="flex items-center space-x-1.5 mt-1 text-[10px] text-[#7E7469]">
+                      <span>推荐快捷填入:</span>
+                      <button 
+                        type="button" 
+                        onClick={() => setNewKeyForm(f => ({ ...f, model: 'deepseek-chat' }))}
+                        className="px-1.5 py-0.5 rounded bg-[#FAF7F2] border border-[#DDD5C8] hover:border-[#DE6438] text-[#DE6438]"
+                      >
+                        deepseek-chat
+                      </button>
+                      <button 
+                        type="button" 
+                        onClick={() => setNewKeyForm(f => ({ ...f, model: 'gpt-4o' }))}
+                        className="px-1.5 py-0.5 rounded bg-[#FAF7F2] border border-[#DDD5C8] hover:border-[#DE6438] text-[#DE6438]"
+                      >
+                        gpt-4o
+                      </button>
+                      <button 
+                        type="button" 
+                        onClick={() => setNewKeyForm(f => ({ ...f, model: 'qwen-plus' }))}
+                        className="px-1.5 py-0.5 rounded bg-[#FAF7F2] border border-[#DDD5C8] hover:border-[#DE6438] text-[#DE6438]"
+                      >
+                        qwen-plus
+                      </button>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-[#2E2823] mb-1">
                       API 访问密钥 (API Key) <span className="text-[#DE6438]">*</span>
                     </label>
                     <input
@@ -893,15 +1034,30 @@ export default function KeyVaultModal({ isOpen, onClose, walletState, onConnectW
                   </div>
                   <div>
                     <label className="block text-xs font-semibold text-[#2E2823] mb-1">
-                      API Base URL (自定义代理中转 - 可选)
+                      API Base URL (自定义端点 / 中转代理 - 选填)
                     </label>
                     <input
                       type="text"
-                      placeholder="如：https://api.deepseek.com/v1 (留空则使用官方默认端点)"
+                      placeholder="如：https://api.deepseek.com、https://api.openai.com/v1、http://localhost:11434/v1"
                       value={newKeyForm.baseUrl}
                       onChange={(e) => setNewKeyForm(f => ({ ...f, baseUrl: e.target.value }))}
                       className="w-full p-2.5 rounded-xl bg-white border border-[#DDD5C8] text-xs text-[#2E2823] font-mono focus:outline-hidden focus:ring-2 focus:ring-[#DE6438]/20"
                     />
+                    <p className="text-[10px] text-[#7E7469] mt-0.5">
+                      支持 OneAPI、NewAPI、OpenRouter、任意第三方代理或本地 Ollama/vLLM 兼容端点
+                    </p>
+                  </div>
+                  <div className="flex items-center space-x-2 p-2.5 bg-white border border-[#DDD5C8] rounded-xl">
+                    <input
+                      type="checkbox"
+                      id="setActiveKeyCheck"
+                      checked={newKeyForm.setActive}
+                      onChange={(e) => setNewKeyForm(f => ({ ...f, setActive: e.target.checked }))}
+                      className="w-4 h-4 rounded text-[#DE6438] focus:ring-[#DE6438] cursor-pointer"
+                    />
+                    <label htmlFor="setActiveKeyCheck" className="text-xs font-semibold text-[#2E2823] cursor-pointer select-none">
+                      保存后立即设为当前生效激活密钥 (推演时由多智能体优先调用)
+                    </label>
                   </div>
                 </>
               )}

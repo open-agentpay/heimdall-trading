@@ -71,6 +71,13 @@ export async function updateVaultKeyNetwork(keyId, isTestnet) {
   });
 }
 
+/** 设为当前默认激活密钥（多密钥中切换活跃大模型） */
+export async function activateVaultKey(keyId) {
+  return apiRequest(`/api/v1/vault/keys/${encodeURIComponent(keyId)}/activate`, {
+    method: 'POST',
+  });
+}
+
 /** 测试已保存凭证的真实连通性探针 */
 export async function testVaultKey(keyId) {
   return apiRequest(`/api/v1/vault/keys/${encodeURIComponent(keyId)}/test`, {

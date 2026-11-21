@@ -313,11 +313,49 @@ async def test_key_connectivity(provider: str, credentials: Dict[str, Any]) -> T
 
             # 5. OpenAI
             elif provider == "openai":
-                api_key = credentials.get("api_key", "")
-                latency = round((time.time() - start_time) * 1000, 1)
-                if api_key.startswith("sk-"):
-                    return True, "OpenAI 凭证格式有效", latency
-                return False, "Key 格式应以 sk- 开头", latency
+                api_key = str(credentials.get("api_key") or "").strip()
+                base_url = str(credentials.get("base_url") or "").strip().rstrip("/")
+                model = str(credentials.get("model") or "gpt-4o").strip()
+                if base_url:
+                    headers = {"Authorization": f"Bearer {api_key}"}
+                    probe_url = f"{base_url}/models" if not base_url.endswith("/models") else base_url
+                    try:
+                        async with session.get(probe_url, headers=headers) as resp:
+                            latency = round((time.time() - start_time) * 1000, 1)
+                            if resp.status == 200:
+                                return True, f"OpenAI 代理连通成功 (HTTP 200) · 模型: {model}", latency
+                            elif resp.status in (401, 403):
+                                return False, f"API Key 无效或未授权 ({resp.status})", latency
+                            return True, f"端点连通 (HTTP {resp.status}) · 模型: {model}", latency
+                    except Exception as probe_err:
+                        latency = round((time.time() - start_time) * 1000, 1)
+                        return False, f"端点连接异常: {str(probe_err)[:40]}", latency
+                else:
+                    latency = round((time.time() - start_time) * 1000, 1)
+                    if api_key.startswith("sk-"):
+                        return True, f"OpenAI 凭证格式有效 · 模型: {model}", latency
+                    return False, "Key 格式应以 sk- 开头", latency
+
+            # 6. 自定义大模型 (Custom LLM / OpenAI 兼容)
+            elif provider in ("custom", "openai_compatible"):
+                api_key = str(credentials.get("api_key") or "").strip()
+                base_url = str(credentials.get("base_url") or "").strip().rstrip("/") or "https://api.openai.com/v1"
+                model = str(credentials.get("model") or "gpt-4o").strip()
+                headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+                probe_url = f"{base_url}/models" if not base_url.endswith("/models") else base_url
+                try:
+                    async with session.get(probe_url, headers=headers) as resp:
+                        latency = round((time.time() - start_time) * 1000, 1)
+                        if resp.status == 200:
+                            return True, f"自定义 LLM 端点连通成功 (HTTP 200) · 模型: {model}", latency
+                        elif resp.status in (401, 403):
+                            return False, f"自定义端点鉴权失败 ({resp.status}): API Key 无效", latency
+                        elif resp.status == 404:
+                            return True, f"自定义端点可达 (HTTP 404) · 模型: {model}", latency
+                        return True, f"端点可达 (HTTP {resp.status}) · 模型: {model}", latency
+                except Exception as custom_err:
+                    latency = round((time.time() - start_time) * 1000, 1)
+                    return False, f"自定义端点连接失败: {str(custom_err)[:40]}", latency
 
             # 兜底
             else:

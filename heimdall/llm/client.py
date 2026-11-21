@@ -138,7 +138,7 @@ class LLMService:
                 "SELECT * FROM user_api_keys "
                 "WHERE is_active=1 "
                 "AND LOWER(wallet_address) = ? "
-                "AND (category='llms' OR provider IN ('deepseek', 'anthropic', 'openai', 'gemini')) "
+                "AND (category='llms' OR provider IN ('deepseek', 'anthropic', 'openai', 'gemini', 'custom', 'openai_compatible')) "
                 "ORDER BY updated_at DESC",
                 (target_wallet,),
             )
@@ -146,26 +146,38 @@ class LLMService:
             for r in rows:
                 dec = crypto_vault.decrypt_payload(r.get("encrypted_data", ""))
                 key = dec.get("api_key") or dec.get("secret_key")
+                custom_model = str(dec.get("model") or "").strip()
+                custom_base_url = str(dec.get("base_url") or "").strip()
                 provider = (r.get("provider") or "").lower()
-                if key and not key.startswith("your_") and not key.startswith("••••") and len(key) > 8:
-                    if provider == "deepseek":
-                        self.deepseek_key = key
-                        self.base_url = "https://api.deepseek.com"
-                        self.model_name = "deepseek-chat"
-                        self.is_enabled = True
-                        logger.info("🔑 [LLMService] 成功从本地安全金库挂载 DeepSeek 密钥 (Model=%s)", self.model_name)
-                        return True
-                    elif provider == "anthropic":
+                if key and not key.startswith("your_") and not key.startswith("••••") and len(key) > 6:
+                    if provider == "anthropic":
                         self.anthropic_key = key
-                        self.model_name = "claude-3-5-sonnet-20241022"
+                        self.model_name = custom_model or "claude-3-5-sonnet-20241022"
+                        self.base_url = custom_base_url or None
                         self.is_enabled = True
-                        logger.info("🔑 [LLMService] 成功从本地安全金库挂载 Anthropic 密钥 (Model=%s)", self.model_name)
+                        logger.info("🔑 [LLMService] 成功从本地安全金库挂载 Anthropic 激活密钥 (Model=%s)", self.model_name)
                         return True
-                    elif provider == "openai":
-                        self.openai_key = key
-                        self.model_name = "gpt-4o"
+                    elif provider == "deepseek":
+                        self.deepseek_key = key
+                        self.base_url = custom_base_url or "https://api.deepseek.com"
+                        self.model_name = custom_model or "deepseek-chat"
                         self.is_enabled = True
-                        logger.info("🔑 [LLMService] 成功从本地安全金库挂载 OpenAI 密钥 (Model=%s)", self.model_name)
+                        logger.info("🔑 [LLMService] 成功从本地安全金库挂载 DeepSeek 激活密钥 (Model=%s, BaseURL=%s)", self.model_name, self.base_url)
+                        return True
+                    elif provider in ("openai", "custom", "openai_compatible"):
+                        self.openai_key = key
+                        self.base_url = custom_base_url or ("https://api.openai.com/v1" if provider != "openai" else None)
+                        self.model_name = custom_model or "gpt-4o"
+                        self.is_enabled = True
+                        logger.info("🔑 [LLMService] 成功从本地安全金库挂载 %s 激活密钥 (Model=%s, BaseURL=%s)", provider.upper(), self.model_name, self.base_url or "官方端点")
+                        return True
+                    else:
+                        # 兜底默认作为 OpenAI 兼容端点接入
+                        self.openai_key = key
+                        self.base_url = custom_base_url or None
+                        self.model_name = custom_model or "gpt-4o"
+                        self.is_enabled = True
+                        logger.info("🔑 [LLMService] 成功从本地安全金库挂载 %s 激活密钥 (Model=%s)", provider, self.model_name)
                         return True
         except Exception as e:
             logger.debug("[LLMService] 读取安全金库密钥暂不可用: %s", e)

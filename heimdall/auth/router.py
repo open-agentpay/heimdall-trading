@@ -174,16 +174,21 @@ async def list_vault_keys(
         enc = item.pop("encrypted_data", None)
         prov = str(item.get("provider") or "").lower()
         is_testnet = prov == "binance_demo"
-        if enc and prov in ("binance", "binance_demo"):
+        if enc:
             try:
                 creds = crypto_vault.decrypt_payload(enc)
-                if "is_testnet" in creds:
-                    is_testnet = bool(creds.get("is_testnet"))
-                elif str(creds.get("mode", "")).lower() in ("demo", "testnet"):
-                    is_testnet = True
+                if prov in ("binance", "binance_demo"):
+                    if "is_testnet" in creds:
+                        is_testnet = bool(creds.get("is_testnet"))
+                    elif str(creds.get("mode", "")).lower() in ("demo", "testnet"):
+                        is_testnet = True
+                if item.get("category") == "llms" or prov in ("custom", "openai_compatible", "deepseek", "openai", "anthropic", "gemini"):
+                    item["model"] = creds.get("model") or ""
+                    item["base_url"] = creds.get("base_url") or ""
             except Exception:
                 pass
         item["is_testnet"] = is_testnet
+        item["is_active"] = bool(item.get("is_active", 1))
         sanitized.append(item)
     logger.info("[密钥金库查询] 钱包=%s | 返回脱敏凭证条数=%d", caller_wallet, len(sanitized))
     return sanitized
@@ -207,10 +212,23 @@ async def create_vault_key(
     # 执行 AES-256-GCM 加密
     encrypted_str = crypto_vault.encrypt_payload(req.payload)
 
+    is_active = 1
+    if req.category == "llms":
+        set_active = req.payload.get("set_active", True)
+        if set_active:
+            # 设为默认激活密钥：将该钱包下其他 LLM 密钥先置为备用 (is_active=0)
+            await db_manager.execute_commit(
+                "UPDATE user_api_keys SET is_active = 0, updated_at = ? WHERE wallet_address = ? AND (category = 'llms' OR provider IN ('deepseek', 'anthropic', 'openai', 'gemini', 'custom'))",
+                (now_iso, caller_wallet),
+            )
+            is_active = 1
+        else:
+            is_active = 0
+
     sql = """
     INSERT INTO user_api_keys (
         key_id, wallet_address, category, provider, label, key_mask, encrypted_data, is_active, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """
     await db_manager.execute_commit(
         sql,
@@ -222,6 +240,7 @@ async def create_vault_key(
             req.label,
             mask,
             encrypted_str,
+            is_active,
             now_iso,
             now_iso,
         )
@@ -302,6 +321,64 @@ async def update_vault_key_network(
         "is_testnet": bool(req.is_testnet),
         "mode": creds["mode"],
         "message": f"已将该密钥切换为「{mode_label}」环境",
+    }
+
+
+@auth_router.post("/vault/keys/{key_id}/activate")
+async def activate_vault_key(
+    key_id: str,
+    caller_wallet: str = Depends(require_authenticated_wallet),
+) -> Dict[str, Any]:
+    """
+    将指定密钥设为当前激活使用的凭证（在多个大模型密钥之间无缝切换当前活跃模型）
+    """
+    rows = await db_manager.execute_query(
+        "SELECT key_id, wallet_address, category, provider, label FROM user_api_keys WHERE key_id = ?",
+        (key_id,),
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail=f"未找到 ID 为 '{key_id}' 的密钥凭证")
+
+    row = rows[0]
+    owner = (row.get("wallet_address") or "").strip().lower()
+    if owner and owner != caller_wallet:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="越权操作被拒绝：该安全凭证属于其他钱包用户，禁止切换其激活状态",
+        )
+
+    category = row.get("category")
+    now_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+    # 若为 LLM 密钥，单选激活互斥（同一钱包下同一时间只有一个 LLM 激活生效）
+    if category == "llms":
+        await db_manager.execute_commit(
+            "UPDATE user_api_keys SET is_active = 0, updated_at = ? WHERE wallet_address = ? AND (category = 'llms' OR provider IN ('deepseek', 'anthropic', 'openai', 'gemini', 'custom'))",
+            (now_iso, caller_wallet),
+        )
+
+    await db_manager.execute_commit(
+        "UPDATE user_api_keys SET is_active = 1, updated_at = ? WHERE key_id = ?",
+        (now_iso, key_id),
+    )
+
+    # 尝试通知活跃机器人的 LLM 服务动态热重载
+    try:
+        from heimdall.engine.bot_manager import bot_manager
+        if hasattr(bot_manager, "llm_service") and bot_manager.llm_service:
+            await bot_manager.llm_service.ensure_credentials(force_refresh=True, owner_wallet=caller_wallet)
+        for bot in bot_manager.active_bots.values():
+            if hasattr(bot, "pipeline") and hasattr(bot.pipeline, "llm"):
+                await bot.pipeline.llm.ensure_credentials(force_refresh=True, owner_wallet=caller_wallet)
+    except Exception as e:
+        logger.debug("动态热重载活跃 Bot 的 LLM 凭证告警: %s", e)
+
+    logger.info("[密钥激活] 钱包=%s | 成功激活凭据: key_id=%s, label=%s, provider=%s", caller_wallet, key_id, row.get("label"), row.get("provider"))
+    return {
+        "success": True,
+        "key_id": key_id,
+        "is_active": True,
+        "message": f"凭证【{row.get('label')}】已成功设为当前默认生效密钥",
     }
 
 
