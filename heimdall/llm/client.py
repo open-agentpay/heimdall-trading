@@ -23,30 +23,28 @@ T = TypeVar("T", bound=BaseModel)
 
 def normalize_openai_base_url(url: Optional[str]) -> Optional[str]:
     """
-    智能归一化 OpenAI 兼容端点的 Base URL：
-    1. 剥离末尾的斜杠和冗余路径 (如 /chat/completions)
-    2. 针对 OpenRouter 等平台，自动修复缺失的 /v1 后缀 (例如 https://openrouter.ai/api -> https://openrouter.ai/api/v1)
-    3. 针对自建或中转网关，自动补齐标准 /v1 路径
+    通用归一化 OpenAI 兼容端点的 Base URL：
+    1. 剥离用户可能直接从文档复制的完整补全接口后缀 (如 /chat/completions 或 /completions)
+    2. 严格遵循 RFC 3986 相对 URI 解析规范，保证 Base URL 末尾带 '/'：
+       依据 RFC 3986 第 5.2.3 节规则，若 Base URL 路径末尾不带 '/' (例如 https://host/api/v1)，
+       底层 HTTP 客户端或 urljoin 在解析相对路径时，会将末级路径段 ('v1') 视为资源文件名而非目录，
+       从而在合并相对路径时将其剥离丢弃（导致请求错误发往 /api/chat/completions）。
+       通过确保 Base URL 末尾包含 '/'，使最后一级路径段作为目录保留，兼容任意第三方网关。
     """
     if not url:
         return None
-    cleaned = str(url).strip().rstrip("/")
-    if cleaned.endswith("/chat/completions"):
-        cleaned = cleaned[:-len("/chat/completions")].rstrip("/")
-    if cleaned.endswith("/completions"):
-        cleaned = cleaned[:-len("/completions")].rstrip("/")
+    cleaned = str(url).strip()
+    if not cleaned:
+        return None
 
-    # 针对 OpenRouter 的智能修正
-    if "openrouter.ai" in cleaned:
-        if cleaned.endswith("openrouter.ai") or cleaned.endswith("openrouter.ai/api"):
-            cleaned = "https://openrouter.ai/api/v1"
-        elif cleaned.endswith("openrouter.ai/v1"):
-            cleaned = "https://openrouter.ai/api/v1"
-    # 通用针对以 /api 结尾的自动补齐 /v1
-    elif cleaned.endswith("/api"):
-        cleaned = f"{cleaned}/v1"
+    # 剥离多余的接口末端路径
+    for suffix in ("/chat/completions", "/chat/completions/", "/completions", "/completions/"):
+        if cleaned.endswith(suffix):
+            cleaned = cleaned[:-len(suffix)]
+            break
 
-    return cleaned
+    # 规范化：确保路径末尾带有斜杠以符合 RFC 3986 目录语义
+    return cleaned.rstrip("/") + "/"
 
 
 @dataclass
@@ -297,13 +295,11 @@ class LLMService:
                 except ImportError:
                     has_socksio = False
 
-                # 智能挂载 OpenRouter / 自定义端点专属头
-                default_headers = {}
-                if effective_base and "openrouter.ai" in effective_base:
-                    default_headers = {
-                        "HTTP-Referer": "https://trade.openagentpay.dev",
-                        "X-Title": "Heimdall Trading Platform",
-                    }
+                # 挂载 Web3 平台客户端识别标识头
+                default_headers = {
+                    "HTTP-Referer": "https://trade.openagentpay.dev",
+                    "X-Title": "Heimdall Trading Platform",
+                }
 
                 is_deepseek_endpoint = "deepseek.com" in (effective_base or "")
                 if (has_socks_proxy and not has_socksio) or is_deepseek_endpoint:

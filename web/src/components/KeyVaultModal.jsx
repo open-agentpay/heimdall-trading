@@ -271,12 +271,15 @@ export default function KeyVaultModal({ isOpen, onClose, walletState, onConnectW
       const isBinanceTestnet = newKeyForm.provider === 'binance_demo' ? true : (newKeyForm.provider === 'binance' ? Boolean(newKeyForm.isTestnet) : false);
       const isLlm = newKeyForm.category === 'llms';
       const effectiveModel = isLlm ? (newKeyForm.model.trim() || (newKeyForm.provider === 'deepseek' ? 'deepseek-chat' : newKeyForm.provider === 'anthropic' ? 'claude-3-5-sonnet-20241022' : 'gpt-4o')) : '';
-      let rawBaseUrl = newKeyForm.baseUrl.trim().replace(/\/+$/, '');
-      if (rawBaseUrl.endsWith('/chat/completions')) {
-        rawBaseUrl = rawBaseUrl.replace(/\/chat\/completions$/, '');
+      let rawBaseUrl = newKeyForm.baseUrl.trim();
+      for (const suffix of ['/chat/completions', '/chat/completions/', '/completions', '/completions/']) {
+        if (rawBaseUrl.endsWith(suffix)) {
+          rawBaseUrl = rawBaseUrl.slice(0, -suffix.length);
+          break;
+        }
       }
-      if (rawBaseUrl.includes('openrouter.ai') && (rawBaseUrl.endsWith('openrouter.ai') || rawBaseUrl.endsWith('openrouter.ai/api'))) {
-        rawBaseUrl = 'https://openrouter.ai/api/v1';
+      if (rawBaseUrl) {
+        rawBaseUrl = rawBaseUrl.replace(/\/+$/, '') + '/';
       }
       const effectiveBaseUrl = rawBaseUrl;
 
@@ -1082,7 +1085,7 @@ export default function KeyVaultModal({ isOpen, onClose, walletState, onConnectW
                       </button>
                     </div>
                     <p className="text-[10px] text-[#7E7469] mt-0.5">
-                      * 提示：标准 OpenAI 兼容端点末尾请保留 /v1（系统已内置智能自动纠错与补齐）
+                      * 提示：标准 OpenAI 兼容端点末尾保留 /v1 即可（系统遵循 RFC 3986 自动规整末尾斜杠，完整保留路径段）
                     </p>
                   </div>
                   <div className="flex items-center space-x-2 p-2.5 bg-white border border-[#DDD5C8] rounded-xl">

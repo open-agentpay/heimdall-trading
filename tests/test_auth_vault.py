@@ -391,6 +391,6 @@ def test_vault_custom_llm_and_key_activation():
     assert ok is True
     assert llm.is_enabled is True
     assert llm.model_name == "qwen-plus"
-    assert llm.base_url == "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    assert llm.base_url == "https://dashscope.aliyuncs.com/compatible-mode/v1/"
     assert llm.openai_key == "sk-qwen-test-12345678"
 
