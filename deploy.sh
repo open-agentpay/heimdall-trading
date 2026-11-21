@@ -58,13 +58,15 @@ cmd_up() {
   $COMPOSE_CMD up -d "$@"
   $COMPOSE_CMD ps
   WEB_PORT_VAL="$(grep -E '^WEB_PORT=' .env 2>/dev/null | cut -d '=' -f2 || true)"
-  WEB_PORT_VAL="${WEB_PORT_VAL:-80}"
+  WEB_PORT_VAL="${WEB_PORT_VAL:-3005}"
+  HOST_BIND_IP_VAL="$(grep -E '^HOST_BIND_IP=' .env 2>/dev/null | cut -d '=' -f2 || true)"
+  HOST_BIND_IP_VAL="${HOST_BIND_IP_VAL:-127.0.0.1}"
   echo ""
   echo "=============================================================================="
   echo "🚀 Heimdall Trading Platform 服务栈已运行！"
-  echo "  - Web 控制台入口 : http://localhost:${WEB_PORT_VAL}"
-  echo "  - 后端健康检查   : http://localhost:${WEB_PORT_VAL}/health"
-  echo "  - 实时日志查看   : ./deploy.sh logs"
+  echo "  - 本地反代/直连端口 : http://${HOST_BIND_IP_VAL}:${WEB_PORT_VAL}"
+  echo "  - 后端健康检查       : http://${HOST_BIND_IP_VAL}:${WEB_PORT_VAL}/health"
+  echo "  - 实时日志查看       : ./deploy.sh logs"
   echo "=============================================================================="
 }
 
