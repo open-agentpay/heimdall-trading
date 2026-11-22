@@ -78,6 +78,7 @@ def test_p0_4_restore_persisted_bots_recovers_user_bot_and_nav(tmp_path):
             allocated_capital=15000.0,
             max_drawdown_limit=0.06,
             owner_wallet="0xabc123",
+            config={"exchange": "BINANCE", "market_type": "USDM_FUTURES", "execution_mode": "LOCAL_SIM"},
         )
         # 写入一条历史权益快照模拟重启前的盈利记录
         from heimdall.accounting.nav import NAVEngine

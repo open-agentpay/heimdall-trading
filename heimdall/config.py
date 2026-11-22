@@ -43,16 +43,17 @@ class BifrostConfig(BaseModel):
     """[TODO: 待正式上线] Bifrost 专有数据底座连接配置（保留向后兼容存根）"""
     # Bifrost 服务 REST API 根地址 (待独立后端服务上线部署)
     base_url: str = "http://localhost:8080/v1"
-    # 调用凭证密钥
-    api_key: str = "agentpay_live_secret"
+    # 调用凭证密钥（M4：默认留空，严禁在代码或已入库配置中写入真实密钥；当前未被代码读取）
+    api_key: str = ""
     # 请求超时时间（秒）
     timeout_seconds: float = 5.0
 
 
 class DatabaseConfig(BaseModel):
     """PostgreSQL / TimescaleDB 时序数据库连接配置"""
-    # 异步数据库连接字符串（基于 asyncpg 驱动）
-    url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/heimdall"
+    # 异步数据库连接字符串（M4：默认留空，不内置任何口令；实际连接串由 heimdall/database/db.py
+    # 从环境变量 HEIMDALL_DATABASE_URL / DATABASE_URL 读取，未设置时使用本地 SQLite）
+    url: str = ""
     # 数据库连接池初始常驻连接数
     pool_size: int = 10
     # 数据库连接池最大突发溢出连接数

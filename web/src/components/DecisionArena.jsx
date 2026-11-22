@@ -15,6 +15,8 @@
  */
 
 import React, { useState, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
+import { fmt } from '../i18n';
 import KlineChart from './KlineChart';
 
 export default function DecisionArena({ 
@@ -32,17 +34,18 @@ export default function DecisionArena({
   activeBot = null,
   symbol: propSymbol = null,
 }) {
+  const { t } = useTranslation('arena');
   const [viewMode, setViewMode] = useState("arena"); // "arena" | "kline" | "split"
   const [leverage, setLeverage] = useState(1.5);
   const [isExecuting, setIsExecuting] = useState(false);
 
-  const defaultPrices = { BTC: 96500.0, ETH: 3120.0, SOL: 185.0 };
   const symbol = (propSymbol || decisionRecord?.symbol || activeBot?.symbol || (activeBotId.includes("btc") ? "BTC" : activeBotId.includes("sol") ? "SOL" : "ETH")).toUpperCase();
-  const [livePrice, setLivePrice] = useState(defaultPrices[symbol] || 3120.0);
+  // M5：不再预置写死的“当前价”，收到真实行情（推演记录或 Binance WS）之前显示 "--"
+  const [livePrice, setLivePrice] = useState(null);
 
-  // 标的切换时同步初始价格
+  // 标的切换时清空旧标的价格
   useEffect(() => {
-    setLivePrice(defaultPrices[symbol] || 3120.0);
+    setLivePrice(null);
   }, [symbol]);
 
   // 1. 直连币安公开行情 WebSocket，保持与 TradingView 实时毫秒级同频跳动
@@ -69,14 +72,35 @@ export default function DecisionArena({
   // 2. 动态数据解析（若当前决策记录标的与实际标的一致则采用，否则采用实时盘口价）
   const isRecordMatching = decisionRecord && decisionRecord.symbol?.toUpperCase() === symbol;
   const latestPrice = (isRecordMatching && decisionRecord.latest_price) ? decisionRecord.latest_price : livePrice;
-  const consensus = decisionRecord?.debate_consensus || "LONG";
+  const hasLatestPrice = Number.isFinite(Number(latestPrice)) && Number(latestPrice) > 0;
+  const latestPriceText = hasLatestPrice
+    ? fmt.price(latestPrice)
+    : '--';
+  // M5：无推演记录时不再默认显示“开多 LONG”与“风控全票核准”，也不再按现价倍数编造委托 / 止损 / 止盈价
+  const hasDecision = Boolean(decisionRecord && decisionRecord.timestamp);
+  const consensus = hasDecision ? (decisionRecord.debate_consensus || 'NEUTRAL') : null;
   const proposal = decisionRecord?.trade_proposal;
-  const targetEntry = proposal?.trade_action?.target_price || +(latestPrice * 0.998).toFixed(2);
-  const stopLoss = proposal?.trade_action?.stop_loss_price || +(latestPrice * 0.980).toFixed(2);
-  const takeProfit = proposal?.trade_action?.take_profit_price || +(latestPrice * 1.045).toFixed(2);
-  const sizeUsd = proposal?.trade_action?.size_in_usd || +(latestPrice * 1.5).toFixed(2);
+  const fmtPx = (v) => (Number.isFinite(Number(v)) && Number(v) > 0 ? fmt.usd(v) : '--');
+  const targetEntry = proposal?.trade_action?.target_price ?? null;
+  const stopLoss = proposal?.trade_action?.stop_loss_price ?? null;
+  const takeProfit = proposal?.trade_action?.take_profit_price ?? null;
+  const sizeUsd = proposal?.trade_action?.size_in_usd ?? null;
   const idempotencyKey = proposal?.idempotency_key;
-  const riskApproved = decisionRecord?.risk_approved ?? true;
+  // pending: 尚无推演 | idle: 本轮无提案 | approved: 提案通过硬风控 | rejected: 硬风控拦截
+  const riskState = !hasDecision
+    ? 'pending'
+    : decisionRecord.risk_review && decisionRecord.risk_review.approved === false
+    ? 'rejected'
+    : decisionRecord.proposal_generated
+    ? (decisionRecord.risk_approved ? 'approved' : 'rejected')
+    : 'idle';
+  const RISK_BADGE = {
+    pending: { text: t('risk.pending'), className: 'bg-subtle text-ink-3 border-line' },
+    idle: { text: t('risk.idle'), className: 'bg-subtle text-ink-3 border-line' },
+    approved: { text: t('risk.approved'), className: 'bg-success-soft text-success border-success-line' },
+    rejected: { text: t('risk.rejected'), className: 'bg-danger-soft text-danger border-danger-line' },
+  };
+  const riskBadge = RISK_BADGE[riskState];
 
   // 快捷获取各个角色对象
   const analyst = agents.find((a) => a.id === "analyst");
@@ -100,71 +124,71 @@ export default function DecisionArena({
   };
 
   return (
-    <main className="flex-1 flex flex-col bg-[#F7F3EC] overflow-hidden relative">
+    <main className="flex-1 flex flex-col bg-canvas overflow-hidden relative">
       
       {/* 1. 舞台顶栏：视图切换药丸 (Arena vs Kline vs Split) & 操作按键 */}
-      <div className="h-11 px-5 flex items-center justify-between border-b border-[#EBE3D7] bg-[#FAF7F2]/90 backdrop-blur shrink-0">
+      <div className="h-11 px-5 flex items-center justify-between border-b border-line bg-panel/90 backdrop-blur shrink-0">
         
         {/* 左侧：多模式视图切换胶囊 */}
-        <div className="flex items-center space-x-1 bg-[#EFE9DF] p-1 rounded-xl border border-[#DFD6C7]">
+        <div className="flex items-center space-x-1 bg-muted p-1 rounded-xl border border-line-strong">
           <button
             onClick={() => setViewMode("arena")}
             className={`px-3 py-1 rounded-lg text-xs font-semibold flex items-center space-x-1.5 transition ${
               viewMode === "arena"
-                ? "bg-white text-[#DE6438] shadow-xs"
-                : "text-[#7E7469] hover:text-[#2E2823]"
+                ? "bg-surface text-brand shadow-xs"
+                : "text-ink-3 hover:text-ink"
             }`}
           >
             <span>⚔️</span>
-            <span>环形博弈对弈台</span>
+            <span>{t('toolbar.arena')}</span>
           </button>
 
           <button
             onClick={() => setViewMode("kline")}
             className={`px-3 py-1 rounded-lg text-xs font-semibold flex items-center space-x-1.5 transition ${
               viewMode === "kline"
-                ? "bg-white text-[#DE6438] shadow-xs"
-                : "text-[#7E7469] hover:text-[#2E2823]"
+                ? "bg-surface text-brand shadow-xs"
+                : "text-ink-3 hover:text-ink"
             }`}
           >
             <span>📈</span>
-            <span>实时 K 线 (WS 行情)</span>
+            <span>{t('toolbar.kline')}</span>
           </button>
 
           <button
             onClick={() => setViewMode("split")}
             className={`px-3 py-1 rounded-lg text-xs font-semibold flex items-center space-x-1.5 transition ${
               viewMode === "split"
-                ? "bg-white text-[#DE6438] shadow-xs"
-                : "text-[#7E7469] hover:text-[#2E2823]"
+                ? "bg-surface text-brand shadow-xs"
+                : "text-ink-3 hover:text-ink"
             }`}
           >
             <span>🪟</span>
-            <span>分屏协同对齐</span>
+            <span>{t('toolbar.split')}</span>
           </button>
         </div>
 
         {/* 右侧：刷新控制与状态 */}
         <div className="flex items-center space-x-2">
           {decisionRecord?.timestamp && (
-            <span className="text-[11px] text-[#7E7469] font-mono bg-white/80 border border-[#E2D9CC] px-2 py-0.5 rounded-md hidden md:inline-flex items-center space-x-1">
+            <span className="text-xs text-ink-3 font-mono bg-surface/80 border border-line px-2 py-0.5 rounded-md hidden md:inline-flex items-center space-x-1">
               <span>🕒</span>
-              <span>推演: {new Date(decisionRecord.timestamp).toLocaleTimeString()}</span>
+              <span>{t('toolbar.decidedAt', { time: fmt.time(decisionRecord.timestamp) })}</span>
             </span>
           )}
 
           {onToggleAutoRefresh && (
             <button
               onClick={onToggleAutoRefresh}
-              className={`text-[11px] px-2.5 py-1 rounded-lg border font-medium flex items-center space-x-1 transition ${
+              className={`text-xs px-2.5 py-1 rounded-lg border font-medium flex items-center space-x-1 transition ${
                 autoRefresh 
-                  ? "bg-[#EBF5EE] text-[#4D835C] border-[#D1E8D7]" 
-                  : "bg-[#F5F1EA] text-[#8C8071] border-[#DFD6C7]"
+                  ? "bg-success-soft text-success border-success-line" 
+                  : "bg-canvas text-ink-3 border-line-strong"
               }`}
-              title="切换是否自动每 4 秒轮询最新推演决策"
+              title={t('toolbar.autoRefreshTitle')}
             >
-              <span className={`w-1.5 h-1.5 rounded-full ${autoRefresh ? "bg-[#4D835C] animate-pulse" : "bg-[#8C8071]"}`}></span>
-              <span>{autoRefresh ? "自动轮询中" : "轮询已暂停"}</span>
+              <span className={`w-1.5 h-1.5 rounded-full ${autoRefresh ? "bg-success-solid animate-pulse" : "bg-ink-3"}`}></span>
+              <span>{autoRefresh ? t('toolbar.polling') : t('toolbar.pollingPaused')}</span>
             </button>
           )}
 
@@ -172,17 +196,17 @@ export default function DecisionArena({
             <button
               onClick={onRefresh}
               disabled={isRefreshing}
-              className="px-2.5 py-1 rounded-lg bg-white border border-[#D8CEBE] hover:bg-[#F2ECE3] text-xs font-semibold text-[#DE6438] flex items-center space-x-1 shadow-xs transition"
-              title="拉取最新多源市场行情并重新推演一轮"
+              className="px-2.5 py-1 rounded-lg bg-surface border border-line-strong hover:bg-subtle text-xs font-semibold text-brand flex items-center space-x-1 shadow-xs transition"
+              title={t('toolbar.refreshTitle')}
             >
               <span className={`inline-block ${isRefreshing ? "animate-spin" : ""}`}>🔄</span>
-              <span>{isRefreshing ? "推演中..." : "推演刷新"}</span>
+              <span>{isRefreshing ? t('toolbar.refreshing') : t('toolbar.refresh')}</span>
             </button>
           )}
 
-          <span className="text-[#C4B7A4]">|</span>
-          <span className="text-[11px] text-[#9E917F] bg-white border border-[#E2D9CC] px-2 py-0.5 rounded-md hidden lg:inline">
-            💡 点击任一席位查看论据
+          <span className="text-ink-4">|</span>
+          <span className="text-xs text-ink-4 bg-surface border border-line px-2 py-0.5 rounded-md hidden lg:inline">
+            {t('toolbar.seatHint')}
           </span>
         </div>
       </div>
@@ -192,7 +216,7 @@ export default function DecisionArena({
 
         {/* 模式 A：大画幅环形牌桌博弈 (Arena Mode) */}
         {viewMode === "arena" && (
-          <div className="w-full h-full max-w-5xl xl:max-w-6xl max-h-[650px] min-h-[500px] poker-arena relative flex items-center justify-center p-6 select-none shadow-xl transition-all">
+          <div className="w-full h-full max-w-5xl xl:max-w-6xl max-h-[650px] min-h-[500px] poker-arena relative flex items-center justify-center p-6 shadow-xl transition-all">
             
             {/* 席位 1 (上方中央)：Analyst (技术面分析师) */}
             {analyst && (
@@ -200,18 +224,18 @@ export default function DecisionArena({
                 onClick={() => onSelectAgent(analyst)}
                 className="seat-badge absolute -top-4 flex flex-col items-center cursor-pointer group z-10"
               >
-                <div className="tactile-card px-3.5 py-1.5 flex items-center space-x-2 border-2 border-[#3E6B89] group-hover:scale-105 transition bg-white shadow-xs">
+                <div className="tactile-card px-3.5 py-1.5 flex items-center space-x-2 border-2 border-info group-hover:scale-105 transition bg-surface shadow-xs">
                   <span className="text-xl">{analyst.avatar}</span>
                   <div>
-                    <div className="text-xs font-bold text-[#2E2823]">{analyst.name}</div>
-                    <div className="text-[10px] text-[#3E6B89] font-semibold">{analyst.tag}</div>
+                    <div className="text-xs font-bold text-ink">{analyst.name}</div>
+                    <div className="text-xs text-info font-semibold">{analyst.tag}</div>
                   </div>
-                  <span className="text-[10px] bg-[#E9F2F7] text-[#3E6B89] px-2 py-0.5 rounded font-mono font-bold">
+                  <span className="text-xs bg-info-soft text-info px-2 py-0.5 rounded font-mono font-bold">
                     {analyst.badge}
                   </span>
                 </div>
-                <div className="text-[10px] text-[#7E7469] mt-0.5 bg-white/95 px-2.5 py-0.5 rounded-full border border-[#DFD6C7] shadow-xs max-w-[240px] truncate">
-                  🔍 {analyst.keyThesis ? analyst.keyThesis.slice(0, 36) : 'EMA20 支撑突破'}
+                <div className="text-xs text-ink-3 mt-0.5 bg-surface/95 px-2.5 py-0.5 rounded-full border border-line-strong shadow-xs max-w-[240px] truncate">
+                  🔍 {analyst.keyThesis ? analyst.keyThesis.slice(0, 36) : t('seat.pending')}
                 </div>
               </div>
             )}
@@ -222,15 +246,15 @@ export default function DecisionArena({
                 onClick={() => onSelectAgent(sentiment)}
                 className="seat-badge absolute top-3 left-6 xl:left-14 flex flex-col items-center cursor-pointer group z-10"
               >
-                <div className="tactile-card px-3 py-1.5 flex items-center space-x-2 border border-[#4D835C] group-hover:scale-105 transition bg-white shadow-xs">
+                <div className="tactile-card px-3 py-1.5 flex items-center space-x-2 border border-success group-hover:scale-105 transition bg-surface shadow-xs">
                   <span className="text-lg">{sentiment.avatar}</span>
                   <div>
-                    <div className="text-xs font-bold text-[#2E2823]">{sentiment.name}</div>
-                    <div className="text-[10px] text-[#4D835C] font-semibold">{sentiment.tag}</div>
+                    <div className="text-xs font-bold text-ink">{sentiment.name}</div>
+                    <div className="text-xs text-success font-semibold">{sentiment.tag}</div>
                   </div>
                 </div>
-                <div className="text-[9.5px] text-[#4D835C] mt-0.5 font-bold bg-[#EBF5EE] px-2 py-0.5 rounded shadow-xs max-w-[180px] truncate">
-                  {sentiment.badge ? `情绪指标 ${sentiment.badge}` : '资金面正常'}
+                <div className="text-xs text-success mt-0.5 font-bold bg-success-soft px-2 py-0.5 rounded shadow-xs max-w-[180px] truncate">
+                  {t('seat.sentimentIndex', { value: sentiment.badge || '--' })}
                 </div>
               </div>
             )}
@@ -241,11 +265,11 @@ export default function DecisionArena({
                 onClick={() => onSelectAgent(riskOfficer)}
                 className="seat-badge absolute top-3 right-6 xl:right-14 flex flex-col items-center cursor-pointer group z-10"
               >
-                <div className="tactile-card px-3 py-1.5 flex items-center space-x-2 border border-[#8C7A6B] group-hover:scale-105 transition bg-white shadow-xs">
+                <div className="tactile-card px-3 py-1.5 flex items-center space-x-2 border border-ink-3 group-hover:scale-105 transition bg-surface shadow-xs">
                   <span className="text-lg">{riskOfficer.avatar}</span>
                   <div>
-                    <div className="text-xs font-bold text-[#2E2823]">{riskOfficer.name}</div>
-                    <div className="text-[10px] text-[#4D835C] font-semibold">{riskOfficer.tag || '盈亏比审查放行'}</div>
+                    <div className="text-xs font-bold text-ink">{riskOfficer.name}</div>
+                    <div className="text-xs text-success font-semibold">{riskOfficer.tag || t('seat.pending')}</div>
                   </div>
                 </div>
               </div>
@@ -257,15 +281,15 @@ export default function DecisionArena({
                 onClick={() => onSelectAgent(bull)}
                 className="seat-badge absolute left-3 xl:left-8 top-1/2 -translate-y-1/2 flex flex-col items-center cursor-pointer group z-10"
               >
-                <div className="tactile-card px-3.5 py-2 flex items-center space-x-2 border-2 border-[#4D835C] bg-[#F7FCF8] group-hover:scale-105 transition shadow-sm">
+                <div className="tactile-card px-3.5 py-2 flex items-center space-x-2 border-2 border-success bg-success-soft group-hover:scale-105 transition shadow-sm">
                   <span className="text-2xl">{bull.avatar}</span>
                   <div>
-                    <div className="text-xs font-bold text-[#4D835C]">{bull.name}</div>
-                    <div className="text-[10px] text-[#558B64] font-medium">{bull.tag || '多头进攻立论'}</div>
+                    <div className="text-xs font-bold text-success">{bull.name}</div>
+                    <div className="text-xs text-success font-medium">{bull.tag || t('seat.bullTag')}</div>
                   </div>
                 </div>
-                <div className="w-44 text-center text-[10px] text-[#2E2823] mt-1.5 bg-white p-2 rounded-xl border border-[#D5E5D8] shadow-xs leading-snug line-clamp-2">
-                  “{bull.keyThesis ? bull.keyThesis.slice(0, 48) : '现货买盘真实，突破阻力暴拉赔率极高！'}”
+                <div className="w-44 text-center text-xs text-ink mt-1.5 bg-surface p-2 rounded-xl border border-success-line shadow-xs leading-snug line-clamp-2">
+                  “{bull.keyThesis ? bull.keyThesis.slice(0, 48) : t('seat.awaitFirst')}”
                 </div>
               </div>
             )}
@@ -276,15 +300,15 @@ export default function DecisionArena({
                 onClick={() => onSelectAgent(bear)}
                 className="seat-badge absolute right-3 xl:right-8 top-1/2 -translate-y-1/2 flex flex-col items-center cursor-pointer group z-10"
               >
-                <div className="tactile-card px-3.5 py-2 flex items-center space-x-2 border-2 border-[#C24D4D] bg-[#FCF7F7] group-hover:scale-105 transition shadow-sm">
+                <div className="tactile-card px-3.5 py-2 flex items-center space-x-2 border-2 border-danger bg-danger-soft group-hover:scale-105 transition shadow-sm">
                   <span className="text-2xl">{bear.avatar}</span>
                   <div>
-                    <div className="text-xs font-bold text-[#C24D4D]">{bear.name}</div>
-                    <div className="text-[10px] text-[#A63F3F] font-medium">{bear.tag || '空头风险质询'}</div>
+                    <div className="text-xs font-bold text-danger">{bear.name}</div>
+                    <div className="text-xs text-danger font-medium">{bear.tag || t('seat.bearTag')}</div>
                   </div>
                 </div>
-                <div className="w-44 text-center text-[10px] text-[#2E2823] mt-1.5 bg-white p-2 rounded-xl border border-[#F2D4D4] shadow-xs leading-snug line-clamp-2">
-                  “{bear.keyThesis ? bear.keyThesis.slice(0, 48) : '上方解套抛压，必须在防守位设好止损。'}”
+                <div className="w-44 text-center text-xs text-ink mt-1.5 bg-surface p-2 rounded-xl border border-danger-line shadow-xs leading-snug line-clamp-2">
+                  “{bear.keyThesis ? bear.keyThesis.slice(0, 48) : t('seat.awaitFirst')}”
                 </div>
               </div>
             )}
@@ -295,11 +319,11 @@ export default function DecisionArena({
                 onClick={() => onSelectAgent(strategy)}
                 className="seat-badge absolute bottom-3 left-6 xl:left-14 flex flex-col items-center cursor-pointer group z-10"
               >
-                <div className="tactile-card px-3 py-1.5 flex items-center space-x-2 border border-[#D48B38] group-hover:scale-105 transition bg-white shadow-xs">
+                <div className="tactile-card px-3 py-1.5 flex items-center space-x-2 border border-warning group-hover:scale-105 transition bg-surface shadow-xs">
                   <span className="text-lg">{strategy.avatar}</span>
                   <div>
-                    <div className="text-xs font-bold text-[#2E2823]">{strategy.name}</div>
-                    <div className="text-[10px] text-[#D48B38] font-semibold">{strategy.tag || '提案生成'}</div>
+                    <div className="text-xs font-bold text-ink">{strategy.name}</div>
+                    <div className="text-xs text-warning font-semibold">{strategy.tag || t('seat.strategyTag')}</div>
                   </div>
                 </div>
               </div>
@@ -311,14 +335,14 @@ export default function DecisionArena({
                 onClick={() => onSelectAgent(moderator)}
                 className="seat-badge absolute -bottom-5 flex flex-col items-center cursor-pointer group z-20"
               >
-                <div className="tactile-card px-4 py-2 flex items-center space-x-3 border-2 border-[#DE6438] bg-[#FFFBF8] shadow-md group-hover:scale-105 transition">
+                <div className="tactile-card px-4 py-2 flex items-center space-x-3 border-2 border-brand bg-brand-soft shadow-md group-hover:scale-105 transition">
                   <span className="text-2xl">{moderator.avatar}</span>
                   <div>
-                    <div className="text-xs font-bold text-[#DE6438]">{moderator.name}</div>
-                    <div className="text-[10px] font-semibold text-[#2E2823]">{moderator.tag || '裁定立论'}</div>
+                    <div className="text-xs font-bold text-brand">{moderator.name}</div>
+                    <div className="text-xs font-semibold text-ink">{moderator.tag || t('seat.moderatorTag')}</div>
                   </div>
-                  <div className="text-xs font-mono font-bold bg-[#DE6438] text-white px-2.5 py-0.5 rounded shadow-xs">
-                    {moderator.badge || '终审裁决'}
+                  <div className="text-xs font-mono font-bold bg-brand text-white px-2.5 py-0.5 rounded shadow-xs">
+                    {moderator.badge || t('seat.moderatorBadge')}
                   </div>
                 </div>
               </div>
@@ -330,11 +354,11 @@ export default function DecisionArena({
                 onClick={() => onSelectAgent(hardGuard)}
                 className="seat-badge absolute bottom-3 right-6 xl:right-14 flex flex-col items-center cursor-pointer group z-10"
               >
-                <div className="tactile-card px-3 py-1.5 flex items-center space-x-2 border border-[#4D835C] group-hover:scale-105 transition bg-white shadow-xs">
+                <div className="tactile-card px-3 py-1.5 flex items-center space-x-2 border border-success group-hover:scale-105 transition bg-surface shadow-xs">
                   <span className="text-lg">{hardGuard.avatar}</span>
                   <div>
-                    <div className="text-xs font-bold text-[#2E2823]">{hardGuard.name}</div>
-                    <div className="text-[10px] text-[#4D835C] font-semibold">{hardGuard.tag || '7/7 铁律全票核准'}</div>
+                    <div className="text-xs font-bold text-ink">{hardGuard.name}</div>
+                    <div className="text-xs text-success font-semibold">{hardGuard.tag || t('seat.pending')}</div>
                   </div>
                 </div>
               </div>
@@ -343,78 +367,80 @@ export default function DecisionArena({
             {/* ========================================================= */}
             {/* 桌台中心：核心交易标的与实时生成的交易提案卡片 */}
             {/* ========================================================= */}
-            <div className="w-88 xl:w-96 bg-white rounded-2xl p-5 border-2 border-[#D8CEBE] shadow-xl flex flex-col justify-between z-0">
-              <div className="flex items-center justify-between pb-3 border-b border-[#F0EAE1]">
+            <div className="w-88 xl:w-96 bg-surface rounded-2xl p-5 border-2 border-line-strong shadow-xl flex flex-col justify-between z-0">
+              <div className="flex items-center justify-between pb-3 border-b border-line-soft">
                 <div className="flex items-center space-x-2">
-                  <span className={`w-2.5 h-2.5 rounded-full ${consensus === 'LONG' ? 'bg-[#4D835C]' : consensus === 'SHORT' ? 'bg-[#DE6438]' : 'bg-[#7A6F62]'} animate-pulse`}></span>
-                  <span className="font-mono font-bold text-base text-[#2E2823]">{symbol}-USDT 永续</span>
+                  <span className={`w-2.5 h-2.5 rounded-full ${consensus === 'LONG' ? 'bg-success-solid' : consensus === 'SHORT' ? 'bg-brand' : 'bg-ink-3'} ${consensus ? 'animate-pulse' : ''}`}></span>
+                  <span className="font-mono font-bold text-base text-ink">{t('proposal.perpetual', { symbol })}</span>
                 </div>
                 <div className="text-right">
-                  <span className="font-mono font-bold text-lg text-[#4D835C]">${Number(latestPrice).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
-                  <span className="block text-[10px] font-mono text-[#4D835C] font-semibold">多源互补 (Binance / HL)</span>
+                  <span className={`font-mono font-bold text-lg ${hasLatestPrice ? 'text-success' : 'text-ink-4'}`}>{latestPriceText}</span>
+                  <span className={`block text-xs font-mono font-semibold ${hasLatestPrice ? 'text-success' : 'text-warning'}`}>
+                    {hasLatestPrice ? t('proposal.multiSource') : t('proposal.awaitingQuote')}
+                  </span>
                 </div>
               </div>
 
               <div className="py-3 space-y-2 text-xs">
                 <div className="flex justify-between items-center">
-                  <span className="text-[#8C8276]">多空决策结论:</span>
+                  <span className="text-ink-3">{t('proposal.consensus')}</span>
                   <span className={`font-bold font-mono px-2.5 py-1 rounded text-xs ${
                     consensus === 'LONG' 
-                      ? 'bg-[#EBF5EE] text-[#4D835C]' 
+                      ? 'bg-success-soft text-success' 
                       : consensus === 'SHORT' 
-                      ? 'bg-[#FBEFEA] text-[#DE6438]' 
-                      : 'bg-[#F2EDE4] text-[#7A6F62]'
+                      ? 'bg-brand-soft text-brand' 
+                      : 'bg-subtle text-ink-3'
                   }`}>
-                    {consensus === 'LONG' ? '🟢 开多 LONG' : consensus === 'SHORT' ? '🔴 沽空 SHORT' : '⚪ 空仓 NEUTRAL'} · {leverage.toFixed(1)}x
+                    {!consensus ? t('consensus.pending') : consensus === 'LONG' ? t('consensus.long') : consensus === 'SHORT' ? t('consensus.short') : t('consensus.neutral')}{consensus ? ` · ${leverage.toFixed(1)}x` : ''}
                   </span>
                 </div>
                 {proposal ? (
                   <>
                     <div className="flex justify-between font-mono">
-                      <span className="text-[#8C8276]">限价入场委托:</span>
-                      <span className="font-semibold text-[#2E2823]">${Number(targetEntry).toFixed(2)}</span>
+                      <span className="text-ink-3">{t('proposal.entry')}</span>
+                      <span className="font-semibold text-ink">{fmtPx(targetEntry)}</span>
                     </div>
                     <div className="flex justify-between font-mono">
-                      <span className="text-[#8C8276]">硬防守止损价:</span>
-                      <span className="text-[#C24D4D] font-semibold">${Number(stopLoss).toFixed(2)}</span>
+                      <span className="text-ink-3">{t('proposal.stopLoss')}</span>
+                      <span className="text-danger font-semibold">{fmtPx(stopLoss)}</span>
                     </div>
                     <div className="flex justify-between font-mono">
-                      <span className="text-[#8C8276]">目标止盈点位:</span>
-                      <span className="text-[#4D835C] font-semibold">${Number(takeProfit).toFixed(2)}</span>
+                      <span className="text-ink-3">{t('proposal.takeProfit')}</span>
+                      <span className="text-success font-semibold">{fmtPx(takeProfit)}</span>
                     </div>
                     <div className="flex justify-between font-mono">
-                      <span className="text-[#8C8276]">凯利头寸价值:</span>
-                      <span className="text-[#DE6438] font-bold">${Number(sizeUsd).toFixed(2)} USD</span>
+                      <span className="text-ink-3">{t('proposal.size')}</span>
+                      <span className="text-brand font-bold">{fmtPx(sizeUsd)}{sizeUsd ? ' USD' : ''}</span>
                     </div>
                     {idempotencyKey && (
-                      <div className="flex justify-between font-mono text-[10px] text-[#9E9486] pt-1 border-t border-[#F0EAE1]">
-                        <span>幂等防重放:</span>
-                        <span className="font-mono text-[#7E7469]">{idempotencyKey.slice(0, 18)}...</span>
+                      <div className="flex justify-between font-mono text-xs text-ink-4 pt-1 border-t border-line-soft">
+                        <span>{t('proposal.idempotency')}</span>
+                        <span className="font-mono text-ink-3">{idempotencyKey.slice(0, 18)}...</span>
                       </div>
                     )}
                   </>
                 ) : (
-                  <div className="py-2.5 px-3 bg-[#FAF7F2] rounded-xl border border-[#EDE5DA] text-center space-y-1 my-1">
-                    <p className="font-semibold text-[#7E7469] text-xs">保持空仓观望 (Cash is a position)</p>
-                    <p className="text-[11px] text-[#9E9486] leading-relaxed">
-                      {consensus === 'NEUTRAL' ? '多空对抗达成中立共识，策略层严禁盲目挂单，100% 现金防守' : '当前无有效挂单提案，维持零资金敞口暴露'}
+                  <div className="py-2.5 px-3 bg-panel rounded-xl border border-line-soft text-center space-y-1 my-1">
+                    <p className="font-semibold text-ink-3 text-xs">{consensus ? t('proposal.noProposal') : t('seat.awaitFirst')}</p>
+                    <p className="text-xs text-ink-4 leading-relaxed">
+                      {!consensus
+                        ? t('proposal.noResultDesc')
+                        : consensus === 'NEUTRAL'
+                        ? t('proposal.neutralDesc')
+                        : t('proposal.noActiveDesc')}
                     </p>
                   </div>
                 )}
               </div>
 
               {/* 七大铁律通过徽章 */}
-              <div className="pt-2.5 border-t border-[#F0EAE1] flex items-center justify-between">
-                <span className="text-[10px] text-[#7E7469] flex items-center space-x-1">
+              <div className="pt-2.5 border-t border-line-soft flex items-center justify-between">
+                <span className="text-xs text-ink-3 flex items-center space-x-1">
                   <span>🛡️</span>
-                  <span>底层确定性硬风控</span>
+                  <span>{t('risk.label')}</span>
                 </span>
-                <span className={`text-[10px] font-bold px-2 py-0.5 rounded font-mono border ${
-                  riskApproved 
-                    ? 'bg-[#EBF5EE] text-[#4D835C] border-[#CEE5D3]' 
-                    : 'bg-[#FDECEC] text-[#C24D4D] border-[#F7CDCD]'
-                }`}>
-                  {riskApproved ? '✓ 7/7 铁律全票核准' : '✕ 硬风控触发拦截'}
+                <span className={`text-xs font-bold px-2 py-0.5 rounded font-mono border ${riskBadge.className}`}>
+                  {riskBadge.text}
                 </span>
               </div>
             </div>
@@ -438,14 +464,14 @@ export default function DecisionArena({
             </div>
 
             {/* 右分屏：缩略对弈舞台与提案 */}
-            <div className="w-full h-full min-h-[460px] bg-white rounded-2xl border border-[#E6DFD5] p-5 flex flex-col justify-between shadow-xs">
-              <div className="flex justify-between items-center border-b border-[#F0EAE1] pb-2.5">
-                <h4 className="font-bold text-xs text-[#2E2823] flex items-center space-x-1.5">
+            <div className="w-full h-full min-h-[460px] bg-surface rounded-2xl border border-line p-5 flex flex-col justify-between shadow-xs">
+              <div className="flex justify-between items-center border-b border-line-soft pb-2.5">
+                <h4 className="font-bold text-xs text-ink flex items-center space-x-1.5">
                   <span>⚔️</span>
-                  <span>智能体对抗辩论结论</span>
+                  <span>{t('split.title')}</span>
                 </h4>
-                <span className="text-[10px] bg-[#DE6438] text-white px-2 py-0.5 rounded font-mono font-bold">
-                  {consensus === 'LONG' ? '做多优势' : consensus === 'SHORT' ? '沽空优势' : '空仓观望'}
+                <span className="text-xs bg-brand text-white px-2 py-0.5 rounded font-mono font-bold">
+                  {!consensus ? t('split.pending') : consensus === 'LONG' ? t('split.long') : consensus === 'SHORT' ? t('split.short') : t('split.neutral')}
                 </span>
               </div>
 
@@ -454,21 +480,27 @@ export default function DecisionArena({
                   <div
                     key={agent.id}
                     onClick={() => onSelectAgent(agent)}
-                    className="p-2.5 rounded-xl bg-[#FAF7F2] border border-[#EBE3D7] hover:border-[#DE6438] cursor-pointer transition flex items-center space-x-2.5 shadow-xs"
+                    className="p-2.5 rounded-xl bg-panel border border-line hover:border-brand cursor-pointer transition flex items-center space-x-2.5 shadow-xs"
                   >
                     <span className="text-xl">{agent.avatar}</span>
                     <div className="overflow-hidden">
-                      <div className="text-xs font-bold truncate text-[#2E2823]">{agent.name}</div>
-                      <div className="text-[10px] text-[#7E7469] truncate">{agent.badge}</div>
+                      <div className="text-xs font-bold truncate text-ink">{agent.name}</div>
+                      <div className="text-xs text-ink-3 truncate">{agent.badge}</div>
                     </div>
                   </div>
                 ))}
               </div>
 
-              <div className="bg-[#FAF7F2] p-3.5 rounded-xl border border-[#E2D9CC] text-xs space-y-1">
-                <div className="font-bold text-[#DE6438]">提案摘要: {symbol} 现价 ${Number(latestPrice).toFixed(2)}</div>
-                <div className="text-[11px] text-[#4A4237]">委托 ${Number(targetEntry).toFixed(2)} · 止损 ${Number(stopLoss).toFixed(2)} · 止盈 ${Number(takeProfit).toFixed(2)} · 杠杆 {leverage.toFixed(1)}x</div>
-                <div className="text-[10px] text-[#4D835C] font-semibold">✓ 七大铁律硬风控已全票核准</div>
+              <div className="bg-panel p-3.5 rounded-xl border border-line text-xs space-y-1">
+                <div className="font-bold text-brand">{t('split.summary', { symbol, price: latestPriceText })}</div>
+                {proposal ? (
+                  <div className="text-xs text-ink-2">{t('split.proposalLine', { entry: fmtPx(targetEntry), stop: fmtPx(stopLoss), target: fmtPx(takeProfit), leverage: leverage.toFixed(1) })}</div>
+                ) : (
+                  <div className="text-xs text-ink-4">{consensus ? t('proposal.noProposal') : t('seat.awaitFirst')}</div>
+                )}
+                <div className={`text-xs font-semibold ${riskState === 'approved' ? 'text-success' : riskState === 'rejected' ? 'text-danger' : 'text-ink-3'}`}>
+                  {riskBadge.text}
+                </div>
               </div>
             </div>
           </div>
@@ -477,31 +509,31 @@ export default function DecisionArena({
       </div>
 
       {/* 3. 舞台底座操作手柄控制栏 (Bottom Controller) */}
-      <footer className="h-16 px-6 bg-[#FAF7F2] border-t border-[#E6DFD5] flex items-center justify-between shrink-0">
+      <footer className="h-16 px-6 bg-panel border-t border-line flex items-center justify-between shrink-0">
         
         {/* 左侧：全局避险与暂停控制 */}
         <div className="flex items-center space-x-2">
           <button 
             onClick={onEmergencyKill}
-            className="px-3.5 py-1.5 rounded-xl bg-[#FCECE8] border border-[#F2D2C7] text-xs font-bold text-[#C24D4D] hover:bg-[#F9DBD3] shadow-xs transition flex items-center space-x-1.5"
+            className="px-3.5 py-1.5 rounded-xl bg-brand-soft border border-brand-line text-xs font-bold text-danger hover:bg-brand-soft-strong shadow-xs transition flex items-center space-x-1.5"
           >
             <span>🚨</span>
-            <span>紧急熔断拔网线 (Kill Switch)</span>
+            <span>{t('footer.killSwitch')}</span>
           </button>
 
           {onToggleAutoRefresh && (
             <button 
               onClick={onToggleAutoRefresh}
-              className="px-3 py-1.5 rounded-xl bg-white border border-[#D8CEBE] text-xs font-semibold text-[#4A4237] hover:bg-[#F4EFE6] shadow-xs transition flex items-center space-x-1"
+              className="px-3 py-1.5 rounded-xl bg-surface border border-line-strong text-xs font-semibold text-ink-2 hover:bg-subtle shadow-xs transition flex items-center space-x-1"
             >
-              <span>{autoRefresh ? "⏸️ 暂停自动轮询" : "▶️ 恢复自动轮询"}</span>
+              <span>{autoRefresh ? t('footer.pausePolling') : t('footer.resumePolling')}</span>
             </button>
           )}
         </div>
 
         {/* 中间：杠杆动态滑块调节 */}
-        <div className="flex items-center space-x-3 bg-white px-3.5 py-1.5 rounded-xl border border-[#D8CEBE] shadow-xs">
-          <span className="text-[11px] text-[#7E7469] font-medium">策略执行杠杆:</span>
+        <div className="flex items-center space-x-3 bg-surface px-3.5 py-1.5 rounded-xl border border-line-strong shadow-xs">
+          <span className="text-xs text-ink-3 font-medium">{t('footer.leverage')}</span>
           <input 
             type="range" 
             min="1" 
@@ -509,9 +541,9 @@ export default function DecisionArena({
             step="0.5"
             value={leverage} 
             onChange={(e) => setLeverage(parseFloat(e.target.value))}
-            className="w-24 accent-[#DE6438] cursor-pointer"
+            className="w-24 accent-brand cursor-pointer"
           />
-          <span className="text-xs font-mono font-bold text-[#DE6438]">{leverage.toFixed(1)}x</span>
+          <span className="text-xs font-mono font-bold text-brand">{leverage.toFixed(1)}x</span>
         </div>
 
         {/* 右侧：下发执行按钮 */}
@@ -520,11 +552,11 @@ export default function DecisionArena({
             onClick={handleExecute}
             disabled={isExecuting}
             className={`px-5 py-2 rounded-xl text-white text-xs font-bold shadow-md transition transform active:scale-95 flex items-center space-x-1.5 ${
-              isExecuting ? "bg-[#7E7469] cursor-not-allowed" : "bg-[#DE6438] hover:bg-[#C8542A]"
+              isExecuting ? "bg-ink-3 cursor-not-allowed" : "bg-brand hover:bg-brand-hover"
             }`}
           >
             <span>⚡</span>
-            <span>{isExecuting ? "正在下发沙盒撮合..." : "下发撮合成交订单"}</span>
+            <span>{isExecuting ? t('footer.executing') : t('footer.execute')}</span>
           </button>
         </div>
       </footer>

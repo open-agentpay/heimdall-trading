@@ -362,7 +362,28 @@ class DatabaseManager:
                 updated_at TEXT NOT NULL
             );
             """,
+            """
+            CREATE TABLE IF NOT EXISTS bot_ledgers (
+                bot_id TEXT PRIMARY KEY,
+                symbol TEXT NOT NULL,
+                market_type TEXT NOT NULL,
+                state_json TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS bot_run_events (
+                event_id TEXT PRIMARY KEY,
+                bot_id TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                detail_json TEXT,
+                created_at TEXT NOT NULL
+            );
+            """,
             "ALTER TABLE trading_agents ADD COLUMN IF NOT EXISTS owner_wallet TEXT NOT NULL DEFAULT 'system';",
+            "ALTER TABLE oms_orders ADD COLUMN IF NOT EXISTS stop_loss_price TEXT;",
+            "ALTER TABLE oms_orders ADD COLUMN IF NOT EXISTS take_profit_price TEXT;",
+            "ALTER TABLE oms_orders ADD COLUMN IF NOT EXISTS attach_protection INTEGER NOT NULL DEFAULT 0;",
             "CREATE INDEX IF NOT EXISTS idx_decisions_agent_ts ON agent_decisions (agent_id, timestamp DESC);",
             "CREATE INDEX IF NOT EXISTS idx_trades_agent_exec ON trades (agent_id, executed_at DESC);",
             "CREATE INDEX IF NOT EXISTS idx_nav_agent_ts ON agent_equity_snapshots (agent_id, timestamp ASC);",
@@ -370,6 +391,7 @@ class DatabaseManager:
             "CREATE INDEX IF NOT EXISTS idx_oms_orders_bot_state ON oms_orders (bot_id, state, created_at DESC);",
             "CREATE INDEX IF NOT EXISTS idx_checkpoints_task ON pipeline_checkpoints (task_id, created_at ASC);",
             "CREATE INDEX IF NOT EXISTS idx_reflections_agent_sym ON agent_reflections (agent_id, symbol, created_at DESC);",
+            "CREATE INDEX IF NOT EXISTS idx_run_events_bot_ts ON bot_run_events (bot_id, created_at);",
         ]
 
         async with pool.acquire() as conn:
@@ -537,6 +559,43 @@ class DatabaseManager:
                     updated_at TEXT NOT NULL
                 );
                 """)
+
+                # E7：机器人独立账本状态（持仓、盈亏、手续费、资金费、成交游标）
+                cursor.execute("""
+                CREATE TABLE IF NOT EXISTS bot_ledgers (
+                    bot_id TEXT PRIMARY KEY,
+                    symbol TEXT NOT NULL,
+                    market_type TEXT NOT NULL,
+                    state_json TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                """)
+
+                # L4：运行事件（Shadow Mode 晋级报告）
+                cursor.execute("""
+                CREATE TABLE IF NOT EXISTS bot_run_events (
+                    event_id TEXT PRIMARY KEY,
+                    bot_id TEXT NOT NULL,
+                    kind TEXT NOT NULL,
+                    detail_json TEXT,
+                    created_at TEXT NOT NULL
+                );
+                """)
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_run_events_bot_ts ON bot_run_events (bot_id, created_at);")
+
+                # 重启后补挂保护单：开仓单的止损/止盈计划随订单存库
+                cursor.execute("PRAGMA table_info(oms_orders);")
+                oms_columns = [row[1] for row in cursor.fetchall()]
+                for col, ddl in (
+                    ("stop_loss_price", "ALTER TABLE oms_orders ADD COLUMN stop_loss_price TEXT;"),
+                    ("take_profit_price", "ALTER TABLE oms_orders ADD COLUMN take_profit_price TEXT;"),
+                    ("attach_protection", "ALTER TABLE oms_orders ADD COLUMN attach_protection INTEGER NOT NULL DEFAULT 0;"),
+                ):
+                    if col not in oms_columns:
+                        try:
+                            cursor.execute(ddl)
+                        except Exception as e:
+                            logger.warning("[DatabaseManager] 补齐 oms_orders.%s 列警告: %s", col, e)
 
                 cursor.execute("PRAGMA table_info(trading_agents);")
                 columns = [row[1] for row in cursor.fetchall()]

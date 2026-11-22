@@ -25,6 +25,12 @@ logging.basicConfig(
 )
 # 默认挂载日志脱敏过滤器
 from heimdall.utils.logging_security import install_secret_redaction_filter
+from heimdall.utils.security_preflight import (
+    InsecureDeploymentError,
+    assert_mainnet_ready,
+    enforce_startup_policy,
+)
+
 install_secret_redaction_filter()
 from typing import Dict, Any, List, Optional
 from contextlib import asynccontextmanager
@@ -40,21 +46,29 @@ from heimdall.engine.scheduler import scheduler
 from heimdall.database.db import db_manager
 from heimdall.database.repository import trading_repo
 from heimdall.models.schemas import (
-    StrategyType, 
-    AgentStatus, 
-    OrderSide, 
-    PositionSide, 
-    ExchangeType, 
+    StrategyType,
+    AgentStatus,
+    OrderSide,
+    PositionSide,
+    ExchangeType,
+    ExecutionMode,
+    MarketType,
     MarketContext,
-    TradeAction, 
-    TradeProposal
+    TradeAction,
+    TradeProposal,
 )
+from heimdall.execution.factory import ExecutionAdapterFactory
+from heimdall.auth.vault import resolve_exchange_credentials
 from heimdall.alert.notifier import alert_gateway
 from heimdall.alert.heartbeat import dead_man_switch
 from heimdall.auth.router import auth_router
 from heimdall.api.websocket import manager as ws_manager, EventType as WsEventType
 
 logger = logging.getLogger(__name__)
+
+from heimdall.utils.instance_lock import InstanceLock
+
+instance_lock = InstanceLock(db_manager)
 
 
 @asynccontextmanager
@@ -64,8 +78,12 @@ async def lifespan(app: FastAPI):
     服务启动时自动初始化数据库表结构、引导默认机器人并启动外部心跳守护协程；
     服务关闭时优雅注销后台调度器与心跳协程。
     """
+    # M4：部署安全预检（弱口令 / 占位密钥 / 主密钥格式）；生产环境存在 CRITICAL 问题时拒绝启动
+    enforce_startup_policy()
     logger.info(">>> [Heimdall 服务启动] 正在检查并初始化数据库表结构...")
     await db_manager.init_tables()
+    # L3：同一个数据库只允许一个后端进程运行（避免重复恢复机器人、重复下单）
+    await instance_lock.acquire_or_fail()
     logger.info(">>> [Heimdall 服务就绪] 数据库就绪，正在恢复历史机器人与引导预置策略...")
     restored = await bot_manager.restore_persisted_bots()
     logger.info(">>> [Heimdall 启动恢复] 已从数据库恢复 %d 个历史持久化机器人", restored)
@@ -76,6 +94,7 @@ async def lifespan(app: FastAPI):
     logger.info("<<< [Heimdall 服务关停] 正在平稳释放全局后台协程、心跳与数据库连接池...")
     await dead_man_switch.stop()
     await scheduler.shutdown_all()
+    await instance_lock.release()
     await db_manager.close()
     logger.info("<<< [Heimdall 服务已安全终止]")
 
@@ -90,6 +109,7 @@ app = FastAPI(
 
 # 严格收紧跨域白名单配置，仅放行受信任前端域名与标准请求头
 from heimdall.utils.cors import get_cors_allowed_origins
+
 CORS_ALLOWED_ORIGINS = get_cors_allowed_origins()
 app.add_middleware(
     CORSMiddleware,
@@ -107,11 +127,12 @@ bot_manager = BotManager()
 
 # 挂载 OMS、对账、实盘就绪、策略目录与零前视回测工作台路由
 from heimdall.api.workbench_router import create_workbench_router
+
 app.include_router(create_workbench_router(bot_manager))
 
 
 class CreateBotRequest(BaseModel):
-    """创建交易机器人请求参数"""
+    """创建交易机器人请求参数（market_type 与 execution_mode 均为必填）"""
     bot_id: str = Field(..., description="机器人唯一标识符", example="bot_eth_debate_01")
     name: str = Field(..., description="机器人显示名称", example="ETH 多空对抗自适应智能体")
     symbol: str = Field(default="ETH", description="交易标的代码", example="ETH")
@@ -119,10 +140,13 @@ class CreateBotRequest(BaseModel):
         default=StrategyType.BULL_BEAR_DEBATE, description="策略类型"
     )
     exchange: ExchangeType = Field(
-        default=ExchangeType.BINANCE, description="执行交易所: BINANCE (币安模拟/测试网) 或 HYPERLIQUID"
+        default=ExchangeType.BINANCE, description="执行交易所: BINANCE / HYPERLIQUID / OKX"
     )
-    execution_mode: str = Field(
-        default="PAPER", description="运行模式: PAPER (模拟盘) | TESTNET (测试网) | MAINNET (实盘)"
+    market_type: MarketType = Field(
+        ..., description="交易市场类型（必填）: SPOT | USDM_FUTURES"
+    )
+    execution_mode: ExecutionMode = Field(
+        ..., description="运行模式（必填，不再兼容 PAPER/DEMO）: LOCAL_SIM | TESTNET | MAINNET"
     )
     strategy_config: Optional[Dict[str, Any]] = Field(
         default=None, description="策略专属可调参数字典（透传至 StrategyRouter）"
@@ -139,21 +163,21 @@ class UpdateCapitalRequest(BaseModel):
 class StartBotRequest(BaseModel):
     """启动交易机器人请求参数"""
     interval_seconds: int = Field(
-        default=60,
+        default=900,
         description="后台轮询决策间隔（秒）。测试可用 60 秒，实盘推荐 900 秒 (15分钟)",
         example=60,
     )
 
 
 @app.get("/health", tags=["System"])
-async def health_check() -> Dict[str, str]:
-    """系统存活探针与健康检查端点"""
-    return {"status": "HEALTHY", "platform": "Heimdall Trading Platform"}
+async def health_check() -> Dict[str, Any]:
+    """系统存活探针与健康检查端点（含单实例运行锁状态）"""
+    return {"status": "HEALTHY", "platform": "Heimdall Trading Platform", "instance_lock": instance_lock.status()}
 
 
 @app.get("/api/v1/bots", tags=["Bot Management"])
 async def list_bots(
-    caller_wallet: Optional[str] = Depends(resolve_caller_wallet),
+        caller_wallet: Optional[str] = Depends(resolve_caller_wallet),
 ) -> List[Dict[str, Any]]:
     """获取所有已注册机器人的状态概览及绩效数据 (支持多租户隔离过滤)"""
     return bot_manager.list_bots_overview(caller_wallet)
@@ -161,11 +185,33 @@ async def list_bots(
 
 @app.post("/api/v1/bots", tags=["Bot Management"], status_code=status.HTTP_201_CREATED)
 async def create_bot(
-    req: CreateBotRequest,
-    caller_wallet: str = Depends(require_authenticated_wallet),
+        req: CreateBotRequest,
+        caller_wallet: str = Depends(require_authenticated_wallet),
 ) -> Dict[str, Any]:
-    """注册创建新的交易机器人，并自动持久化写入数据库 (需钱包鉴权并绑定归属)"""
+    """注册创建新的交易机器人：严格按 枚举 -> 路由支持 -> 策略市场兼容性 -> 凭证精确匹配 顺序校验并持久化三元组"""
     try:
+        # 1 & 2. 校验枚举与交易所/市场/环境路由组合
+        ex, mt, em = ExecutionAdapterFactory.validate_route(req.exchange, req.market_type, req.execution_mode)
+        # 3. 校验策略在该市场是否允许运行
+        ExecutionAdapterFactory.validate_strategy_market(req.strategy_type, mt)
+        # 4. 非 LOCAL_SIM 必须校验当前钱包拥有精确匹配的活动凭证
+        if em != ExecutionMode.LOCAL_SIM:
+            matched_cred = await resolve_exchange_credentials(
+                owner_wallet=caller_wallet,
+                provider=ex.value.lower(),
+                market_type=mt.value,
+                execution_mode=em.value,
+            )
+            if not matched_cred:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"缺少精确匹配的交易凭证：请先在安全金库配置 "
+                        f"{ex.value} / {mt.value} / {em.value} 的有效活动密钥（禁止跨市场或跨环境回退）"
+                    ),
+                )
+
+        # 5. 创建机器人并持久化完整三元组
         bot = bot_manager.create_bot(
             bot_id=req.bot_id,
             name=req.name,
@@ -173,13 +219,13 @@ async def create_bot(
             strategy_type=req.strategy_type,
             allocated_capital=req.allocated_capital,
             max_drawdown_limit=req.max_drawdown_limit,
-            exchange=req.exchange,
+            exchange=ex,
             owner_wallet=caller_wallet,
             strategy_config=req.strategy_config,
-            execution_mode=req.execution_mode,
+            execution_mode=em,
+            market_type=mt,
         )
 
-        # 异步持久化写入数据库 (记录 owner_wallet 租户归属与策略参数)
         await trading_repo.upsert_agent(
             agent_id=bot.bot_id,
             name=bot.name,
@@ -188,11 +234,15 @@ async def create_bot(
             status=bot.status.value,
             allocated_capital=bot.allocated_capital,
             max_drawdown_limit=bot.max_drawdown_limit,
-            config={"execution_mode": bot.execution_mode, "strategy_config": bot.strategy_config},
+            config={
+                "exchange": bot.exchange.value,
+                "market_type": bot.market_type.value,
+                "execution_mode": bot.execution_mode.value,
+                "strategy_config": bot.strategy_config,
+            },
             owner_wallet=caller_wallet,
         )
 
-        # 确保初始净值基准切片入库
         try:
             init_snap = bot.nav_engine.record_snapshot(
                 total_equity=bot.allocated_capital,
@@ -211,9 +261,11 @@ async def create_bot(
             "name": bot.name,
             "symbol": bot.symbol,
             "owner_wallet": bot.owner_wallet,
-            "exchange": getattr(bot, "exchange", req.exchange).value,
+            "exchange": bot.exchange.value,
+            "market_type": bot.market_type.value,
+            "execution_mode": bot.execution_mode.value,
             "allocated_capital": bot.allocated_capital,
-            "message": f"机器人 '{bot.name}' 创建成功，挂载 {getattr(bot, 'exchange', req.exchange).value} 撮合执行引擎！",
+            "message": f"机器人 '{bot.name}' 创建成功，路由={bot.exchange.value}/{bot.market_type.value}/{bot.execution_mode.value}",
         }
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -221,9 +273,9 @@ async def create_bot(
 
 @app.patch("/api/v1/bots/{bot_id}/capital", tags=["Bot Management"])
 async def update_bot_capital(
-    bot_id: str,
-    req: UpdateCapitalRequest,
-    caller_wallet: str = Depends(require_authenticated_wallet),
+        bot_id: str,
+        req: UpdateCapitalRequest,
+        caller_wallet: str = Depends(require_authenticated_wallet),
 ) -> Dict[str, Any]:
     """
     【资金占比与本金划拨调整】(需钱包鉴权，严禁越权修改他人 Bot)
@@ -250,7 +302,7 @@ async def update_bot_capital(
 
 @app.get("/api/v1/portfolio/capital-distribution", tags=["Bot Management"])
 async def get_portfolio_capital_distribution(
-    caller_wallet: Optional[str] = Depends(resolve_caller_wallet),
+        caller_wallet: Optional[str] = Depends(resolve_caller_wallet),
 ) -> Dict[str, Any]:
     """获取全平台机器人的资金分布池与百分比权重占比 (多租户隔离过滤)"""
     return bot_manager.get_portfolio_capital_distribution(caller_wallet)
@@ -258,9 +310,9 @@ async def get_portfolio_capital_distribution(
 
 @app.post("/api/v1/bots/{bot_id}/start", tags=["Bot Control"])
 async def start_bot(
-    bot_id: str,
-    req: Optional[StartBotRequest] = None,
-    caller_wallet: str = Depends(require_authenticated_wallet),
+        bot_id: str,
+        req: Optional[StartBotRequest] = None,
+        caller_wallet: str = Depends(require_authenticated_wallet),
 ) -> Dict[str, Any]:
     """
     启动指定交易机器人 (需钱包鉴权，严禁越权启动他人私有策略)：
@@ -277,10 +329,43 @@ async def start_bot(
             detail=f"越权操作被拒绝：机器人 '{bot_id}' 归属于其他钱包用户，您无权启动",
         )
 
-    interval = req.interval_seconds if req else 60
+    # M4：MAINNET 实盘启动前强制通过部署安全预检（弱口令 / 占位密钥一律拒绝，无豁免开关）
+    if bot.execution_mode == ExecutionMode.MAINNET:
+        try:
+            assert_mainnet_ready()
+        except InsecureDeploymentError as err:
+            raise HTTPException(status_code=400, detail=f"启动被拒绝：{err}")
+
+    # 启动前凭证校验：TESTNET / MAINNET 必须拥有精确匹配的有效凭证
+    if bot.execution_mode != ExecutionMode.LOCAL_SIM:
+        hydrated = await bot.hydrate_exchange_credentials_from_vault()
+        if not hydrated:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"启动被拒绝：未找到与 {bot.exchange.value}/{bot.market_type.value}/{bot.execution_mode.value} "
+                    "精确匹配的有效活动凭证"
+                ),
+            )
+
+    interval = req.interval_seconds if req else 900
+
+    # E7：同一交易所账户的同一标的只允许一个机器人运行（单向持仓下交易所会合并多个机器人的仓位）
+    conflict = await bot_manager.check_account_conflict(bot)
+    if conflict:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"启动被拒绝：机器人 '{conflict}' 正在同一账户的 {bot.symbol} 上交易（或仍有持仓/挂单）。"
+                "同一账户同一标的只允许一个机器人运行，请先停止该机器人并平仓、撤单"
+            ),
+        )
 
     # 1. 更新内存状态
-    bot_manager.start_bot(bot_id)
+    try:
+        bot_manager.start_bot(bot_id)
+    except ValueError as err:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"启动被拒绝：{err}")
 
     # 2. 启动后台守护调度循环
     await scheduler.start_bot_loop(bot, interval_seconds=interval)
@@ -300,8 +385,8 @@ async def start_bot(
 
 @app.post("/api/v1/bots/{bot_id}/stop", tags=["Bot Control"])
 async def stop_bot(
-    bot_id: str,
-    caller_wallet: str = Depends(require_authenticated_wallet),
+        bot_id: str,
+        caller_wallet: str = Depends(require_authenticated_wallet),
 ) -> Dict[str, Any]:
     """停止指定交易机器人，并关停其后台调度协程 (需钱包鉴权，严禁越权关停他人策略)"""
     if bot_id not in bot_manager.bots:
@@ -329,8 +414,8 @@ async def stop_bot(
 
 @app.delete("/api/v1/bots/{bot_id}", tags=["Bot Management"])
 async def delete_bot(
-    bot_id: str,
-    caller_wallet: str = Depends(require_authenticated_wallet),
+        bot_id: str,
+        caller_wallet: str = Depends(require_authenticated_wallet),
 ) -> Dict[str, Any]:
     """
     【删除交易机器人】(需 Bearer 鉴权，严格拦截跨租户越权删除)：
@@ -375,8 +460,8 @@ async def delete_bot(
 
 @app.post("/api/v1/bots/{bot_id}/step", tags=["Bot Control"])
 async def trigger_step(
-    bot_id: str,
-    caller_wallet: str = Depends(require_authenticated_wallet),
+        bot_id: str,
+        caller_wallet: str = Depends(require_authenticated_wallet),
 ) -> Dict[str, Any]:
     """
     手动单步触发机器人执行一轮决策评估循环 (需钱包鉴权，严禁跨租户触发推演)
@@ -411,9 +496,9 @@ async def trigger_step(
 
 @app.get("/api/v1/bots/{bot_id}/latest-state", tags=["Bot Management"])
 async def get_bot_latest_state(
-    bot_id: str,
-    refresh: bool = Query(default=False, description="是否强制立即推演生成最新状态（需鉴权防匿名刷爆 LLM）"),
-    caller_wallet: Optional[str] = Depends(resolve_caller_wallet),
+        bot_id: str,
+        refresh: bool = Query(default=False, description="是否强制立即推演生成最新状态（需鉴权防匿名刷爆 LLM）"),
+        caller_wallet: Optional[str] = Depends(resolve_caller_wallet),
 ) -> Dict[str, Any]:
     """
     获取指定机器人最近一轮真实决策推演状态（含多租户隔离与匿名 refresh=true 防护）
@@ -459,9 +544,69 @@ async def list_scheduler_jobs() -> List[Dict[str, Any]]:
 class PaperOrderRequest(BaseModel):
     side: str = Field(default="BUY", description="下单意图: BUY (开多) | SELL (开空) | CLOSE (平仓)")
     size_usd: float = Field(default=1000.0, ge=10.0, description="名义委托金额 (USD)")
-    price: Optional[float] = Field(default=None, description="期望成交价格，为空则自动读取当前最新市价")
+    price: Optional[float] = Field(
+        default=None,
+        description=(
+            "期望成交价格。为空则按跨所实时中位价成交；显式指定时须与实时中位价偏差不超过 "
+            "HEIMDALL_PAPER_PRICE_MAX_DEVIATION_PCT（默认 1%），否则拒单 (400)；"
+            "无法获取可信实时行情时一律拒单 (503)"
+        ),
+    )
     leverage: float = Field(default=1.5, ge=1.0, le=20.0, description="杠杆倍数")
     order_type: str = Field(default="MARKET", description="订单类型: MARKET 或 LIMIT")
+
+
+def _paper_price_max_deviation_pct() -> float:
+    """手动指定价格相对实时中位价的最大允许偏差（小数，默认 0.01 即 1%），限定在 [0.01%, 20%]"""
+    raw = os.getenv("HEIMDALL_PAPER_PRICE_MAX_DEVIATION_PCT", "0.01")
+    try:
+        val = float(raw)
+    except (TypeError, ValueError):
+        logger.warning("[PaperOrder] HEIMDALL_PAPER_PRICE_MAX_DEVIATION_PCT=%r 非法，回退默认 1%%", raw)
+        val = 0.01
+    return min(max(val, 0.0001), 0.20)
+
+
+async def _fetch_guard_status_fail_closed(symbol: str) -> Dict[str, Any]:
+    """查询三角跨所守卫；查询本身异常时按 ISOLATED 处理（失败即关闭），不再默认 HEALTHY 放行"""
+    try:
+        return await bot_manager.bifrost_client.check_cross_exchange_guard(symbol)
+    except Exception as err:
+        logger.warning("[PaperOrder] 跨所守卫查询异常，按 ISOLATED 处理: %s", err)
+        return {
+            "status": "ISOLATED",
+            "spread_pct": 1.0,
+            "median_price": None,
+            "provenance": "UNAVAILABLE",
+            "warning": f"跨所守卫查询异常: {err}",
+        }
+
+
+def _resolve_live_reference_price(guard_status: Dict[str, Any], bot: Any) -> tuple:
+    """
+    M2：从跨所守卫结果中解析可用于撮合的真实参考价，返回 (price | None, price_source)。
+    - 仅接受 provenance=LIVE 且跨所状态为 HEALTHY / WARNING 的中位价；
+    - DEGRADED / ISOLATED（各所价格严重背离或全部断开）时无法确定可信价格，拒绝；
+    - SIMULATED（离线仿真价）仅在显式开启离线交易兜底且机器人为 LOCAL_SIM 时允许；
+    - 不再使用离线仿真 K 线或写死的 3000 / 90000 作为成交价。
+    """
+    provenance = str((guard_status or {}).get("provenance") or "UNAVAILABLE").upper()
+    status_str = str((guard_status or {}).get("status") or "ISOLATED").upper()
+    try:
+        px = float((guard_status or {}).get("median_price") or 0.0)
+    except (TypeError, ValueError):
+        px = 0.0
+    if px <= 0 or status_str not in ("HEALTHY", "WARNING"):
+        return None, f"{provenance}/{status_str}"
+    if provenance == "LIVE":
+        return px, "LIVE"
+    if (
+            provenance == "SIMULATED"
+            and getattr(bot_manager.bifrost_client, "allow_offline_trading_fallback", False)
+            and getattr(bot, "execution_mode", None) == ExecutionMode.LOCAL_SIM
+    ):
+        return px, "SIMULATED"
+    return None, f"{provenance}/{status_str}"
 
 
 def _assert_bot_readable(bot: Any, bot_id: str, caller_wallet: Optional[str]) -> None:
@@ -483,8 +628,8 @@ def _assert_bot_readable(bot: Any, bot_id: str, caller_wallet: Optional[str]) ->
 
 @app.get("/api/v1/bots/{bot_id}/nav", tags=["Analytics"])
 async def get_bot_nav(
-    bot_id: str,
-    caller_wallet: Optional[str] = Depends(resolve_caller_wallet),
+        bot_id: str,
+        caller_wallet: Optional[str] = Depends(resolve_caller_wallet),
 ) -> Dict[str, Any]:
     """获取指定机器人的单位净值走势时序数据与量化绩效指标（含多租户读隔离）"""
     bot = bot_manager.bots.get(bot_id)
@@ -519,19 +664,29 @@ async def get_bot_nav(
     win_rate = round((len(winning) / total_trades * 100.0), 1) if total_trades > 0 else 0.0
     profit_sum = sum(float(t.get("realized_pnl") or 0.0) for t in winning)
     loss_sum = abs(sum(float(t.get("realized_pnl") or 0.0) for t in losing))
-    profit_factor = round(profit_sum / loss_sum, 2) if loss_sum > 0 else (2.0 if profit_sum > 0 else 1.0)
+    # 没有亏损交易时盈亏比无法计算，返回 None（前端显示 "--"），不再写成 2.0 / 1.0
+    profit_factor = round(profit_sum / loss_sum, 2) if loss_sum > 0 else None
 
     latest_equity = db_series[-1]["total_equity"] if db_series else bot.allocated_capital
 
-    # 实时账户资产明细与持仓切片
-    account_balance = await bot.executor.get_account_balance() if hasattr(bot.executor, "get_account_balance") else {
+    # 实时资产明细与持仓切片
+    # E7：TESTNET / MAINNET 使用机器人独立账本（只含本机器人自己的成交），不再显示整个交易所账户
+    fallback_balance = {
         "total_equity": latest_equity,
         "cash_balance": latest_equity,
         "margin_used": 0.0,
         "unrealized_pnl": 0.0,
         "realized_pnl_cum": 0.0,
     }
-    open_positions = await bot.executor.get_open_positions() if hasattr(bot.executor, "get_open_positions") else []
+    account_scope = "BOT_LEDGER" if getattr(bot, "uses_bot_ledger", False) else "EXECUTION_ADAPTER"
+    try:
+        account_balance = await bot.get_bot_balance()
+        open_positions = await bot.get_bot_positions()
+    except Exception as bal_err:
+        logger.warning("[NAV 查询] bot=%s 读取机器人资金/持仓失败，显示最近一次净值快照: %s", bot_id, bal_err)
+        account_balance = {**fallback_balance, "stale": True}
+        open_positions = []
+    account_balance.setdefault("scope", account_scope)
 
     enriched_metrics = {
         **metrics,
@@ -557,9 +712,9 @@ async def get_bot_nav(
 
 @app.get("/api/v1/bots/{bot_id}/decisions", tags=["Audit & Explainability"])
 async def get_bot_decisions(
-    bot_id: str,
-    limit: int = Query(default=20, le=100),
-    caller_wallet: Optional[str] = Depends(resolve_caller_wallet),
+        bot_id: str,
+        limit: int = Query(default=20, le=100),
+        caller_wallet: Optional[str] = Depends(resolve_caller_wallet),
 ) -> List[Dict[str, Any]]:
     """获取指定机器人的全链路思维链与多空辩论审计记录（含多租户读隔离）"""
     bot = bot_manager.bots.get(bot_id)
@@ -574,9 +729,9 @@ async def get_bot_decisions(
 
 @app.get("/api/v1/bots/{bot_id}/trades", tags=["Audit & Explainability"])
 async def get_bot_trades(
-    bot_id: str,
-    limit: int = Query(default=50, le=200),
-    caller_wallet: Optional[str] = Depends(resolve_caller_wallet),
+        bot_id: str,
+        limit: int = Query(default=50, le=200),
+        caller_wallet: Optional[str] = Depends(resolve_caller_wallet),
 ) -> List[Dict[str, Any]]:
     """查询指定机器人的真实/沙盒成交流水账本（含多租户读隔离）"""
     bot_check = bot_manager.bots.get(bot_id)
@@ -608,7 +763,8 @@ async def get_bot_trades(
             {
                 "tradeId": t.trade_id,
                 "trade_id": t.trade_id,
-                "timestamp": t.executed_at.strftime("%Y-%m-%d %H:%M:%S") if hasattr(t.executed_at, "strftime") else str(t.executed_at),
+                "timestamp": t.executed_at.strftime("%Y-%m-%d %H:%M:%S") if hasattr(t.executed_at, "strftime") else str(
+                    t.executed_at),
                 "symbol": t.symbol,
                 "side": t.order_side.value if hasattr(t.order_side, "value") else str(t.order_side),
                 "posSide": t.position_side.value if hasattr(t.position_side, "value") else str(t.position_side),
@@ -626,9 +782,9 @@ async def get_bot_trades(
 
 @app.post("/api/v1/bots/{bot_id}/orders/paper", tags=["Trading & Execution"])
 async def place_paper_order(
-    bot_id: str,
-    req: PaperOrderRequest,
-    caller_wallet: str = Depends(require_authenticated_wallet),
+        bot_id: str,
+        req: PaperOrderRequest,
+        caller_wallet: str = Depends(require_authenticated_wallet),
 ) -> Dict[str, Any]:
     """
     【沙盒模拟下单】直连 PaperExecutionAdapter (需钱包鉴权)
@@ -646,16 +802,64 @@ async def place_paper_order(
             detail=f"越权操作被拒绝：机器人 '{bot_id}' 归属于其他钱包用户，您无权对其下发交易订单",
         )
 
-    fill_price = req.price
-    if not fill_price or fill_price <= 0:
-        try:
-            klines = await bot_manager.bifrost_client.get_klines(symbol=bot.symbol, limit=1)
-            if klines and len(klines) > 0:
-                fill_price = float(klines[-1].get("close", 0.0))
-        except Exception as e:
-            logger.warning("[PaperOrder] 自动获取最新行情价告警: %s", e)
-    if not fill_price or fill_price <= 0:
-        fill_price = 3000.0 if bot.symbol.upper() == "ETH" else 90000.0
+    # E5：本接口直连执行适配器、不经过 OMS（无先落库、无防重复、无订单记录），只允许本地模拟机器人使用；
+    #     对 TESTNET / MAINNET 机器人调用会变成真实下单且本地无记录，一律拒绝
+    bot_mode = getattr(bot, "execution_mode", ExecutionMode.LOCAL_SIM)
+    if bot_mode != ExecutionMode.LOCAL_SIM:
+        mode_label = bot_mode.value if isinstance(bot_mode, ExecutionMode) else str(bot_mode)
+        logger.warning("[PaperOrder 拒单] bot=%s 运行模式为 %s，模拟下单接口只允许 LOCAL_SIM", bot_id, mode_label)
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"模拟下单只适用于本地模拟（LOCAL_SIM）机器人；机器人 '{bot_id}' 运行在 {mode_label} 模式，"
+                f"在这里下单会成为交易所的真实订单且绕过订单管理，已拒绝"
+            ),
+        )
+
+    # M2：所有成交价都必须锚定跨所实时中位价（开仓、加仓、平仓一视同仁）
+    #   - 未指定 price：直接按实时中位价成交；
+    #   - 显式指定 price：与实时中位价偏差超过阈值即拒单（400），防止用虚构价格伪造盈亏与净值；
+    #   - 取不到可信实时行情：一律拒单（503），不再回落到离线仿真 K 线或写死的 3000 / 90000。
+    guard_status: Dict[str, Any] = await _fetch_guard_status_fail_closed(bot.symbol)
+    ref_price, ref_source = _resolve_live_reference_price(guard_status, bot)
+    user_price = float(req.price) if req.price and req.price > 0 else None
+
+    if ref_price is None:
+        logger.warning(
+            "[PaperOrder 拒单] bot=%s | 标的=%s | 无法获取可信实时行情 (%s): %s",
+            bot_id, bot.symbol, ref_source, (guard_status or {}).get("warning"),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                    f"无法获取 {bot.symbol} 的可信实时行情（{ref_source}），"
+                    + ("无法校验指定价格，" if user_price is not None else "")
+                    + "已拒绝下单；请稍后重试"
+            ),
+        )
+
+    price_deviation_pct = 0.0
+    if user_price is not None:
+        max_dev = _paper_price_max_deviation_pct()
+        price_deviation_pct = abs(user_price - ref_price) / ref_price
+        if price_deviation_pct > max_dev:
+            logger.warning(
+                "[PaperOrder 拒单] bot=%s | 指定价 $%.4f 偏离实时中位价 $%.4f 达 %.2f%% (> %.2f%%)",
+                bot_id, user_price, ref_price, price_deviation_pct * 100, max_dev * 100,
+            )
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"指定价格 ${user_price:,.2f} 偏离 {bot.symbol} 实时中位价 ${ref_price:,.2f} "
+                    f"达 {price_deviation_pct:.2%}，超过允许上限 {max_dev:.2%}，已拒绝下单；"
+                    f"请不填 price 按实时价成交，或使用贴近实时价的价格"
+                ),
+            )
+        fill_price = user_price
+        price_source = "USER"
+    else:
+        fill_price = ref_price
+        price_source = ref_source
 
     side_upper = req.side.upper()
     current_pos = bot.executor.positions.get(bot.symbol) if hasattr(bot.executor, "positions") else None
@@ -686,10 +890,10 @@ async def place_paper_order(
     # 若为开仓或加仓操作，校验空闲现金是否足够支付所需保证金与预估手续费
     if side_upper != "CLOSE":
         is_opening_or_adding = (
-            not current_pos 
-            or current_pos.side == PositionSide.FLAT 
-            or current_pos.quantity <= 0 
-            or current_pos.side == pos_side
+                not current_pos
+                or current_pos.side == PositionSide.FLAT
+                or current_pos.quantity <= 0
+                or current_pos.side == pos_side
         )
         if is_opening_or_adding:
             required_margin = size_usd / req.leverage
@@ -705,15 +909,17 @@ async def place_paper_order(
                     ),
                 )
 
+    eff_leverage = 1.0 if bot.market_type == MarketType.SPOT else req.leverage
     trade_action = TradeAction(
-        exchange=ExchangeType.HYPERLIQUID,
+        exchange=bot.exchange,
+        market_type=bot.market_type,
         symbol=bot.symbol,
         position_side=pos_side,
         order_side=order_side,
         order_type=req.order_type,
         target_price=fill_price,
         size_in_usd=size_usd,
-        leverage=req.leverage,
+        leverage=eff_leverage,
         stop_loss_price=round(fill_price * 0.95, 2) if order_side == OrderSide.BUY else round(fill_price * 1.05, 2),
         take_profit_price=round(fill_price * 1.10, 2) if order_side == OrderSide.BUY else round(fill_price * 0.90, 2),
     )
@@ -738,12 +944,9 @@ async def place_paper_order(
 
     # P1-2: 手动开/加仓强制接入 HardRiskGuard 硬风控审查（平仓单豁免，禁止通过手动下单 20x 杠杆或超额仓位绕过风控）
     if side_upper != "CLOSE":
-        guard_status = {"status": "HEALTHY", "spread_pct": 0.0}
-        try:
-            guard_status = await bot_manager.bifrost_client.check_cross_exchange_guard(bot.symbol)
-        except Exception:
-            pass
-        cur_dd = bot.nav_engine.snapshots[-1].drawdown_pct if bot.nav_engine.snapshots else 0.0
+        # 复用取价阶段的守卫结果（守卫查询异常时已按 ISOLATED 失败即关闭，原实现默认 HEALTHY 放行）
+        # H1：手动下单同样使用日内回撤口径（相对当日 UTC 基准净值），而非历史峰值回撤
+        cur_dd = bot.nav_engine.snapshots[-1].daily_drawdown_pct if bot.nav_engine.snapshots else 0.0
         hard_rev = bot.hard_guard.review_proposal(
             proposal=proposal,
             account_equity=balance_before.get("total_equity", bot.allocated_capital),
@@ -759,7 +962,8 @@ async def place_paper_order(
                 status_code=400,
                 detail=f"风控拦截：{hard_rev.rejection_reason}",
             )
-        logger.info("[手动下单风控通过] bot=%s | 标的=%s | 杠杆=%.1fx | 金额=$%.2f", bot_id, bot.symbol, req.leverage, size_usd)
+        logger.info("[手动下单风控通过] bot=%s | 标的=%s | 杠杆=%.1fx | 金额=$%.2f", bot_id, bot.symbol, req.leverage,
+                    size_usd)
 
     # 1. 执行适配器沙盒撮合
     try:
@@ -806,6 +1010,10 @@ async def place_paper_order(
     return {
         "success": True,
         "message": f"沙盒模拟订单撮合成交成功: {side_upper} {bot.symbol} ${size_usd:.2f} @ ${fill_price:.2f}",
+        "price_source": price_source,
+        "reference_price": ref_price,
+        "reference_price_source": ref_source,
+        "price_deviation_pct": round(price_deviation_pct, 6),
         "trade": {
             "trade_id": execution_report.trade_id,
             "order_id": execution_report.order_id,
@@ -824,10 +1032,44 @@ async def place_paper_order(
     }
 
 
+@app.get("/api/v1/bots/{bot_id}/orders/paper/quote", tags=["Trading & Execution"])
+async def get_paper_order_quote(
+        bot_id: str,
+        caller_wallet: Optional[str] = Depends(resolve_caller_wallet),
+) -> Dict[str, Any]:
+    """
+    【沙盒下单报价】只读返回手动下单所用的跨所实时参考价与价格偏差容差。
+    与 place_paper_order 共用同一套取价规则（_resolve_live_reference_price）与容差配置，
+    供前端在用户输入指定成交价时实时计算偏差；最终是否放行仍以下单接口的实时校验为准。
+    """
+    bot = bot_manager.bots.get(bot_id)
+    if not bot:
+        raise HTTPException(status_code=404, detail=f"未找到 ID 为 '{bot_id}' 的机器人")
+    _assert_bot_readable(bot, bot_id, caller_wallet)
+
+    guard_status = await _fetch_guard_status_fail_closed(bot.symbol)
+    ref_price, ref_source = _resolve_live_reference_price(guard_status, bot)
+    tradable = ref_price is not None
+    return {
+        "bot_id": bot_id,
+        "symbol": bot.symbol,
+        "tradable": tradable,
+        "reference_price": ref_price,
+        "reference_price_source": ref_source,
+        "guard_status": str((guard_status or {}).get("status") or "UNKNOWN").upper(),
+        "max_deviation_pct": _paper_price_max_deviation_pct(),
+        "message": (
+            None if tradable
+            else f"无法获取 {bot.symbol} 的可信实时行情（{ref_source}），当前下单将被拒绝"
+        ),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+
+
 @app.post("/api/v1/emergency/kill", tags=["Risk & Circuit Breaker"])
 async def emergency_kill(
-    bot_id: Optional[str] = None,
-    caller_wallet: str = Depends(require_authenticated_wallet),
+        bot_id: Optional[str] = None,
+        caller_wallet: str = Depends(require_authenticated_wallet),
 ) -> Dict[str, Any]:
     """
     【紧急熔断急停总开关】！
@@ -845,8 +1087,8 @@ async def emergency_kill(
         await ws_manager.broadcast("risk", {
             "event": WsEventType.RISK_ALERT,
             "data": {
-                "action": "EMERGENCY_KILL", 
-                "bot_id": bot_id, 
+                "action": "EMERGENCY_KILL",
+                "bot_id": bot_id,
                 "operator": caller_wallet,
                 "message": f"已对 {'所有机器人' if not bot_id else bot_id} 执行紧急急停与全撤单 (授权者: {caller_wallet})",
                 "timestamp": datetime.now(timezone.utc).isoformat()
@@ -869,10 +1111,10 @@ async def emergency_kill(
 @app.get("/api/v1/market/klines", tags=["Market Data"])
 @app.get("/v1/klines", tags=["Market Data (Legacy Fallback)"])
 async def get_market_klines(
-    symbol: str = Query(default="ETH", description="交易标的代码，如 ETH 或 BTC"),
-    interval: str = Query(default="15m", description="K 线周期，如 1m, 5m, 15m, 1h, 4h, 1d"),
-    limit: int = Query(default=100, le=1000, description="获取的 K 线根数"),
-    as_of_ts: Optional[int] = Query(default=None, description="时光机截止毫秒时间戳"),
+        symbol: str = Query(default="ETH", description="交易标的代码，如 ETH 或 BTC"),
+        interval: str = Query(default="15m", description="K 线周期，如 1m, 5m, 15m, 1h, 4h, 1d"),
+        limit: int = Query(default=100, le=1000, description="获取的 K 线根数"),
+        as_of_ts: Optional[int] = Query(default=None, description="时光机截止毫秒时间戳"),
 ) -> Dict[str, Any]:
     """
     获取零前视偏差的历史时序 K 线序列：
@@ -882,7 +1124,24 @@ async def get_market_klines(
         klines = await bot_manager.bifrost_client.get_klines(
             symbol=symbol, interval=interval, limit=limit, as_of_ts=as_of_ts
         )
-        return {"code": 0, "status": "ok", "symbol": symbol, "data": klines}
+        # M5：标注数据来源；全部外部源不可用而回落离线仿真 K 线时返回 SIMULATED，供前端如实提示
+        sources = sorted({
+            str(k.get("source")) for k in (klines or []) if isinstance(k, dict) and k.get("source")
+        })
+        if not klines:
+            provenance = "UNAVAILABLE"
+        elif "offline_fallback" in sources:
+            provenance = "SIMULATED"
+        else:
+            provenance = "LIVE"
+        return {
+            "code": 0,
+            "status": "ok",
+            "symbol": symbol,
+            "data": klines,
+            "provenance": provenance,
+            "sources": sources,
+        }
     except Exception as exc:
         logger.error("获取市场 K 线异常: %s", exc)
         raise HTTPException(status_code=500, detail=str(exc))
@@ -891,7 +1150,7 @@ async def get_market_klines(
 @app.get("/api/v1/market/funding", tags=["Market Data"])
 @app.get("/v1/funding", tags=["Market Data (Legacy Fallback)"])
 async def get_market_funding(
-    symbol: str = Query(default="ETH", description="交易标的代码"),
+        symbol: str = Query(default="ETH", description="交易标的代码"),
 ) -> Dict[str, Any]:
     """获取永续合约当前资金费率与结算周期数据"""
     try:
@@ -905,7 +1164,7 @@ async def get_market_funding(
 @app.get("/api/v1/market/guard", tags=["Market Data"])
 @app.get("/v1/guard/status", tags=["Market Data (Legacy Fallback)"])
 async def get_cross_exchange_guard_status(
-    symbol: str = Query(default="ETH", description="交易标的代码"),
+        symbol: str = Query(default="ETH", description="交易标的代码"),
 ) -> Dict[str, Any]:
     """查询 Binance 与 Hyperliquid 跨交易所实时基差与插针守卫状态"""
     try:
@@ -922,7 +1181,7 @@ async def get_cross_exchange_guard_status(
 
 @app.get("/api/v1/market/radar", tags=["Risk & Circuit Breaker"])
 async def get_risk_radar_telemetry(
-    symbol: str = Query(default="ETH", description="标的代码"),
+        symbol: str = Query(default="ETH", description="标的代码"),
 ) -> Dict[str, Any]:
     """
     聚合 7 大极端行情硬风控雷达动态数据：
@@ -935,7 +1194,7 @@ async def get_risk_radar_telemetry(
     7. 底层网关 RPC 心跳脱节监视 (RPC Health & Latency)
     """
     try:
-        from heimdall.risk.macro_guard import MacroEventCalendar
+        from heimdall.risk.macro_guard import get_global_macro_calendar
         from heimdall.risk.flash_guard import FlashCrashDetector
 
         # 1. 实时拉取跨所守卫、资金费率、最新 K 线并计量真实网关 RPC 延迟
@@ -952,8 +1211,11 @@ async def get_risk_radar_telemetry(
         annualized_funding = float(funding_data.get("annualized_rate", funding_rate * 3 * 365))
 
         # 2. 真实运行 MacroEventCalendar 与 FlashCrashDetector 评估极端行情风险
-        macro_cal = MacroEventCalendar()
+        # 复用全局共享日历（config/macro_events.yaml），与 HardRiskGuard 使用同一事件源
+        macro_cal = get_global_macro_calendar()
         in_blackout, active_ev, blackout_reason = macro_cal.check_blackout_window()
+        macro_stale = macro_cal.is_stale()
+        next_macro = (macro_cal.upcoming_events(limit=1) or [None])[0]
 
         flash_det = FlashCrashDetector()
         is_stable, flash_reason = flash_det.check_market_stability(
@@ -976,19 +1238,31 @@ async def get_risk_radar_telemetry(
             wick_ratio = round(((h - l) - abs(c - o)) / body, 2)
 
         spike_status = "TRIGGERED" if not is_stable else ("WARNING" if amplitude_pct >= 2.0 else "HEALTHY")
-        pinbar_status = "TRIGGERED" if (not is_stable and wick_ratio >= 2.5) else ("WARNING" if wick_ratio >= 2.0 else "HEALTHY")
-        spread_status = "TRIGGERED" if guard_status_str in ("DEGRADED", "ISOLATED") else ("WARNING" if spread_bps >= 15 else "HEALTHY")
+        pinbar_status = "TRIGGERED" if (not is_stable and wick_ratio >= 2.5) else (
+            "WARNING" if wick_ratio >= 2.0 else "HEALTHY")
+        spread_status = "TRIGGERED" if guard_status_str in ("DEGRADED", "ISOLATED") else (
+            "WARNING" if spread_bps >= 15 else "HEALTHY")
         funding_status = "WARNING" if (annualized_funding < -0.20 or annualized_funding > 0.40) else "HEALTHY"
-        rpc_status = "TRIGGERED" if guard_status_str == "ISOLATED" else ("WARNING" if rpc_latency_ms > 1500 else "HEALTHY")
+        rpc_status = "TRIGGERED" if guard_status_str == "ISOLATED" else (
+            "WARNING" if rpc_latency_ms > 1500 else "HEALTHY")
 
         rules = [
             {
                 "id": 1,
                 "name": "宏观重大事件倒计时锁仓 (Macro Event Window)",
-                "status": "TRIGGERED" if in_blackout else "HEALTHY",
-                "desc": blackout_reason if in_blackout else "当前未进入 FOMC/CPI/非农前后 15 分钟禁开仓静默窗口",
-                "value": f"静默中 ({active_ev})" if in_blackout else "安全待命",
-                "valueColor": "text-[#C24D4D]" if in_blackout else "text-[#3D784E]",
+                "status": "TRIGGERED" if in_blackout else ("WARNING" if macro_stale else "HEALTHY"),
+                "desc": (
+                    blackout_reason if in_blackout
+                    else "宏观事件日历为空或已全部过期，静默期规则当前无法生效，请更新 config/macro_events.yaml" if macro_stale
+                    else f"当前未处于静默窗口 | 下一事件: {next_macro.name} @ {next_macro.event_time.strftime('%Y-%m-%d %H:%M')} UTC"
+                ),
+                "value": (
+                    f"静默中 ({active_ev.name if active_ev else ''})" if in_blackout
+                    else "日历失效" if macro_stale
+                    else "安全待命"
+                ),
+                "valueColor": "text-[#C24D4D]" if in_blackout else (
+                    "text-[#C28B38]" if macro_stale else "text-[#3D784E]"),
                 "icon": "⏰",
             },
             {
@@ -1015,7 +1289,8 @@ async def get_risk_radar_telemetry(
                 "status": spread_status,
                 "desc": f"跨所实时基差 {spread_bps} bps | 底座状态={guard_status_str}",
                 "value": f"{spread_bps} bps ({guard_status_str})",
-                "valueColor": "text-[#C24D4D]" if spread_status == "TRIGGERED" else ("text-[#C28B38]" if spread_status == "WARNING" else "text-[#3D784E]"),
+                "valueColor": "text-[#C24D4D]" if spread_status == "TRIGGERED" else (
+                    "text-[#C28B38]" if spread_status == "WARNING" else "text-[#3D784E]"),
                 "icon": "🕳️",
             },
             {
@@ -1042,7 +1317,8 @@ async def get_risk_radar_telemetry(
                 "status": rpc_status,
                 "desc": f"实时数据底座三连查询实测耗时 {rpc_latency_ms}ms | 外部死信心跳={'运行中' if dead_man_switch.is_running else '未启用'}",
                 "value": f"{rpc_latency_ms}ms",
-                "valueColor": "text-[#C24D4D]" if rpc_status == "TRIGGERED" else ("text-[#C28B38]" if rpc_status == "WARNING" else "text-[#3D784E]"),
+                "valueColor": "text-[#C24D4D]" if rpc_status == "TRIGGERED" else (
+                    "text-[#C28B38]" if rpc_status == "WARNING" else "text-[#3D784E]"),
                 "icon": "📶",
             },
         ]
@@ -1076,8 +1352,8 @@ async def get_risk_radar_telemetry(
 
 @app.websocket("/ws/stream")
 async def websocket_stream_endpoint(
-    websocket: WebSocket,
-    token: Optional[str] = Query(default=None, description="可选 Bearer Session Token，用于接收私有 Bot 实时推送"),
+        websocket: WebSocket,
+        token: Optional[str] = Query(default=None, description="可选 Bearer Session Token，用于接收私有 Bot 实时推送"),
 ):
     """
     WebSocket 实时推流总线通道（支持多租户钱包鉴权隔离）：
@@ -1126,5 +1402,3 @@ async def websocket_stream_endpoint(
         logger.warning("[WebSocket] 客户端通信异常: %s", ex)
     finally:
         await ws_manager.disconnect(client_id)
-
-

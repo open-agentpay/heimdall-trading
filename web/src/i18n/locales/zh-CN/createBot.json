@@ -1,0 +1,56 @@
+{
+  "defaultName": "{{symbol}} 趋势突破跟踪 02",
+  "prefillName": "{{symbol}} {{strategy}} (回测优选)",
+  "header": {
+    "title": "新建交易机器人 (StrategyRouter)",
+    "subtitle": "交易所、市场类型与运行模式独立建模，严禁跨市场误路由"
+  },
+  "form": {
+    "botId": "机器人唯一 ID",
+    "name": "展示策略名称",
+    "symbol": "交易标的",
+    "symbolCount": "{{count}} 主流资产",
+    "exchange": "执行交易所",
+    "market": "交易市场",
+    "mode": "运行模式",
+    "strategy": "核心决策策略模板",
+    "params": "策略专属超参 (透传至 StrategyRouter)",
+    "capital": "初始分配资金 (USD)",
+    "capitalPlaceholder": "自定义初始资金"
+  },
+  "options": {
+    "binance": "BINANCE (币安)",
+    "spot": "SPOT 现货",
+    "usdmFutures": "USDM_FUTURES U 本位合约",
+    "localSim": "LOCAL_SIM 本地模拟",
+    "testnet": "TESTNET 测试网",
+    "mainnet": "MAINNET 实盘"
+  },
+  "hints": {
+    "spot": "ℹ️ 现货市场提示：<strong>不可开空</strong>，不支持杠杆与 reduceOnly；仅允许买入现货及卖出已有持仓。",
+    "futures": "ℹ️ U 本位合约说明：支持多空双向开平仓与杠杆配置；系统将自动探测账户单向/双向持仓模式（Hedge / One-way），并仅按真实成交数量挂载原生条件止损止盈。"
+  },
+  "strategies": {
+    "bullBearDebate": "⚔️ 多空博弈激辩",
+    "trendFollow": "📈 趋势突破跟踪",
+    "grid": "🔲 动态区间网格",
+    "fundingArb": "⚖️ 资金费率套利",
+    "badgeLlm": "LLM Multi-Agent",
+    "badgeAlgo": "0 Token · 纯算法",
+    "badgeFuturesOnly": "0 Token · 仅合约"
+  },
+  "readiness": {
+    "title": "实盘就绪预检清单 (Live Readiness Preflight)",
+    "checking": "检测中...",
+    "error": "⚠️ 预检接口返回异常（请先完成钱包签名登录）: {{message}}"
+  },
+  "errors": {
+    "createFailed": "创建机器人失败"
+  },
+  "actions": {
+    "cancel": "取消",
+    "blocked": "实盘预检未通过",
+    "creating": "初始化实例中...",
+    "submit": "立即创建并装载席位"
+  }
+}

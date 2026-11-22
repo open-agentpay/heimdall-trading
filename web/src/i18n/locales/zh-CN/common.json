@@ -1,0 +1,35 @@
+{
+  "refresh": "刷新",
+  "unknownError": "未知错误",
+  "loading": "读取中…",
+  "unavailable": "不可用",
+  "dismiss": "关闭提示",
+  "tabs": {
+    "arena": "对弈大厅",
+    "swarm": "蜂群编排",
+    "backtest": "回测",
+    "sentiment": "情绪",
+    "nav": "净值",
+    "risk": "风控",
+    "audit": "审计"
+  },
+  "header": {
+    "toggleSidebar": "展开/收起左侧机器人栏",
+    "themeToLight": "切换暖沙工匠主题",
+    "themeToDark": "切换夜间暗黑量化主题",
+    "soundOff": "已静音（点击开启成交与风控提示音）",
+    "soundOn": "告警音效与桌面通知已开启（点击静音）",
+    "toggleTerminal": "展开/收起右侧思维链终端",
+    "vaultTitle": "打开 API Key 与私钥安全金库",
+    "vault": "密钥金库",
+    "connected": "已连接",
+    "boundAddress": "已绑定地址 ({{network}})",
+    "walletSettings": "钱包设置与网络切换",
+    "manageKeys": "管理交易与大模型密钥",
+    "disconnect": "断开钱包连接",
+    "connect": "连接钱包"
+  },
+  "language": {
+    "switchTo": "切换到 {{language}}"
+  }
+}

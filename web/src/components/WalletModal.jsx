@@ -11,6 +11,7 @@
  */
 
 import React, { useState, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import {
   Wallet, Copy, Check, LogOut, ArrowRight, Loader2
 } from 'lucide-react';
@@ -19,6 +20,7 @@ import { getAuthNonce, verifySignature, clearAuthSession } from '../api/endpoint
 export default function WalletModal({ isOpen, onClose, walletState, onConnectWallet, onDisconnectWallet }) {
   if (!isOpen) return null;
 
+  const { t } = useTranslation('wallet');
   const [connectingProvider, setConnectingProvider] = useState(null);
   const [copied, setCopied] = useState(false);
   const [activeNetwork] = useState(walletState.network || 'Arbitrum One');
@@ -56,27 +58,27 @@ export default function WalletModal({ isOpen, onClose, walletState, onConnectWal
   const walletProviders = [
     {
       id: 'metamask',
-      name: 'MetaMask (小狐狸)',
-      description: '全球使用最广泛的 EVM 浏览器插件与移动端钱包',
+      name: t('providers.metamask.name'),
+      description: t('providers.metamask.description'),
       icon: '🦊',
-      tag: '真实签名推荐',
-      tagColor: 'bg-[#FBEFEA] text-[#DE6438] border-[#F2D6CA]',
+      tag: t('providers.metamask.tag'),
+      tagColor: 'bg-brand-soft text-brand border-brand-line',
     },
     {
       id: 'okx',
-      name: 'OKX Web3 Wallet (欧易)',
-      description: '原生支持 Arbitrum 与 Hyperliquid L1 的多链钱包',
+      name: t('providers.okx.name'),
+      description: t('providers.okx.description'),
       icon: '⬛',
-      tag: '真实签名',
-      tagColor: 'bg-[#EBF5EE] text-[#3D784E] border-[#D1E8D7]',
+      tag: t('providers.okx.tag'),
+      tagColor: 'bg-success-soft text-success border-success-line',
     },
     {
       id: 'readonly',
-      name: '只读预览模式 (不写入登录会话)',
-      description: '免插件浏览系统公共机器人行情与审计数据（写操作与回测仍需真实签名）',
+      name: t('providers.readonly.name'),
+      description: t('providers.readonly.description'),
       icon: '👀',
-      tag: '只读预览',
-      tagColor: 'bg-[#F5F2EB] text-[#7A6F62] border-[#E3DDD1]',
+      tag: t('providers.readonly.tag'),
+      tagColor: 'bg-canvas text-ink-3 border-line',
     },
   ];
 
@@ -113,12 +115,12 @@ export default function WalletModal({ isOpen, onClose, walletState, onConnectWal
       } else if (providerId === 'okx' && window.okxwallet) {
         ethProvider = window.okxwallet;
       } else {
-        throw new Error(`未检测到 ${providerId === 'metamask' ? 'MetaMask' : 'OKX'} 浏览器插件，请先安装或切换只读预览模式`);
+        throw new Error(t('errors.noPlugin', { wallet: providerId === 'metamask' ? 'MetaMask' : 'OKX' }));
       }
 
       const accounts = await ethProvider.request({ method: 'eth_requestAccounts' });
       if (!accounts || accounts.length === 0) {
-        throw new Error('用户拒绝了账户授权请求');
+        throw new Error(t('errors.rejected'));
       }
       const selectedAddress = accounts[0];
       const shortAddr = `${selectedAddress.slice(0, 6)}...${selectedAddress.slice(-4)}`;
@@ -127,7 +129,7 @@ export default function WalletModal({ isOpen, onClose, walletState, onConnectWal
       setAuthStep('challenge');
       const nonceRes = await getAuthNonce(selectedAddress, 1);
       if (!nonceRes || !nonceRes.message) {
-        throw new Error('获取后端防重放挑战报文失败，请确认后端 API 运行正常');
+        throw new Error(t('errors.nonceFailed'));
       }
 
       // 步骤 3：弹出 EIP-191 personal_sign 签名确认框
@@ -141,7 +143,7 @@ export default function WalletModal({ isOpen, onClose, walletState, onConnectWal
       setAuthStep('verified');
       const verifyRes = await verifySignature(selectedAddress, signature, nonceRes.message);
       if (!verifyRes || !verifyRes.session_token) {
-        throw new Error('后端验签未返回有效 Bearer 会话凭证，登录已中止');
+        throw new Error(t('errors.noSession'));
       }
 
       localStorage.setItem('heimdall_session_token', verifyRes.session_token);
@@ -164,81 +166,81 @@ export default function WalletModal({ isOpen, onClose, walletState, onConnectWal
       console.error('[WalletModal] 钱包连接或验签失败:', err);
       setConnectingProvider(null);
       setAuthStep('error');
-      setErrorMessage(err.message || '用户取消了签名或后端验签失败');
+      setErrorMessage(err.message || t('errors.signFailed'));
     }
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-xs select-none">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-xs">
       <div
-        className="w-full max-w-lg bg-[#FAF7F2] rounded-2xl border border-[#E6DFD5] shadow-2xl flex flex-col overflow-hidden"
+        className="w-full max-w-lg bg-panel rounded-2xl border border-line shadow-2xl flex flex-col overflow-hidden"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="px-6 py-4 bg-[#F2EDE4] border-b border-[#E4DDD1] flex items-center justify-between">
+        <div className="px-6 py-4 bg-subtle border-b border-line flex items-center justify-between">
           <div className="flex items-center space-x-2.5">
-            <div className="w-9 h-9 rounded-xl bg-white border border-[#E0D8CB] flex items-center justify-center shadow-xs">
-              <Wallet className="w-5 h-5 text-[#DE6438]" />
+            <div className="w-9 h-9 rounded-xl bg-surface border border-line-strong flex items-center justify-center shadow-xs">
+              <Wallet className="w-5 h-5 text-brand" />
             </div>
             <div>
-              <h2 className="text-sm font-bold text-[#2E2823] flex items-center space-x-2">
-                <span>{walletState.isConnected ? '已连接 Web3 钱包' : '连接去中心化钱包'}</span>
+              <h2 className="text-sm font-bold text-ink flex items-center space-x-2">
+                <span>{walletState.isConnected ? t('header.connected') : t('header.connect')}</span>
                 {walletState.isConnected && (
-                  <span className="text-[10px] bg-[#EBF5EE] text-[#3D784E] border border-[#D1E8D7] px-2 py-0.5 rounded-full font-semibold">
-                    Bearer 会话有效
+                  <span className="text-xs bg-success-soft text-success border border-success-line px-2 py-0.5 rounded-full font-semibold">
+                    {t('header.sessionValid')}
                   </span>
                 )}
               </h2>
-              <p className="text-[11px] text-[#7A6F62]">
-                {walletState.isConnected ? '已绑定当前量化交易与金库托管会话' : '通过 EIP-191 免 Gas 签名换取后端 Bearer 会话'}
+              <p className="text-xs text-ink-3">
+                {walletState.isConnected ? t('header.subtitleConnected') : t('header.subtitleConnect')}
               </p>
             </div>
           </div>
 
           <button
             onClick={onClose}
-            className="w-7 h-7 rounded-lg hover:bg-white text-[#7A6F62] hover:text-[#2E2823] flex items-center justify-center text-xs font-bold transition"
+            className="w-7 h-7 rounded-lg hover:bg-surface text-ink-3 hover:text-ink flex items-center justify-center text-xs font-bold transition"
           >
             ✕
           </button>
         </div>
 
         {errorMessage && (
-          <div className="px-6 py-2.5 bg-[#FDECEC] border-b border-[#F7CDCD] text-xs font-semibold text-[#C24D4D] flex items-center justify-between">
+          <div className="px-6 py-2.5 bg-danger-soft border-b border-danger-line text-xs font-semibold text-danger flex items-center justify-between">
             <span className="truncate pr-2">{errorMessage}</span>
-            <button onClick={() => setErrorMessage(null)} className="text-[10px] underline shrink-0">关闭</button>
+            <button onClick={() => setErrorMessage(null)} className="text-xs underline shrink-0">{t('dismiss')}</button>
           </div>
         )}
 
         <div className="p-6 space-y-5">
           {walletState.isConnected ? (
             <div className="space-y-4">
-              <div className="p-4 bg-white rounded-xl border border-[#E0D8CB] space-y-3">
+              <div className="p-4 bg-surface rounded-xl border border-line-strong space-y-3">
                 <div className="flex items-center justify-between">
-                  <span className="text-xs text-[#7A6F62] font-semibold">当前活跃钱包地址</span>
-                  <span className="text-xs font-mono text-[#3D784E] bg-[#EBF5EE] px-2 py-0.5 rounded">
+                  <span className="text-xs text-ink-3 font-semibold">{t('activeAddress')}</span>
+                  <span className="text-xs font-mono text-success bg-success-soft px-2 py-0.5 rounded">
                     {walletState.network || 'Arbitrum One'}
                   </span>
                 </div>
 
-                <div className="flex items-center justify-between bg-[#F8F5EE] p-3 rounded-lg border border-[#E6DFD5]">
-                  <span className="font-mono text-xs text-[#2E2823] font-bold select-all truncate pr-2">
+                <div className="flex items-center justify-between bg-canvas p-3 rounded-lg border border-line">
+                  <span className="font-mono text-xs text-ink font-bold select-all truncate pr-2">
                     {walletState.address}
                   </span>
                   <button
                     onClick={handleCopy}
-                    className="p-1.5 hover:bg-white rounded-md text-[#7A6F62] hover:text-[#DE6438] transition"
+                    className="p-1.5 hover:bg-surface rounded-md text-ink-3 hover:text-brand transition"
                   >
-                    {copied ? <Check className="w-4 h-4 text-[#3D784E]" /> : <Copy className="w-4 h-4" />}
+                    {copied ? <Check className="w-4 h-4 text-success" /> : <Copy className="w-4 h-4" />}
                   </button>
                 </div>
               </div>
 
               <button
                 onClick={handleDisconnect}
-                className="w-full py-2.5 bg-[#FAF7F2] hover:bg-[#FBEFEA] text-[#DE6438] hover:text-[#C24D4D] text-xs font-bold rounded-xl border border-[#F2D6CA] flex items-center justify-center space-x-2 transition"
+                className="w-full py-2.5 bg-panel hover:bg-brand-soft text-brand hover:text-danger text-xs font-bold rounded-xl border border-brand-line flex items-center justify-center space-x-2 transition"
               >
                 <LogOut className="w-4 h-4" />
-                <span>断开连接并销毁本地 Session</span>
+                <span>{t('disconnect')}</span>
               </button>
             </div>
           ) : (
@@ -249,34 +251,34 @@ export default function WalletModal({ isOpen, onClose, walletState, onConnectWal
                   <div
                     key={prov.id}
                     onClick={() => !connectingProvider && handleConnect(prov.id)}
-                    className="p-3.5 bg-white hover:bg-[#FAF8F5] rounded-xl border border-[#E0D8CB] hover:border-[#DE6438] cursor-pointer transition flex items-center justify-between"
+                    className="p-3.5 bg-surface hover:bg-panel rounded-xl border border-line-strong hover:border-brand cursor-pointer transition flex items-center justify-between"
                   >
                     <div className="flex items-center space-x-3">
                       <span className="text-2xl">{prov.icon}</span>
                       <div>
                         <div className="flex items-center space-x-2">
-                          <span className="text-xs font-bold text-[#2E2823]">{prov.name}</span>
-                          <span className={`text-[10px] px-1.5 py-0.2 rounded border font-semibold ${prov.tagColor}`}>
+                          <span className="text-xs font-bold text-ink">{prov.name}</span>
+                          <span className={`text-xs px-1.5 py-0.2 rounded border font-semibold ${prov.tagColor}`}>
                             {prov.tag}
                           </span>
                         </div>
-                        <p className="text-[11px] text-[#7A6F62] mt-0.5">{prov.description}</p>
+                        <p className="text-xs text-ink-3 mt-0.5">{prov.description}</p>
                       </div>
                     </div>
 
                     <div>
                       {isCurrent ? (
-                        <div className="flex items-center space-x-1.5 text-xs text-[#DE6438] font-bold">
+                        <div className="flex items-center space-x-1.5 text-xs text-brand font-bold">
                           <Loader2 className="w-4 h-4 animate-spin" />
                           <span>
-                            {authStep === 'connecting' && '读取地址...'}
-                            {authStep === 'challenge' && '获取挑战...'}
-                            {authStep === 'signing' && '请在钱包签名...'}
-                            {authStep === 'verified' && '验签成功！'}
+                            {authStep === 'connecting' && t('steps.connecting')}
+                            {authStep === 'challenge' && t('steps.challenge')}
+                            {authStep === 'signing' && t('steps.signing')}
+                            {authStep === 'verified' && t('steps.verified')}
                           </span>
                         </div>
                       ) : (
-                        <ArrowRight className="w-4 h-4 text-[#9E9486]" />
+                        <ArrowRight className="w-4 h-4 text-ink-4" />
                       )}
                     </div>
                   </div>

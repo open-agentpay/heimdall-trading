@@ -1,0 +1,69 @@
+{
+  "sound": {
+    "on": "🔊 已开启成交与极端风控音效及桌面通知",
+    "off": "🔇 已静音告警提示音"
+  },
+  "bot": {
+    "deleteNeedAuth": "🔐 删除机器人需要先连接钱包签名鉴权",
+    "deleteConfirm": "确认停止并彻底删除机器人「{{label}}」({{id}}) 吗？\n该操作将撤销其残留挂单并清理对应的历史决策、净值与成交流水，且不可恢复。",
+    "deleteTitle": "删除机器人",
+    "deleteConfirmText": "停止并删除",
+    "deleted": "🗑️ 已停止并删除机器人: {{label}}",
+    "deleteFailed": "删除失败: {{message}}",
+    "switched": "已切换至机器人: {{name}} ({{symbol}})",
+    "created": "🎉 成功创建机器人 [{{botId}}]！已无缝装载席位"
+  },
+  "refresh": {
+    "needAuth": "🔐 强制刷新 LLM 推演需要先连接钱包签名鉴权",
+    "done": "🔄 对弈台已执行最新一轮推演并刷新",
+    "failed": "刷新失败: {{message}}"
+  },
+  "ws": {
+    "step": "⚡ WebSocket 收到 [{{botId}}] 最新决策推演",
+    "orderFill": "成交回报 [{{botId}}]: {{symbol}} {{orderId}}",
+    "orderNotifyTitle": "Heimdall 订单成交",
+    "riskFallback": "触发硬风控拦截",
+    "riskNotifyTitle": "Heimdall 极端风控告警",
+    "riskToast": "🚨 风控熔断告警: {{message}}"
+  },
+  "kill": {
+    "done": "🚨 [紧急熔断触发] 已撤销全部挂单并强制锁仓！",
+    "failed": "🚨 急停指令下发: {{message}}"
+  },
+  "step": {
+    "starting": "⚡ 正在触发机器人 [{{botId}}] 启动单步多 Agent 闭环推演...",
+    "rejected": "⛔ 本轮推演被拒绝: {{error}}",
+    "done": "⚡ [推演完成] {{symbol}} 现价 {{price}} | 结论: {{consensus}}{{proposal}}",
+    "withProposal": " | 已生成提案",
+    "noProposal": " | 无提案",
+    "failed": "⚡ 触发单步决策: {{message}}"
+  },
+  "views": {
+    "arena": "对弈大厅",
+    "swarm": "蜂群编排",
+    "sentiment": "情绪与情报",
+    "nav": "NAV 单位净值",
+    "risk": "七大铁律风控",
+    "audit": "审计轨迹",
+    "backtest": "回测",
+    "switched": "已切换至视图: {{name}}"
+  },
+  "capital": {
+    "updated": "📊 机器人组合资金配比已同步更新"
+  },
+  "wallet": {
+    "sessionExpired": "会话已过期，请重新连接钱包签名登录",
+    "connected": "🎉 钱包连接成功！已授权: {{address}}",
+    "disconnected": "👋 钱包已安全断开连接"
+  },
+  "api": {
+    "requestFailed": "请求异常",
+    "timeout": "网络请求超时，请检查后端服务是否启动或适当缩小回测区间",
+    "network": "网络连接失败，请确认后端 API 是否运行在 8000 端口"
+  },
+  "context": {
+    "useBotOutside": "useBot 必须在 BotProvider 内部调用",
+    "useRiskOutside": "useRisk 必须在 RiskProvider 内部调用",
+    "killFallback": "已触发全屏紧急急停，撤销所有在途订单"
+  }
+}

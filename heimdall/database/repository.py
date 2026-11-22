@@ -12,6 +12,7 @@ Heimdall 交易平台 - 业务数据仓储层 (Data Repository)
 
 import json
 import logging
+import uuid
 from typing import Dict, Any, List, Optional
 from datetime import datetime, timezone
 from heimdall.database.db import DatabaseManager, db_manager
@@ -96,6 +97,8 @@ class TradingRepository:
         # 按子表 -> 主表顺序清理，避免外键约束拦截
         child_cleanups = [
             ("DELETE FROM oms_orders WHERE bot_id = ?;", (agent_id,)),
+            ("DELETE FROM bot_ledgers WHERE bot_id = ?;", (agent_id,)),
+            ("DELETE FROM bot_run_events WHERE bot_id = ?;", (agent_id,)),
             ("DELETE FROM agent_reflections WHERE agent_id = ?;", (agent_id,)),
             ("DELETE FROM pipeline_checkpoints WHERE agent_id = ?;", (agent_id,)),
             ("DELETE FROM agent_equity_snapshots WHERE agent_id = ?;", (agent_id,)),
@@ -216,7 +219,8 @@ class TradingRepository:
             trade_id, order_id, agent_id, decision_id, symbol,
             order_side, position_side, price, quantity, size_in_usd,
             fee_usd, realized_pnl, executed_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(trade_id) DO NOTHING;
         """
         await self.db.execute_commit(
             sql,
@@ -329,6 +333,25 @@ class TradingRepository:
                 r["state_snapshot"] = json.loads(r["state_snapshot_json"])
         return rows
 
+    async def get_latest_checkpoint_task(self, agent_id: str, task_prefix: str) -> Optional[Dict[str, Any]]:
+        """L4：按任务编号前缀查找该机器人最近一次写过检查点的任务（用于同一根 K 线内的断点续跑）"""
+        sql = """
+        SELECT task_id, MAX(created_at) AS last_created_at, COUNT(*) AS checkpoint_count
+        FROM pipeline_checkpoints
+        WHERE agent_id = ? AND substr(task_id, 1, ?) = ?
+        GROUP BY task_id
+        ORDER BY last_created_at DESC
+        LIMIT 1;
+        """
+        rows = await self.db.execute_query(sql, (agent_id, len(task_prefix), task_prefix))
+        return rows[0] if rows else None
+
+    async def prune_checkpoints(self, agent_id: str, before_iso: str) -> None:
+        """删除该机器人早于指定时间的检查点，避免表无限增长"""
+        await self.db.execute_commit(
+            "DELETE FROM pipeline_checkpoints WHERE agent_id = ? AND created_at < ?;", (agent_id, before_iso)
+        )
+
     # -------------------------------------------------------------------------
     # 6. P2 交易后反思记忆 (Agent Reflections -> lessons_learned)
     # -------------------------------------------------------------------------
@@ -403,8 +426,9 @@ class TradingRepository:
             client_order_id, exchange_order_id, bot_id, proposal_id, exchange,
             symbol, side, position_side, order_type, reduce_only,
             requested_qty, filled_qty, limit_price, avg_fill_price, trigger_price,
-            parent_client_order_id, state, error_message, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            parent_client_order_id, state, error_message, created_at, updated_at,
+            stop_loss_price, take_profit_price, attach_protection
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(client_order_id) DO UPDATE SET
             exchange_order_id = excluded.exchange_order_id,
             filled_qty = excluded.filled_qty,
@@ -436,6 +460,9 @@ class TradingRepository:
                 order_dict.get("error_message"),
                 str(order_dict["created_at"]),
                 str(order_dict["updated_at"]),
+                str(order_dict["stop_loss_price"]) if order_dict.get("stop_loss_price") is not None else None,
+                str(order_dict["take_profit_price"]) if order_dict.get("take_profit_price") is not None else None,
+                1 if order_dict.get("attach_protection") else 0,
             ),
         )
 
@@ -463,6 +490,64 @@ class TradingRepository:
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         sql = f"SELECT * FROM oms_orders {where} ORDER BY created_at DESC;"
         return await self.db.execute_query(sql, tuple(params))
+
+
+    # -------------------------------------------------------------------------
+    # E7：机器人独立账本
+    # -------------------------------------------------------------------------
+    async def get_bot_ledger(self, bot_id: str) -> Optional[Dict[str, Any]]:
+        rows = await self.db.execute_query("SELECT * FROM bot_ledgers WHERE bot_id = ?;", (bot_id,))
+        if not rows:
+            return None
+        try:
+            return json.loads(rows[0]["state_json"])
+        except (TypeError, ValueError) as err:
+            logger.warning("[Repository] 机器人 %s 账本状态解析失败: %s", bot_id, err)
+            return None
+
+    async def save_bot_ledger(self, bot_id: str, symbol: str, market_type: str, state: Dict[str, Any]) -> None:
+        sql = """
+        INSERT INTO bot_ledgers (bot_id, symbol, market_type, state_json, updated_at)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(bot_id) DO UPDATE SET
+            symbol = excluded.symbol,
+            market_type = excluded.market_type,
+            state_json = excluded.state_json,
+            updated_at = excluded.updated_at;
+        """
+        await self.db.execute_commit(
+            sql,
+            (bot_id, symbol, market_type, json.dumps(state, ensure_ascii=False), datetime.now(timezone.utc).isoformat()),
+        )
+
+
+    # -------------------------------------------------------------------------
+    # L4：运行事件（Shadow Mode 晋级报告的数据来源）
+    # -------------------------------------------------------------------------
+    async def record_run_event(self, bot_id: str, kind: str, detail: Optional[Dict[str, Any]] = None) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        event_id = f"evt_{bot_id}_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S%f')}_{uuid.uuid4().hex[:6]}"
+        await self.db.execute_commit(
+            "INSERT INTO bot_run_events (event_id, bot_id, kind, detail_json, created_at) VALUES (?, ?, ?, ?, ?);",
+            (event_id, bot_id, kind, json.dumps(detail or {}, ensure_ascii=False, default=str), now),
+        )
+
+    async def list_run_events(self, bot_id: str, since_iso: str) -> List[Dict[str, Any]]:
+        rows = await self.db.execute_query(
+            "SELECT * FROM bot_run_events WHERE bot_id = ? AND created_at >= ? ORDER BY created_at ASC;",
+            (bot_id, since_iso),
+        )
+        for r in rows:
+            try:
+                r["detail"] = json.loads(r.get("detail_json") or "{}")
+            except (TypeError, ValueError):
+                r["detail"] = {}
+        return rows
+
+    async def prune_run_events(self, bot_id: str, before_iso: str) -> None:
+        await self.db.execute_commit(
+            "DELETE FROM bot_run_events WHERE bot_id = ? AND created_at < ?;", (bot_id, before_iso)
+        )
 
 
 # 实例化全局单例仓储服务对象

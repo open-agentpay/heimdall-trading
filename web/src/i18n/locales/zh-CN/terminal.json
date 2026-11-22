@@ -1,0 +1,70 @@
+{
+  "tabs": {
+    "stream": "🧠 思维链",
+    "console": "💻 控制台"
+  },
+  "filter": {
+    "label": "过滤:",
+    "all": "全部",
+    "analyst": "分析",
+    "sentiment": "情绪",
+    "debate": "博弈",
+    "risk": "风控"
+  },
+  "stream": {
+    "empty": "暂无推演记录。机器人完成首轮决策后，这里会显示后端返回的真实思维链。"
+  },
+  "console": {
+    "ready": "控制台已启动，输入 'help' 查看可用指令",
+    "shellHint": "输入 'help' 获取所有操作指令。",
+    "none": "暂无",
+    "wsConnected": "WebSocket 已连接",
+    "wsPolling": "WebSocket 未连接（轮询中）",
+    "status": "[Status] 机器人: {{botId}} | 最近推演: {{time}} | 结论: {{consensus}} | 推流: {{stream}}",
+    "riskNoRecord": "[Risk] 暂无推演记录，无法给出风控结果。请先点击【▶ 推演】。",
+    "verdict": {
+      "none": "本轮无风控结论",
+      "passed": "通过",
+      "blocked": "拦截（{{reason}}）",
+      "noProposal": "本轮无提案"
+    },
+    "reasonMissing": "原因未返回",
+    "rulesPassed": "{{passed}}/{{total}} 通过",
+    "rulesMissing": "未返回明细",
+    "risk": "[Risk] {{time}} | 当日回撤 {{daily}} | 历史回撤 {{total}} | 杠杆 {{leverage}} | 规则 {{rules}} | 结论: {{verdict}}",
+    "navNoRecord": "[NAV] 暂无净值快照。请先点击【▶ 推演】，或到「NAV 单位净值」页查看。",
+    "nav": "[NAV] {{time}} 快照 | 单位净值 {{nav}} | 累计 {{cum}} | 账户权益 {{equity}}",
+    "cotHeader": "=== [LLM 多智能体决策推演] {{symbol}} (共 {{nodes}} 个节点) ===",
+    "decision": "[DECISION] 博弈结论: {{consensus}} | 标的: {{symbol}}",
+    "proposal": "[PROPOSAL] 挂单价格: ${{price}} | 止损: ${{stop}} | 仓位: ${{size}}",
+    "idempotency": "[IDEMPOTENCY] 提案幂等键: {{id}}",
+    "riskAudit": "[RISK_AUDIT] 硬风控结论: {{verdict}}",
+    "execution": "[EXECUTION] 本轮已提交执行 | 成交编号: {{id}}",
+    "help": "支持指令: status (状态), step (单步推演), logs (查看LLM决策日志), risk (风控检查), nav (核算净值), kill (紧急急停), clear (清屏)",
+    "logsHeader": "=== 当前最新 LLM 决策思维日志 ({{n}} 条) ===",
+    "noLogs": "暂无最新 LLM 决策思维日志，请点击【▶ 推演】或稍等自动轮询。",
+    "dispatch": "[Dispatch] 正在向机器人 [{{botId}}] 下发单步触发指令...",
+    "emergency": "[Emergency] 触发全局紧急急停，撤销所有在途订单并锁定仓位！",
+    "unknown": "未知命令: '{{cmd}}'。输入 'help' 查看所有可用指令。",
+    "logsSnapshot": "=== 最新 LLM 决策思维日志快照 ({{n}} 条) ===",
+    "noLogsQuick": "暂无最新 LLM 决策思维日志，请先点击【▶ 推演】触发推演。"
+  },
+  "quick": {
+    "stepTitle": "触发一次多智能体决策单步推演",
+    "step": "▶ 推演",
+    "logsTitle": "在控制台打印当前决策思维日志",
+    "logs": "📝 日志",
+    "risk": "🛡️ 风控",
+    "nav": "📊 净值",
+    "kill": "🚨 熔断"
+  },
+  "input": {
+    "placeholder": "输入命令 (step, risk, nav)...",
+    "run": "执行"
+  },
+  "footer": {
+    "wsConnected": "推流已连接",
+    "wsPolling": "推流未连接（轮询）",
+    "lastDecision": "最近推演 {{time}}"
+  }
+}

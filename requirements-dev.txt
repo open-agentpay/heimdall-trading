@@ -1,0 +1,8 @@
+# 开发与测试依赖：运行时依赖 + pyproject.toml [project.optional-dependencies].dev
+# 用法：pip install -r requirements-dev.txt   （等价于 pip install -e ".[dev]"）
+-r requirements.txt
+pytest>=8.0.0
+pytest-asyncio>=0.23.0
+black>=24.2.0
+ruff>=0.3.0
+mypy>=1.9.0

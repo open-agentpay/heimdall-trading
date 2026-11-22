@@ -1,5 +1,5 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling>=1.26"]
 build-backend = "hatchling.build"
 
 [project]
@@ -15,45 +15,59 @@ authors = [
 keywords = [
     "quantitative-trading",
     "ai-agent",
-    "langgraph",
     "crypto-derivatives",
     "hyperliquid",
     "bifrost",
     "risk-management",
     "nav-accounting"
 ]
+# ------------------------------------------------------------------------------
+# 运行时依赖：唯一事实来源（Single Source of Truth）
+# - requirements.txt 必须与本列表保持一致（tests/test_dependency_manifest.py 自动校验）；
+# - 每一项均对应 heimdall/ 中真实存在的 import（注释标明导入名与使用位置）；
+# - 新增第三方 import 时请同步在此登记，否则依赖清单测试会失败。
+# ------------------------------------------------------------------------------
 dependencies = [
-    "pydantic>=2.6.0",
-    "pydantic-settings>=2.2.0",
-    "langgraph>=0.2.0",
-    "langchain-core>=0.3.0",
-    "litellm>=1.35.0",
-    "fastapi>=0.110.0",
-    "uvicorn>=0.28.0",
-    "httpx>=0.27.0",
-    "asyncpg>=0.29.0",
-    "sqlalchemy[asyncio]>=2.0.28",
-    "numpy>=1.26.0",
-    "pandas>=2.2.0",
-    "pyyaml>=6.0.1",
-    "hyperliquid-python-sdk>=0.6.0",
-    "websockets>=12.0",
-    "rich>=13.7.0",
-    "typer>=0.12.0",
-    "cryptography>=42.0.0"
+    # 数据模型与配置
+    "pydantic>=2.6.0",                    # pydantic：全局 Schema
+    "pydantic-settings>=2.2.0",           # pydantic_settings：heimdall/config.py
+    "pyyaml>=6.0.1",                      # yaml：config/default.yaml、config/macro_events.yaml
+    "python-dotenv>=1.0.1",               # dotenv：heimdall/llm/client.py 凭证加载
+    # Web 服务
+    "fastapi>=0.110.0",                   # fastapi：heimdall/api/
+    "uvicorn[standard]>=0.28.0",          # uvicorn：heimdall/cli.py serve（[standard] 提供 WebSocket 支持）
+    # 网络与行情
+    "httpx[socks]>=0.27.0",               # httpx / socksio：行情、告警、LLM 代理（含 SOCKS5 代理支持）
+    "aiohttp>=3.10.0,<3.15.0",            # aiohttp：heimdall/auth/vault.py 密钥连通性探测
+    # 持久化
+    "asyncpg>=0.29.0",                    # asyncpg：heimdall/database/db.py PostgreSQL 连接池
+    # LLM 推理
+    "openai>=1.30.0",                     # openai：heimdall/llm/client.py
+    "anthropic>=0.28.0",                  # anthropic：heimdall/llm/client.py
+    # 交易所执行与钱包签名
+    "binance-futures-connector>=4.2.0",   # binance.um_futures：heimdall/execution/binance.py
+    "eth-account>=0.11.0",                # eth_account：钱包签名鉴权、Hyperliquid L1 签名
+    "eth-utils>=4.0.0",                   # eth_utils：heimdall/execution/hyperliquid.py keccak
+    "msgpack>=1.0.8",                     # msgpack：heimdall/execution/hyperliquid.py action hash
+    "pycryptodome>=3.20.0",               # Crypto：heimdall/auth/vault.py AES-GCM 密钥金库
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0.0",
-    "pytest-asyncio>=0.23.0",
+    "pytest-asyncio>=0.23.0",             # tests/ 中 39 处 @pytest.mark.asyncio
     "black>=24.2.0",
     "ruff>=0.3.0",
-    "mypy>=1.9.0"
+    "mypy>=1.9.0",
 ]
 
 [project.scripts]
-heimdall = "heimdall.cli:app"
+# 命令行入口为 heimdall/cli.py 中基于 argparse 的 main()（原配置指向不存在的 heimdall.cli:app）
+heimdall = "heimdall.cli:main"
+
+[tool.hatch.build.targets.wheel]
+# 发行名 heimdall-trading 与包目录 heimdall 不同名，需显式声明，否则 hatchling 无法确定打包内容
+packages = ["heimdall"]
 
 [tool.ruff]
 line-length = 100

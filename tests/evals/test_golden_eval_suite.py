@@ -7,7 +7,8 @@ Heimdall 交易平台 - 25 场景多 Agent 黄金评测集回归套件 (Golden E
 每次升级大模型版本、修改 Prompt、调整多空取证工具或风控阈值前，自动回放 25 个覆盖五大典型
 市场状态的固定历史快照，硬性断言：
 1. 场景覆盖度：5 大类别共 25 个独立场景全部加载成功；
-2. 高危拦截率：极端插针、跨所 DEGRADED/ISOLATED、日内回撤熔断场景 100% 在前置门控 0-Token 拦截；
+2. 高危拦截率：极端插针、跨所 DEGRADED/ISOLATED、日内回撤熔断、宏观事件静默期（FOMC/CPI/NFP）场景
+   100% 在前置门控 0-Token 拦截；宏观事件不在静默窗口时不得误拦截（反向对照）；
 3. 趋势与陷阱纪律：顺势突破不逆势接飞刀，高位诱多陷阱与高正资金费拥挤不盲目追多；
 4. 窄幅震荡防磨损：低波动箱体震荡保持 NEUTRAL 观望；
 5. 结构契约完整性：100% 产出合法可观测状态与裁判证据审计字段，且端到端 P95 延迟受控。
@@ -18,6 +19,7 @@ import asyncio
 import json
 import math
 import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List
 from unittest.mock import AsyncMock
@@ -26,6 +28,7 @@ from heimdall.agents.graph import MultiAgentPipeline
 from heimdall.agents.state import MultiAgentState, TaskLifecycleStatus
 from heimdall.llm.client import LLMService
 from heimdall.risk.guard import HardRiskGuard
+from heimdall.risk.macro_guard import MacroEvent, MacroEventCalendar, MacroEventType
 
 SCENARIOS_DIR = Path(__file__).resolve().parent / "golden_scenarios"
 
@@ -154,6 +157,24 @@ def test_golden_eval_suite_25_scenarios():
         passed_direction = 0
 
         for sc in scenarios:
+            # 带 macro_event 的场景：按当前时间注入一条宏观事件并开启静默期规则
+            macro = sc.get("macro_event")
+            if macro:
+                calendar = MacroEventCalendar([MacroEvent(
+                    event_id=sc["scenario_id"],
+                    name=sc.get("description", sc["scenario_id"]),
+                    category=MacroEventType(macro["category"]),
+                    event_time=datetime.now(timezone.utc) + timedelta(minutes=float(macro["offset_minutes"])),
+                )])
+                pipeline.hard_guard = HardRiskGuard(
+                    daily_drawdown_limit_pct=0.05,
+                    macro_calendar=calendar,
+                    enable_macro_guard=True,
+                    enable_flash_guard=True,
+                )
+            else:
+                pipeline.hard_guard = guard
+
             klines = _synthesize_klines(sc["kline_pattern"])
             state = MultiAgentState(
                 symbol=sc["symbol"],
@@ -179,14 +200,24 @@ def test_golden_eval_suite_25_scenarios():
                 assert out.status == TaskLifecycleStatus.REJECTED, f"{sc['scenario_id']} 应被高危拦截"
                 assert out.metrics["total_tokens"] == 0, f"{sc['scenario_id']} 应 0-Token 短路"
                 assert out.step_traces[0].step_name == "Step0_PreFlightGate"
+                if macro:
+                    assert out.risk_review.checked_rules.get("macro_event_blackout") is False, (
+                        f"{sc['scenario_id']} 应由宏观静默期规则拦截"
+                    )
                 high_risk_blocked += 1
+            elif macro:
+                assert out.status != TaskLifecycleStatus.REJECTED or out.step_traces[0].step_name != "Step0_PreFlightGate", (
+                    f"{sc['scenario_id']} 宏观事件不在静默窗口，不应被前置门控拦截"
+                )
 
             # 3. 方向与纪律检查（允许在预期安全集合内）
             if action in sc["expected_actions"]:
                 passed_direction += 1
 
         # 硬性回归门槛断言
-        assert high_risk_total == 5 and high_risk_blocked == 5, "高危场景安全拦截率必须为 100%"
+        expected_high_risk = sum(1 for s in scenarios if s["expected_blocked"])
+        assert expected_high_risk >= 8, "高危场景应覆盖插针、跨所偏离、回撤熔断与宏观静默期"
+        assert high_risk_total == expected_high_risk and high_risk_blocked == high_risk_total, "高危场景安全拦截率必须为 100%"
         accuracy = passed_direction / len(scenarios)
         assert accuracy >= 0.92, f"黄金评测集方向与纪律匹配率 {accuracy:.1%} 低于 92% 门槛"
 

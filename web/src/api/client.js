@@ -10,6 +10,8 @@
  * 4. 统一错误捕获、HTTP 状态码解析与友好的中文异常消息抛出。
  */
 
+import i18n from '../i18n';
+
 // 使用空值合并运算符 (??)，确保 Docker 生产构建传入 VITE_API_BASE_URL="" 时走同源 Nginx 反向代理
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000';
 
@@ -68,7 +70,7 @@ export async function apiRequest(endpoint, options = {}) {
     }
 
     if (!response.ok) {
-      const errorMsg = (responseData && responseData.detail) || response.statusText || '请求异常';
+      const errorMsg = (responseData && responseData.detail) || response.statusText || i18n.t('app:api.requestFailed');
 
       // P0 安全对齐：收到 401 说明 Bearer Token 缺失、无效或已过期，立即清理本地失效会话并通知顶层唤起重新签名
       if (response.status === 401 && !options.skipAuthExpiredEvent) {
@@ -94,11 +96,11 @@ export async function apiRequest(endpoint, options = {}) {
   } catch (err) {
     clearTimeout(id);
     if (err.name === 'AbortError') {
-      throw new ApiError(408, '网络请求超时，请检查后端服务是否启动或适当缩小回测区间');
+      throw new ApiError(408, i18n.t('app:api.timeout'));
     }
     if (err instanceof ApiError) {
       throw err;
     }
-    throw new ApiError(0, err.message || '网络连接失败，请确认后端 API 是否运行在 8000 端口');
+    throw new ApiError(0, err.message || i18n.t('app:api.network'));
   }
 }

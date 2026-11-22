@@ -71,6 +71,8 @@ def test_authenticated_write_operations_allowed():
                 "bot_id": bot_id,
                 "name": "已授权测试机器人",
                 "symbol": "ETH",
+                "market_type": "USDM_FUTURES",
+                "execution_mode": "LOCAL_SIM",
                 "allocated_capital": 10000.0,
             },
         )
@@ -89,7 +91,8 @@ def test_authenticated_write_operations_allowed():
         with patch.object(
             bot_manager.bifrost_client,
             "check_cross_exchange_guard",
-            AsyncMock(return_value={"status": "HEALTHY", "spread_pct": 0.0002}),
+            # M2：手动下单价格须锚定实时中位价，Mock 需提供 LIVE 中位价
+            AsyncMock(return_value={"status": "HEALTHY", "spread_pct": 0.0002, "median_price": 3100.0, "provenance": "LIVE"}),
         ):
             res = client.post(
                 f"/api/v1/bots/{bot_id}/orders/paper",

@@ -1,27 +1,32 @@
 """
 Tests for multi-bot management, capital reallocation (smooth NAV adjustment),
-and Binance simulation execution adapter.
+and LocalFuturesSimulationAdapter.
 """
 
 import pytest
 from eth_account import Account
 from fastapi.testclient import TestClient
 from heimdall.api.server import app, bot_manager
-from heimdall.engine.bot_manager import BotManager, ExchangeType
-from heimdall.execution.binance import BinanceExecutionAdapter
+from heimdall.database.db import DatabaseManager
+from heimdall.database.repository import TradingRepository
+from heimdall.engine.bot_manager import BotManager
+from heimdall.execution.local_sim import LocalFuturesSimulationAdapter
 from heimdall.models.schemas import (
-    TradeProposal,
-    TradeAction,
-    PositionSide,
-    OrderSide,
+    ExchangeType,
+    ExecutionMode,
     MarketContext,
+    MarketType,
+    OrderSide,
+    PositionSide,
+    TradeAction,
+    TradeProposal,
 )
 from tests._auth_helper import issue_bearer_headers
 
 
 @pytest.mark.asyncio
-async def test_binance_execution_adapter_paper_mode():
-    adapter = BinanceExecutionAdapter(testnet=True, initial_cash=20000.0)
+async def test_local_futures_simulation_adapter_order_execution():
+    adapter = LocalFuturesSimulationAdapter(exchange=ExchangeType.BINANCE, initial_cash=20000.0)
     assert adapter.cash_balance == 20000.0
     assert adapter.positions == {}
 
@@ -30,6 +35,7 @@ async def test_binance_execution_adapter_paper_mode():
         agent_id="test_binance_agent",
         trade_action=TradeAction(
             exchange=ExchangeType.BINANCE,
+            market_type=MarketType.USDM_FUTURES,
             symbol="BTC",
             position_side=PositionSide.LONG,
             order_side=OrderSide.BUY,
@@ -41,21 +47,26 @@ async def test_binance_execution_adapter_paper_mode():
             take_profit_price=55000.0,
         ),
         market_context=MarketContext(regime="RANGE", bifrost_health_status="HEALTHY"),
-        rationale={"reason": "Binance test trade"},
+        rationale={"reason": "Local futures sim test trade"},
     )
     result = await adapter.execute_proposal(proposal)
     assert result.symbol in ["BTC", "BTCUSDT"]
     assert result.executed_price == 50000.0
     assert result.executed_size_usd == 5000.0
-    assert result.fee_usd > 0  # Binance taker fee (0.04%)
-    assert ("BTC" in adapter.positions) or ("BTCUSDT" in adapter.positions)
+    assert result.fee_usd > 0
+    assert result.raw_response.get("is_simulated") is True
+    assert "BTC" in adapter.positions
     assert adapter.cash_balance < 20000.0
 
 
 @pytest.mark.asyncio
-async def test_bot_manager_capital_reallocation():
+async def test_bot_manager_capital_reallocation(tmp_path):
+    db = DatabaseManager(db_path=str(tmp_path / "cap_realloc.db"))
+    await db.init_tables()
+    repo = TradingRepository(db=db)
+
     manager = BotManager()
-    await manager.bootstrap_default_bots()
+    await manager.bootstrap_default_bots(repo=repo)
 
     dist = manager.get_portfolio_capital_distribution()
     assert dist["bot_count"] >= 1
@@ -82,23 +93,24 @@ def test_api_multi_bot_and_capital_endpoints():
 
     try:
         with TestClient(app) as client:
-            # 1. Create a new Binance bot
             new_bot_payload = {
                 "bot_id": bot_id,
                 "name": "BTC 币安对战机器人",
                 "symbol": "BTC",
                 "strategy_type": "BULL_BEAR_DEBATE",
                 "exchange": "BINANCE",
+                "market_type": MarketType.USDM_FUTURES.value,
+                "execution_mode": ExecutionMode.LOCAL_SIM.value,
                 "allocated_capital": 15000.0,
-                "interval_seconds": 60,
             }
             res = client.post("/api/v1/bots", headers=headers, json=new_bot_payload)
             assert res.status_code == 201
             data = res.json()
             assert data["bot_id"] == bot_id
             assert data["exchange"] == "BINANCE"
+            assert data["market_type"] == "USDM_FUTURES"
+            assert data["execution_mode"] == "LOCAL_SIM"
 
-            # 2. Query portfolio capital distribution (as the owner)
             res = client.get("/api/v1/portfolio/capital-distribution", headers=headers)
             assert res.status_code == 200
             dist = res.json()
@@ -107,7 +119,6 @@ def test_api_multi_bot_and_capital_endpoints():
             assert btc_bot["allocated_capital"] == 15000.0
             assert btc_bot["capital_weight_pct"] > 0
 
-            # 3. Adjust capital for this bot
             res = client.patch(
                 f"/api/v1/bots/{bot_id}/capital",
                 headers=headers,

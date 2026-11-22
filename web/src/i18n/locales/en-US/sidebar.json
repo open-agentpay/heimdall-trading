@@ -1,0 +1,34 @@
+{
+  "bots": {
+    "title": "Strategy Bots",
+    "count": "{{n}}",
+    "capitalTitle": "View and adjust each bot's capital allocation",
+    "capital": "Allocation",
+    "createTitle": "Create a new strategy trading bot",
+    "create": "New",
+    "loading": "Loading bots...",
+    "running": "Running",
+    "standby": "Standby",
+    "tokensTitle": "Actual cumulative LLM token usage",
+    "delete": "Delete bot {{name}}"
+  },
+  "dataHub": {
+    "title": "Data Hub",
+    "zeroLookahead": "Zero look-ahead",
+    "sealed": "Closed bars",
+    "live": "Live",
+    "enabled": "On",
+    "listening": "Listening"
+  },
+  "wallet": {
+    "manageTitle": "Click to manage your Web3 wallet",
+    "offBadge": "—",
+    "connected": "Connected",
+    "disconnected": "Web3 wallet not connected",
+    "bearerAuth": "{{network}} Bearer auth",
+    "signIn": "Click to sign in",
+    "maxDrawdown": "Max drawdown: {{value}}",
+    "breaker": "Kill switch: {{value}}",
+    "keyVault": "🔑 Key Vault (Hyperliquid / AI)"
+  }
+}

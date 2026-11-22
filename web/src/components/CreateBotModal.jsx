@@ -3,27 +3,31 @@
  * Heimdall 交易平台 - 新建策略机器人弹窗 (CreateBotModal)
  * ================================================================================
  *
- * 【阶段 C 升级】：
- * 1. 动态对接 `/api/v1/strategies/catalog`，支持 4 类 StrategyRouter 策略及专属超参表单；
- * 2. 支持 PAPER 模拟盘 / TESTNET 测试网 / MAINNET 实盘模式切换，切到非模拟盘时自动执行
- *    `/api/v1/system/live-readiness` 5 项实盘就绪预检（未就绪禁止强开实盘）；
- * 3. 支持从「回测实验室」一键带参预填（prefill）。
+ * 统一三元组路由契约：
+ * - 交易所：BINANCE / HYPERLIQUID / OKX
+ * - 市场类型：SPOT (现货) / USDM_FUTURES (U 本位合约)
+ * - 运行模式：LOCAL_SIM (本地模拟) / TESTNET (测试网) / MAINNET (实盘)
+ * 不再展示历史 PAPER 或 DEMO 选项。
  */
 
 import React, { useState, useEffect } from 'react';
-import { X, Bot, ShieldCheck, ArrowRight, CheckCircle2, XCircle, DollarSign } from 'lucide-react';
+import { useTranslation, Trans } from 'react-i18next';
+import { fmt } from '../i18n';
+import { X, Bot, ShieldCheck, ArrowRight, CheckCircle2, XCircle } from 'lucide-react';
 import { createBot, getStrategiesCatalog, checkLiveReadiness } from '../api/endpoints';
 import { MAINSTREAM_SYMBOLS } from '../data/symbols';
 
 export default function CreateBotModal({ isOpen, onClose, onCreated, prefill = null }) {
+  const { t } = useTranslation('createBot');
   const [catalog, setCatalog] = useState([]);
   const [formData, setFormData] = useState({
     bot_id: `bot_${Date.now().toString().slice(-4)}`,
-    name: 'ETH 趋势突破跟踪 02',
+    name: t('defaultName', { symbol: 'ETH' }),
     symbol: 'ETH',
     strategy_type: 'BULL_BEAR_DEBATE',
     exchange: 'BINANCE',
-    execution_mode: 'PAPER',
+    market_type: 'USDM_FUTURES',
+    execution_mode: 'LOCAL_SIM',
     allocated_capital: 10000.0,
     max_drawdown_limit: 0.05,
   });
@@ -46,7 +50,7 @@ export default function CreateBotModal({ isOpen, onClose, onCreated, prefill = n
     setFormData((prev) => ({
       ...prev,
       bot_id: `bot_${(prefill.symbol || 'eth').toLowerCase()}_${Date.now().toString().slice(-4)}`,
-      name: `${prefill.symbol || 'ETH'} ${prefill.strategy_type} (回测优选)`,
+      name: t('prefillName', { symbol: prefill.symbol || 'ETH', strategy: prefill.strategy_type }),
       symbol: prefill.symbol || prev.symbol,
       strategy_type: prefill.strategy_type || prev.strategy_type,
       allocated_capital: prefill.allocated_capital || prev.allocated_capital,
@@ -56,24 +60,29 @@ export default function CreateBotModal({ isOpen, onClose, onCreated, prefill = n
     }
   }, [isOpen, prefill]);
 
-  // 当选择 DEMO / TESTNET / MAINNET 时实时触发 5 项实盘就绪预检
+  // 当选择 TESTNET / MAINNET 时实时触发按市场与环境精确匹配的实盘就绪预检
   useEffect(() => {
-    if (!isOpen || formData.execution_mode === 'PAPER') {
+    if (!isOpen || formData.execution_mode === 'LOCAL_SIM') {
       setReadiness(null);
       return;
     }
     setCheckingReadiness(true);
-    checkLiveReadiness({ exchange: formData.exchange, symbol: formData.symbol })
+    checkLiveReadiness({
+      exchange: formData.exchange,
+      marketType: formData.market_type,
+      executionMode: formData.execution_mode,
+      symbol: formData.symbol,
+    })
       .then((res) => setReadiness(res))
       .catch((err) => setReadiness({ error: err.message, checks: [] }))
       .finally(() => setCheckingReadiness(false));
-  }, [isOpen, formData.execution_mode, formData.exchange, formData.symbol]);
+  }, [isOpen, formData.execution_mode, formData.exchange, formData.market_type, formData.symbol]);
 
   if (!isOpen) return null;
 
   const activeMeta = catalog.find((s) => s.strategy_type === formData.strategy_type);
   const blockedByReadiness =
-    ((formData.execution_mode === 'TESTNET' || formData.execution_mode === 'DEMO') && readiness && !readiness.ready_for_testnet) ||
+    (formData.execution_mode === 'TESTNET' && readiness && !readiness.ready_for_testnet) ||
     (formData.execution_mode === 'MAINNET' && readiness && !readiness.ready_for_mainnet);
 
   const handleSubmit = async (e) => {
@@ -87,6 +96,7 @@ export default function CreateBotModal({ isOpen, onClose, onCreated, prefill = n
         symbol: formData.symbol.toUpperCase().trim(),
         strategy_type: formData.strategy_type,
         exchange: formData.exchange,
+        market_type: formData.market_type,
         execution_mode: formData.execution_mode,
         strategy_config: strategyConfig,
         allocated_capital: Number(formData.allocated_capital),
@@ -95,7 +105,7 @@ export default function CreateBotModal({ isOpen, onClose, onCreated, prefill = n
       onCreated && onCreated(formData.bot_id);
       onClose();
     } catch (err) {
-      setError(err.message || '创建机器人失败');
+      setError(err.message || t('errors.createFailed'));
     } finally {
       setLoading(false);
     }
@@ -103,20 +113,20 @@ export default function CreateBotModal({ isOpen, onClose, onCreated, prefill = n
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4">
-      <div className="w-full max-w-xl bg-[#FAF7F2] rounded-2xl border border-[#D8CEBE] shadow-2xl overflow-hidden flex flex-col max-h-[92vh]">
-        <div className="p-4 border-b border-[#E6DFD5] flex items-center justify-between bg-[#F4EFE6]">
+      <div className="w-full max-w-xl bg-panel rounded-2xl border border-line-strong shadow-2xl overflow-hidden flex flex-col max-h-[92vh]">
+        <div className="p-4 border-b border-line flex items-center justify-between bg-subtle">
           <div className="flex items-center space-x-2.5">
-            <div className="p-2 bg-[#DE6438]/10 text-[#DE6438] rounded-xl border border-[#DE6438]/20">
+            <div className="p-2 bg-brand/10 text-brand rounded-xl border border-brand/20">
               <Bot className="w-5 h-5" />
             </div>
             <div>
-              <h3 className="text-sm font-bold text-[#2E2823]">新建交易机器人 (StrategyRouter)</h3>
-              <p className="text-[11px] text-[#8C8276]">支持独立策略超参配置、OMS 原生止损与实盘就绪门禁</p>
+              <h3 className="text-sm font-bold text-ink">{t('header.title')}</h3>
+              <p className="text-xs text-ink-3">{t('header.subtitle')}</p>
             </div>
           </div>
           <button
             onClick={onClose}
-            className="p-1.5 rounded-lg text-[#8C8276] hover:bg-[#EBE4DA] hover:text-[#2E2823] transition"
+            className="p-1.5 rounded-lg text-ink-3 hover:bg-muted hover:text-ink transition"
           >
             <X className="w-4 h-4" />
           </button>
@@ -124,39 +134,39 @@ export default function CreateBotModal({ isOpen, onClose, onCreated, prefill = n
 
         <form onSubmit={handleSubmit} className="p-5 overflow-y-auto space-y-4 text-xs">
           {error && (
-            <div className="p-2.5 rounded-xl bg-red-50 border border-red-200 text-red-700 text-xs">
+            <div className="p-2.5 rounded-xl bg-danger-soft border border-danger-line text-danger-strong text-xs">
               ⚠️ {error}
             </div>
           )}
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-[11px] font-semibold text-[#665E54] mb-1">机器人唯一 ID</label>
+              <label className="block text-xs font-semibold text-ink-2 mb-1">{t('form.botId')}</label>
               <input
                 type="text"
                 required
                 value={formData.bot_id}
                 onChange={(e) => setFormData({ ...formData, bot_id: e.target.value })}
-                className="w-full px-3 py-2 bg-white border border-[#D8CEBE] rounded-xl font-mono text-xs"
+                className="w-full px-3 py-2 bg-surface border border-line-strong rounded-xl font-mono text-xs"
               />
             </div>
             <div>
-              <label className="block text-[11px] font-semibold text-[#665E54] mb-1">展示策略名称</label>
+              <label className="block text-xs font-semibold text-ink-2 mb-1">{t('form.name')}</label>
               <input
                 type="text"
                 required
                 value={formData.name}
                 onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                className="w-full px-3 py-2 bg-white border border-[#D8CEBE] rounded-xl text-xs"
+                className="w-full px-3 py-2 bg-surface border border-line-strong rounded-xl text-xs"
               />
             </div>
           </div>
 
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-2 gap-3">
             <div>
               <div className="flex items-center justify-between mb-1">
-                <label className="block text-[11px] font-semibold text-[#665E54]">交易标的</label>
-                <span className="text-[10px] text-[#DE6438] font-mono">{MAINSTREAM_SYMBOLS.length} 主流资产</span>
+                <label className="block text-xs font-semibold text-ink-2">{t('form.symbol')}</label>
+                <span className="text-xs text-brand font-mono">{t('form.symbolCount', { count: MAINSTREAM_SYMBOLS.length })}</span>
               </div>
               <select
                 value={formData.symbol}
@@ -168,7 +178,7 @@ export default function CreateBotModal({ isOpen, onClose, onCreated, prefill = n
                     name: prev.name.replace(/^(ETH|BTC|SOL|[A-Z]{2,10})/, newSym),
                   }));
                 }}
-                className="w-full px-3 py-2 bg-white border border-[#D8CEBE] rounded-xl text-xs font-mono font-bold"
+                className="w-full px-3 py-2 bg-surface border border-line-strong rounded-xl text-xs font-mono font-bold"
               >
                 {MAINSTREAM_SYMBOLS.map((s) => (
                   <option key={s.symbol} value={s.symbol}>
@@ -178,53 +188,77 @@ export default function CreateBotModal({ isOpen, onClose, onCreated, prefill = n
               </select>
             </div>
             <div>
-              <label className="block text-[11px] font-semibold text-[#665E54] mb-1">执行交易所</label>
+              <label className="block text-xs font-semibold text-ink-2 mb-1">{t('form.exchange')}</label>
               <select
                 value={formData.exchange}
                 onChange={(e) => setFormData({ ...formData, exchange: e.target.value })}
-                className="w-full px-3 py-2 bg-white border border-[#D8CEBE] rounded-xl text-xs font-mono font-bold"
+                className="w-full px-3 py-2 bg-surface border border-line-strong rounded-xl text-xs font-mono font-bold"
               >
-                <option value="BINANCE">BINANCE</option>
+                <option value="BINANCE">{t('options.binance')}</option>
                 <option value="HYPERLIQUID">HYPERLIQUID</option>
                 <option value="OKX">OKX</option>
               </select>
             </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-[11px] font-semibold text-[#665E54] mb-1">运行模式</label>
+              <label className="block text-xs font-semibold text-ink-2 mb-1">{t('form.market')}</label>
+              <select
+                value={formData.market_type}
+                onChange={(e) => setFormData({ ...formData, market_type: e.target.value })}
+                className="w-full px-3 py-2 bg-surface border border-line-strong rounded-xl text-xs font-mono font-bold"
+              >
+                <option value="SPOT">{t('options.spot')}</option>
+                <option value="USDM_FUTURES">{t('options.usdmFutures')}</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-ink-2 mb-1">{t('form.mode')}</label>
               <select
                 value={formData.execution_mode}
                 onChange={(e) => setFormData({ ...formData, execution_mode: e.target.value })}
-                className="w-full px-3 py-2 bg-white border border-[#D8CEBE] rounded-xl text-xs font-mono font-bold"
+                className="w-full px-3 py-2 bg-surface border border-line-strong rounded-xl text-xs font-mono font-bold"
               >
-                <option value="PAPER">PAPER 本地沙盒</option>
-                <option value="DEMO">DEMO 币安现货模拟交易</option>
-                <option value="TESTNET">TESTNET 测试网</option>
-                <option value="MAINNET">MAINNET 实盘</option>
+                <option value="LOCAL_SIM">{t('options.localSim')}</option>
+                <option value="TESTNET">{t('options.testnet')}</option>
+                <option value="MAINNET">{t('options.mainnet')}</option>
               </select>
             </div>
           </div>
 
+          {/* 市场规则提示 */}
+          {formData.market_type === 'SPOT' ? (
+            <div className="px-3 py-2 rounded-xl bg-warning-soft border border-warning-line text-warning-strong text-xs">
+              <Trans t={t} i18nKey="hints.spot" components={{ strong: <strong /> }} />
+            </div>
+          ) : (
+            <div className="px-3 py-2 rounded-xl bg-subtle border border-line text-ink-2 text-xs">
+              {t('hints.futures')}
+            </div>
+          )}
+
           {/* StrategyRouter 4 大核心策略 */}
           <div>
-            <label className="block text-[11px] font-semibold text-[#665E54] mb-1.5">核心决策策略模板</label>
+            <label className="block text-xs font-semibold text-ink-2 mb-1.5">{t('form.strategy')}</label>
             <div className="grid grid-cols-2 gap-2">
               {[
-                { id: 'BULL_BEAR_DEBATE', label: '⚔️ 多空博弈激辩', badge: 'LLM Multi-Agent' },
-                { id: 'TREND_FOLLOW', label: '📈 趋势突破跟踪', badge: '0 Token · 纯算法' },
-                { id: 'GRID', label: '🔲 动态区间网格', badge: '0 Token · 纯算法' },
-                { id: 'FUNDING_ARB', label: '⚖️ 资金费率套利', badge: '0 Token · 纯算法' },
+                { id: 'BULL_BEAR_DEBATE', labelKey: 'strategies.bullBearDebate', badgeKey: 'strategies.badgeLlm' },
+                { id: 'TREND_FOLLOW', labelKey: 'strategies.trendFollow', badgeKey: 'strategies.badgeAlgo' },
+                { id: 'GRID', labelKey: 'strategies.grid', badgeKey: 'strategies.badgeAlgo' },
+                { id: 'FUNDING_ARB', labelKey: 'strategies.fundingArb', badgeKey: 'strategies.badgeFuturesOnly' },
               ].map((strat) => (
                 <div
                   key={strat.id}
                   onClick={() => setFormData({ ...formData, strategy_type: strat.id })}
                   className={`p-2.5 rounded-xl border cursor-pointer transition ${
                     formData.strategy_type === strat.id
-                      ? 'bg-white border-[#DE6438] text-[#DE6438] shadow-xs'
-                      : 'bg-[#F4EFE6] border-transparent text-[#5A5046] hover:bg-white'
+                      ? 'bg-surface border-brand text-brand shadow-xs'
+                      : 'bg-subtle border-transparent text-ink-2 hover:bg-surface'
                   }`}
                 >
-                  <div className="font-bold text-xs">{strat.label}</div>
-                  <div className="text-[10px] text-[#8C8276] mt-0.5 font-mono">{strat.badge}</div>
+                  <div className="font-bold text-xs">{t(strat.labelKey)}</div>
+                  <div className="text-xs text-ink-3 mt-0.5 font-mono">{t(strat.badgeKey)}</div>
                 </div>
               ))}
             </div>
@@ -232,12 +266,12 @@ export default function CreateBotModal({ isOpen, onClose, onCreated, prefill = n
 
           {/* 策略专属超参 */}
           {activeMeta?.params && activeMeta.params.length > 0 && (
-            <div className="p-3 rounded-xl bg-white border border-[#E6DFD5] space-y-2">
-              <div className="text-[11px] font-bold text-[#2E2823]">策略专属超参 (透传至 StrategyRouter)</div>
+            <div className="p-3 rounded-xl bg-surface border border-line space-y-2">
+              <div className="text-xs font-bold text-ink">{t('form.params')}</div>
               <div className="grid grid-cols-3 gap-2">
                 {activeMeta.params.map((p) => (
                   <div key={p.key}>
-                    <label className="block text-[10px] text-[#7E7469] mb-0.5">{p.label}</label>
+                    <label className="block text-xs text-ink-3 mb-0.5">{p.label}</label>
                     <input
                       type="number"
                       min={p.min}
@@ -247,7 +281,7 @@ export default function CreateBotModal({ isOpen, onClose, onCreated, prefill = n
                       onChange={(e) =>
                         setStrategyConfig((prev) => ({ ...prev, [p.key]: Number(e.target.value) }))
                       }
-                      className="w-full px-2 py-1 border border-[#D8CEBE] rounded font-mono text-[11px]"
+                      className="w-full px-2 py-1 border border-line-strong rounded font-mono text-xs"
                     />
                   </div>
                 ))}
@@ -256,32 +290,32 @@ export default function CreateBotModal({ isOpen, onClose, onCreated, prefill = n
           )}
 
           {/* 实盘就绪 5 项预检清单（TESTNET / MAINNET 模式自动展示） */}
-          {formData.execution_mode !== 'PAPER' && (
-            <div className="p-3.5 rounded-xl bg-white border border-[#DFD6C7] space-y-2">
+          {formData.execution_mode !== 'LOCAL_SIM' && (
+            <div className="p-3.5 rounded-xl bg-surface border border-line-strong space-y-2">
               <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-[#2E2823] flex items-center space-x-1.5">
-                  <ShieldCheck className="w-4 h-4 text-[#DE6438]" />
-                  <span>实盘就绪预检清单 (Live Readiness Preflight)</span>
+                <span className="text-xs font-bold text-ink flex items-center space-x-1.5">
+                  <ShieldCheck className="w-4 h-4 text-brand" />
+                  <span>{t('readiness.title')}</span>
                 </span>
-                <span className="text-[10px] font-mono text-[#7E7469]">
-                  {checkingReadiness ? '检测中...' : formData.execution_mode}
+                <span className="text-xs font-mono text-ink-3">
+                  {checkingReadiness ? t('readiness.checking') : `${formData.market_type} · ${formData.execution_mode}`}
                 </span>
               </div>
               {readiness?.error ? (
-                <div className="text-[11px] text-[#C24D4D]">⚠️ 预检接口返回异常（请先完成钱包签名登录）: {readiness.error}</div>
+                <div className="text-xs text-danger">{t('readiness.error', { message: readiness.error })}</div>
               ) : (
                 <div className="space-y-1.5">
                   {(readiness?.checks || []).map((c) => (
-                    <div key={c.id} className="flex items-center justify-between text-[11px] bg-[#FAF7F2] px-2.5 py-1.5 rounded-lg">
+                    <div key={c.id} className="flex items-center justify-between text-xs bg-panel px-2.5 py-1.5 rounded-lg">
                       <span className="flex items-center space-x-1.5">
                         {c.passed ? (
-                          <CheckCircle2 className="w-3.5 h-3.5 text-[#3D784E]" />
+                          <CheckCircle2 className="w-3.5 h-3.5 text-success" />
                         ) : (
-                          <XCircle className="w-3.5 h-3.5 text-[#C24D4D]" />
+                          <XCircle className="w-3.5 h-3.5 text-danger" />
                         )}
-                        <span className="font-medium text-[#2E2823]">{c.name}</span>
+                        <span className="font-medium text-ink">{c.name}</span>
                       </span>
-                      <span className="text-[10px] text-[#7E7469] font-mono">{c.detail}</span>
+                      <span className="text-xs text-ink-3 font-mono">{c.detail}</span>
                     </div>
                   ))}
                 </div>
@@ -292,9 +326,9 @@ export default function CreateBotModal({ isOpen, onClose, onCreated, prefill = n
           {/* 初始分配资金 */}
           <div>
             <div className="flex items-center justify-between mb-1">
-              <label className="text-[11px] font-semibold text-[#665E54]">初始分配资金 (USD)</label>
-              <span className="font-mono text-xs font-bold text-[#DE6438]">
-                ${Number(formData.allocated_capital).toLocaleString()} USDT
+              <label className="text-xs font-semibold text-ink-2">{t('form.capital')}</label>
+              <span className="font-mono text-xs font-bold text-brand">
+                {fmt.usd(Number(formData.allocated_capital))} USDT
               </span>
             </div>
             <div className="flex items-center space-x-1.5 mb-2 overflow-x-auto pb-1">
@@ -303,10 +337,10 @@ export default function CreateBotModal({ isOpen, onClose, onCreated, prefill = n
                   key={amt}
                   type="button"
                   onClick={() => setFormData({ ...formData, allocated_capital: amt })}
-                  className={`px-2 py-1 rounded-lg text-[10px] font-mono font-bold transition shrink-0 ${
+                  className={`px-2 py-1 rounded-lg text-xs font-mono font-bold transition shrink-0 ${
                     Number(formData.allocated_capital) === amt
-                      ? 'bg-[#DE6438] text-white shadow-xs'
-                      : 'bg-[#F2EDE4] text-[#6E6458] hover:bg-white hover:text-[#DE6438] border border-[#E6DFD5]'
+                      ? 'bg-brand text-white shadow-xs'
+                      : 'bg-subtle text-ink-3 hover:bg-surface hover:text-brand border border-line'
                   }`}
                 >
                   ${amt >= 1000 ? `${amt / 1000}k` : amt}
@@ -319,8 +353,8 @@ export default function CreateBotModal({ isOpen, onClose, onCreated, prefill = n
               step="100"
               value={formData.allocated_capital}
               onChange={(e) => setFormData({ ...formData, allocated_capital: Number(e.target.value) })}
-              className="w-full px-3 py-2 bg-white border border-[#D8CEBE] rounded-xl font-mono text-xs"
-              placeholder="自定义初始资金"
+              className="w-full px-3 py-2 bg-surface border border-line-strong rounded-xl font-mono text-xs"
+              placeholder={t('form.capitalPlaceholder')}
             />
           </div>
 
@@ -328,16 +362,16 @@ export default function CreateBotModal({ isOpen, onClose, onCreated, prefill = n
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2 rounded-xl border border-[#D8CEBE] bg-white text-[#5E554B] hover:bg-[#F2EDE4] font-medium transition"
+              className="px-4 py-2 rounded-xl border border-line-strong bg-surface text-ink-2 hover:bg-subtle font-medium transition"
             >
-              取消
+              {t('actions.cancel')}
             </button>
             <button
               type="submit"
               disabled={loading || blockedByReadiness}
-              className="px-5 py-2 rounded-xl bg-[#DE6438] hover:bg-[#C5532A] text-white font-bold transition flex items-center space-x-1.5 shadow-sm disabled:opacity-50"
+              className="px-5 py-2 rounded-xl bg-brand hover:bg-brand-hover text-white font-bold transition flex items-center space-x-1.5 shadow-sm disabled:opacity-50"
             >
-              <span>{blockedByReadiness ? '实盘预检未通过' : loading ? '初始化实例中...' : '立即创建并装载席位'}</span>
+              <span>{blockedByReadiness ? t('actions.blocked') : loading ? t('actions.creating') : t('actions.submit')}</span>
               {!blockedByReadiness && <ArrowRight className="w-4 h-4" />}
             </button>
           </div>

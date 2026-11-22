@@ -18,8 +18,11 @@ Heimdall 交易平台 - 宏观重大事件避险日历 (Macro Economic Event Gua
 """
 
 import logging
+import os
+import threading
 from datetime import datetime, timedelta, timezone
 from enum import Enum
+from pathlib import Path
 from typing import List, Optional, Tuple, Dict, Any
 from pydantic import BaseModel, Field
 
@@ -87,6 +90,38 @@ class MacroEventCalendar:
         """移除特定事件"""
         self._events.pop(event_id, None)
 
+    @property
+    def events(self) -> List[MacroEvent]:
+        """按事件时间升序返回全部已登记事件"""
+        return sorted(self._events.values(), key=lambda e: _to_naive_utc(e.event_time))
+
+    @property
+    def event_count(self) -> int:
+        return len(self._events)
+
+    def upcoming_events(self, as_of: Optional[datetime] = None, limit: int = 5) -> List[MacroEvent]:
+        """返回 as_of 之后（含正处于静默窗口内）的最近若干条事件"""
+        now = _to_naive_utc(as_of or datetime.now(timezone.utc))
+        res = [
+            e for e in self.events
+            if _to_naive_utc(e.event_time) + timedelta(minutes=e.cool_off_post_minutes) >= now
+        ]
+        return res[:limit]
+
+    def is_stale(self, as_of: Optional[datetime] = None, min_horizon_days: int = 0) -> bool:
+        """
+        日历是否失效：没有任何未来事件，或最后一条事件距今不足 min_horizon_days 天。
+        失效的日历意味着第 6 条铁律（宏观静默期）实际处于“永远放行”状态，实盘应失败即关闭。
+        """
+        upcoming = self.upcoming_events(as_of=as_of, limit=10_000)
+        if not upcoming:
+            return True
+        if min_horizon_days > 0:
+            now = _to_naive_utc(as_of or datetime.now(timezone.utc))
+            last = _to_naive_utc(upcoming[-1].event_time)
+            return (last - now) < timedelta(days=min_horizon_days)
+        return False
+
     def check_blackout_window(
         self, as_of: Optional[datetime] = None
     ) -> Tuple[bool, Optional[MacroEvent], str]:
@@ -125,3 +160,82 @@ class MacroEventCalendar:
                 return True, event, reason
 
         return False, None, ""
+
+
+def _to_naive_utc(dt: datetime) -> datetime:
+    """统一转换为无时区 UTC 时间，便于比较"""
+    if dt.tzinfo is not None:
+        return dt.astimezone(timezone.utc).replace(tzinfo=None)
+    return dt
+
+
+# =============================================================================
+# 全局共享宏观日历：从 config/macro_events.yaml 加载，供所有 HardRiskGuard 与风控雷达复用
+# =============================================================================
+
+_DEFAULT_EVENTS_FILE = Path(__file__).resolve().parent.parent.parent / "config" / "macro_events.yaml"
+_global_calendar: Optional[MacroEventCalendar] = None
+_global_lock = threading.Lock()
+
+
+def load_macro_events_from_yaml(path: Optional[Path] = None) -> List[MacroEvent]:
+    """
+    从 YAML 文件解析宏观事件列表。文件格式：
+
+        events:
+          - event_id: "fomc_2026_12"
+            name: "美联储 12 月利率决议"
+            category: "FOMC_RATE_DECISION"
+            event_time: "2026-12-09T19:00:00Z"
+            cool_off_pre_minutes: 30
+            cool_off_post_minutes: 60
+
+    文件缺失或解析失败时返回空列表并打印告警（调用方据 is_stale() 决定是否失败即关闭）。
+    """
+    target = Path(path or os.getenv("HEIMDALL_MACRO_EVENTS_FILE") or _DEFAULT_EVENTS_FILE)
+    if not target.exists():
+        logger.warning("[MacroCalendar] 未找到宏观事件配置文件 %s，宏观静默期规则将无事件可用", target)
+        return []
+    try:
+        import yaml
+        raw = yaml.safe_load(target.read_text(encoding="utf-8")) or {}
+    except Exception as err:
+        logger.error("[MacroCalendar] 解析宏观事件配置失败 %s: %s", target, err)
+        return []
+
+    items = raw.get("events") if isinstance(raw, dict) else raw
+    events: List[MacroEvent] = []
+    for idx, item in enumerate(items or []):
+        try:
+            if isinstance(item.get("event_time"), str) and item["event_time"].endswith("Z"):
+                item = {**item, "event_time": item["event_time"][:-1] + "+00:00"}
+            events.append(MacroEvent(**item))
+        except Exception as err:
+            logger.error("[MacroCalendar] 跳过第 %d 条非法宏观事件 %s: %s", idx + 1, item, err)
+    logger.info("[MacroCalendar] 已从 %s 加载 %d 条宏观事件", target, len(events))
+    return events
+
+
+def get_global_macro_calendar() -> MacroEventCalendar:
+    """获取（首次调用时惰性加载）全局共享宏观事件日历单例"""
+    global _global_calendar
+    if _global_calendar is None:
+        with _global_lock:
+            if _global_calendar is None:
+                _global_calendar = MacroEventCalendar(load_macro_events_from_yaml())
+                if _global_calendar.is_stale():
+                    logger.warning(
+                        "[MacroCalendar] ⚠️ 全局宏观日历为空或已全部过期，第 6 条铁律（宏观静默期）当前不会触发，"
+                        "请更新 config/macro_events.yaml"
+                    )
+    return _global_calendar
+
+
+def reload_global_macro_calendar(path: Optional[Path] = None) -> MacroEventCalendar:
+    """重新加载全局日历（原地替换事件，已持有引用的 HardRiskGuard 自动生效）"""
+    cal = get_global_macro_calendar()
+    with _global_lock:
+        cal._events.clear()
+        for ev in load_macro_events_from_yaml(path):
+            cal.add_event(ev)
+    return cal

@@ -1,0 +1,83 @@
+{
+  "header": {
+    "title": "零前视事件驱动回测实验室 (Zero-Lookahead Backtest)",
+    "badge": "t 决策 · t+1 撮合",
+    "subtitle": "100% 复用实盘 FactorEngine、StrategyRouter、HardRiskGuard 与 NAVEngine，杜绝未来函数",
+    "applyToBot": "一键用此参数创建 Bot",
+    "running": "回测计算中...",
+    "run": "运行零前视回测"
+  },
+  "form": {
+    "mode": "回测验证模式",
+    "modeSingle": "单段回测",
+    "strategy": "纯算法策略 (StrategyRouter)",
+    "symbol": "标的",
+    "timeframe": "周期",
+    "limitBars": "K 线根数",
+    "initialCapital": "初始资金 ($)",
+    "wfWindows": "Walk-Forward 窗口切分",
+    "trainBars": "观察段",
+    "testBars": "OOS测试",
+    "stepBars": "步长",
+    "params": "策略超参微调"
+  },
+  "strategies": {
+    "trendFollow": "📈 趋势突破 (TREND_FOLLOW)",
+    "grid": "🔲 动态网格 (GRID)",
+    "fundingArb": "⚖️ 资金费率套利 (FUNDING_ARB)"
+  },
+  "guard": {
+    "title": "零前视红线保障",
+    "body": "禁止 LLM 参与历史回测；每根 K 线严格在闭合后评估，撮合与盘中触损全部延后至下一根 bar 结算。"
+  },
+  "empty": {
+    "title": "选择策略与周期，点击右上角「运行零前视回测」",
+    "body": "系统将自动拉取最新闭合历史 K 线（离线时自动降级确定性合成数据），跑完后可一键带参部署为实盘或模拟盘机器人。"
+  },
+  "report": {
+    "summary": "{{strategy}} · {{symbol}} ({{timeframe}}) · 评估 {{bars}} 根 K 线",
+    "dataSource": "数据源: {{source}}"
+  },
+  "metrics": {
+    "cumReturn": "累计收益率",
+    "netPnl": "净盈亏 (USD)",
+    "maxDrawdown": "最大回撤 (MDD)",
+    "sharpe": "年化夏普 (Sharpe)",
+    "sortino": "索提诺比率 (Sortino)",
+    "calmar": "卡玛比率 (Calmar)",
+    "winRate": "平仓胜率",
+    "profitFactor": "盈亏比 (PF)",
+    "expectancy": "单笔期望值",
+    "maxLosses": "最大连亏次数",
+    "timesValue": "{{count}} 次",
+    "fees": "累计手续费",
+    "fundingPnl": "累计资金费损益"
+  },
+  "chart": {
+    "nav": "单位净值曲线 (NAV Curve)",
+    "drawdown": "水下回撤曲线 (Underwater Drawdown %)"
+  },
+  "wf": {
+    "windowsCount": "OOS 样本外窗口数",
+    "windowsValue": "{{count}} 段",
+    "avgReturn": "样本外平均收益率",
+    "avgSharpe": "样本外平均夏普",
+    "worstDrawdown": "最差单窗口回撤",
+    "tableTitle": "Walk-Forward 逐窗口样本外明细",
+    "colWindow": "窗口",
+    "colBars": "评估 K 线",
+    "colReturn": "OOS 收益率",
+    "colSharpe": "夏普比率",
+    "colDrawdown": "最大回撤",
+    "colTrades": "交易数 / 胜率",
+    "windowLabel": "Window #{{index}}",
+    "barsValue": "{{count}} bars",
+    "tradesValue": "{{count}} 笔 / {{winRate}}"
+  },
+  "toast": {
+    "singleDone": "🧪 零前视回测完成 ({{source}})",
+    "wfDone": "🧪 Walk-Forward 样本外滚动验证完成 ({{count}} 个窗口)",
+    "runError": "回测执行失败",
+    "runFailed": "回测失败: {{message}}"
+  }
+}

@@ -5,6 +5,7 @@
  */
 
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import i18n from '../i18n';
 import { listBots, getBotLatestState, getBotNav, getBotTrades, stepBot } from '../api/endpoints';
 
 const BotContext = createContext(null);
@@ -114,7 +115,7 @@ export function BotProvider({ children }) {
 export function useBot() {
   const context = useContext(BotContext);
   if (!context) {
-    throw new Error('useBot 必须在 BotProvider 内部调用');
+    throw new Error(i18n.t('app:context.useBotOutside'));
   }
   return context;
 }

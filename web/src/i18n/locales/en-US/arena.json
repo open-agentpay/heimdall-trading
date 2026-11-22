@@ -1,0 +1,92 @@
+{
+  "toolbar": {
+    "arena": "Debate Table",
+    "kline": "Live Chart (WS feed)",
+    "split": "Split View",
+    "decidedAt": "Decided: {{time}}",
+    "autoRefreshTitle": "Toggle auto-polling for the latest decision every 4 seconds",
+    "polling": "Auto-polling",
+    "pollingPaused": "Polling paused",
+    "refreshTitle": "Fetch the latest multi-source market data and run a new decision round",
+    "refreshing": "Running...",
+    "refresh": "Run decision",
+    "seatHint": "💡 Click any seat to see its reasoning"
+  },
+  "seat": {
+    "pending": "Awaiting decision",
+    "awaitFirst": "Awaiting first round",
+    "sentimentIndex": "Sentiment {{value}}",
+    "bullTag": "Bull case",
+    "bearTag": "Bear case",
+    "strategyTag": "Proposal builder",
+    "moderatorTag": "Verdict",
+    "moderatorBadge": "Final ruling"
+  },
+  "consensus": {
+    "pending": "⏳ Awaiting decision",
+    "long": "🟢 LONG",
+    "short": "🔴 SHORT",
+    "neutral": "⚪ Flat NEUTRAL"
+  },
+  "proposal": {
+    "perpetual": "{{symbol}}-USDT Perp",
+    "multiSource": "Multi-source (Binance / HL)",
+    "awaitingQuote": "Awaiting live quote",
+    "consensus": "Consensus:",
+    "entry": "Limit entry:",
+    "stopLoss": "Stop-loss:",
+    "takeProfit": "Take-profit:",
+    "size": "Kelly position size:",
+    "idempotency": "Idempotency key:",
+    "noProposal": "No trade proposal this round",
+    "noResultDesc": "This bot has no decision yet, so there is no consensus or trade proposal",
+    "neutralDesc": "Bulls and bears reached a neutral consensus; no order was issued this round",
+    "noActiveDesc": "No active order proposal"
+  },
+  "risk": {
+    "label": "Deterministic hard risk guard",
+    "pending": "⏳ Awaiting decision",
+    "idle": "— No proposal this round",
+    "approved": "✓ Passed hard risk checks",
+    "rejected": "✕ Blocked by hard risk guard"
+  },
+  "split": {
+    "title": "Agent debate verdict",
+    "pending": "Awaiting decision",
+    "long": "Long bias",
+    "short": "Short bias",
+    "neutral": "Stay flat",
+    "summary": "Proposal: {{symbol}} at {{price}}",
+    "proposalLine": "Entry {{entry}} · SL {{stop}} · TP {{target}} · Leverage {{leverage}}x"
+  },
+  "footer": {
+    "killSwitch": "Emergency Kill Switch",
+    "pausePolling": "⏸️ Pause auto-polling",
+    "resumePolling": "▶️ Resume auto-polling",
+    "leverage": "Strategy leverage:",
+    "executing": "Sending to paper engine...",
+    "execute": "Execute order"
+  },
+  "kline": {
+    "perpetual": "Perpetual",
+    "bifrost": "🏛️ Bifrost engine",
+    "ema": "EMA",
+    "tradeMarkers": "Trade markers",
+    "status": {
+      "tvConnected": "TV · BINANCE WS connected",
+      "tvDisconnected": "TV · BINANCE WS disconnected",
+      "loading": "BIFROST · {{interval}} loading",
+      "simulated": "BIFROST · {{interval}} simulated offline data",
+      "unavailable": "BIFROST · {{interval}} data unavailable"
+    },
+    "loading": "⏳ Loading candles…",
+    "empty": "📭 No candle data",
+    "unavailable": "📡 Candle data unavailable: {{reason}}",
+    "networkFailed": "Network request failed",
+    "simulatedBanner": "⚠️ All external market feeds are down; showing simulated offline candles, not real market data",
+    "markPrice": "Mark price: <strong>{{price}}</strong>",
+    "priceSource": "Price source:",
+    "wsLive": "Binance WS live",
+    "wsDisconnected": "Binance WS disconnected"
+  }
+}

@@ -1,0 +1,60 @@
+{
+  "header": {
+    "title": "蜂群编排与集群管控 (Swarm)",
+    "subtitle": "多策略并行矩阵 · 划拨本金 {{capital}} · 运行状态 {{running}}/{{total}}"
+  },
+  "actions": {
+    "startAll": "全量启动",
+    "stopAll": "全量挂起",
+    "capital": "资金配比",
+    "createBot": "新建机器人"
+  },
+  "stats": {
+    "activeStrategies": "活跃策略数",
+    "totalCapital": "划拨总本金",
+    "decisionInterval": "启动决策周期",
+    "intervalMinutes": "{{minutes}} 分钟 盯盘",
+    "intervalSeconds": "{{seconds}}s 盯盘",
+    "riskLevel": "风控防御等级",
+    "riskLevelValue": "7重全防护"
+  },
+  "grid": {
+    "title": "机器人编队矩阵",
+    "count": "({{count}} 台在编)",
+    "refresh": "刷新集群状态"
+  },
+  "card": {
+    "running": "● 运行中",
+    "idle": "○ 待命中",
+    "strategy": "策略模型",
+    "capital": "划拨本金",
+    "route": "交易所 · 市场 · 模式",
+    "macroBias": "宏观门控 (MacroBias)",
+    "macroRelease": "解除",
+    "macroReduce": "降仓",
+    "monitoring": "当前监控中",
+    "select": "切换席位",
+    "stepTitle": "立即单步推演",
+    "step": "推演",
+    "stop": "挂起",
+    "start": "启动",
+    "deleteTitle": "删除机器人 {{name}}"
+  },
+  "macro": {
+    "manualReason": "蜂群控制台手动启用 0.5x 防守降仓门控"
+  },
+  "toast": {
+    "batchStarting": "🚀 正在批量启动所有待命中机器人...",
+    "batchStarted": "✅ 所有策略机器人已全部投入后台盯盘！",
+    "batchStopping": "⏸️ 正在批量挂起所有运行中机器人...",
+    "batchStopped": "⏹️ 蜂群策略协程已全量安全挂起",
+    "botStopped": "⏹️ 机器人 [{{name}}] 已挂起",
+    "botStarted": "▶️ 机器人 [{{name}}] 已启动盯盘",
+    "actionFailed": "操作失败: {{message}}",
+    "stepDone": "⚡ 机器人 [{{name}}] 完成单步多智能体推演",
+    "stepFailed": "推演失败: {{message}}",
+    "macroCleared": "✅ 已清除 [{{name}}] 宏观门控，恢复正常仓位",
+    "macroEnabled": "🛡️ 已为 [{{name}}] 启用 MacroBias 0.5x 降仓门控 (60分钟)",
+    "macroFailed": "宏观门控设置失败: {{message}}"
+  }
+}

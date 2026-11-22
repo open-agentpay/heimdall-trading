@@ -3,29 +3,37 @@
 Heimdall 交易平台 - 标的规格与 Decimal 精度归一化引擎 (InstrumentSpec & Normalizer)
 ================================================================================
 
-【为什么实盘必须废弃浮点 `round(price, 2)`？】：
-1. 不同交易所、不同币种的价格步长（tickSize）和数量步长（stepSize）差异极大（例如 PEPE 价格精确到 7 位小数，
-   BTC 价格步长 0.1，OKX 永续合约按“张”下单并带有合约面值 `ctVal`）；
-2. Python 浮点数存在二进制精度误差（如 0.1 + 0.2 = 0.30000000000000004），直接发往交易所会频繁触发
-   `PRICE_FILTER`、`LOT_SIZE` 或 `MIN_NOTIONAL` 拒单；
-3. 本模块统一采用 `Decimal` + 向下截断（`ROUND_DOWN`），确保每一笔发往交易所的委托价、数量与止盈止损价
-   100% 满足目标交易所精度规则，且截断后的数量与名义金额严格达到最小下单门槛。
+按 `exchange + market_type + symbol` 三元组独立索引现货与 U 本位合约的：
+- tick_size（价格步长）
+- step_size（数量步长）
+- min_qty（最小下单数量）
+- min_notional_usd（最小名义金额）
+- contract_val（合约面值）
 """
 from __future__ import annotations
 
 import logging
 from decimal import Decimal, ROUND_DOWN
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Union
 from pydantic import BaseModel
 
-from heimdall.models.schemas import TradeProposal
+from heimdall.models.schemas import MarketType, TradeProposal
 
 logger = logging.getLogger(__name__)
 
 
+def _norm_market_type(market_type: Union[str, MarketType, None]) -> str:
+    if isinstance(market_type, MarketType):
+        return market_type.value
+    if not market_type:
+        return MarketType.USDM_FUTURES.value
+    return str(market_type).upper().strip()
+
+
 class InstrumentSpec(BaseModel):
-    """单交易所单交易对的精度步长与最小下单门槛规格"""
+    """单交易所单市场单交易对的精度步长与最小下单门槛规格"""
     exchange: str                         # 交易所名称：BINANCE / OKX / HYPERLIQUID
+    market_type: str = MarketType.USDM_FUTURES.value  # 市场类型：SPOT / USDM_FUTURES
     symbol: str                           # 标准化基础币种代码，如 BTC / ETH / PEPE
     tick_size: Decimal                    # 最小价格变动单位 (如 0.01 或 0.0000001)
     step_size: Decimal                    # 最小下单数量步长 (如 0.001 或 1)
@@ -37,6 +45,7 @@ class InstrumentSpec(BaseModel):
 class NormalizedOrderParams(BaseModel):
     """经过 Decimal 严格归一化后的可执行下单参数对象"""
     exchange: str
+    market_type: str = MarketType.USDM_FUTURES.value
     symbol: str
     price: Decimal
     quantity: Decimal
@@ -46,7 +55,7 @@ class NormalizedOrderParams(BaseModel):
 
 
 def _normalize_symbol(symbol: str) -> str:
-    """将各交易所不同命名的合约代码统一清洗为基础币种（如 ETHUSDT / ETH-USDT-SWAP -> ETH）"""
+    """将各交易所不同命名的合约/现货代码统一清洗为基础币种（如 ETHUSDT / ETH-USDT-SWAP -> ETH）"""
     s = symbol.upper().strip()
     for suffix in ("-USDT-SWAP", "-USD-SWAP", "USDT", "-PERP"):
         if s.endswith(suffix) and len(s) > len(suffix):
@@ -84,22 +93,21 @@ class OrderNormalizer:
         if spec.step_size <= 0 or spec.contract_val <= 0:
             raise ValueError("step_size 与 contract_val 必须大于 0")
 
-        # 换算原始数量（若为张计价合约则除以单张面值 contract_val）
         raw_qty = Decimal(str(size_usd)) / (price * spec.contract_val)
         qty = (raw_qty / spec.step_size).to_integral_value(rounding=ROUND_DOWN) * spec.step_size
 
         if qty < spec.min_qty:
             logger.warning(
-                "[精度归一化拦截] 标的=%s(%s) 截断数量 %s 低于最小下单量 %s",
-                spec.symbol, spec.exchange, qty, spec.min_qty,
+                "[精度归一化拦截] 标的=%s(%s/%s) 截断数量 %s 低于最小下单量 %s",
+                spec.symbol, spec.exchange, spec.market_type, qty, spec.min_qty,
             )
             raise ValueError(f"截断后数量 {qty} 小于最小下单量 {spec.min_qty}")
 
         notional = qty * price * spec.contract_val
         if notional < spec.min_notional_usd:
             logger.warning(
-                "[精度归一化拦截] 标的=%s(%s) 名义金额 $%.2f 低于最小下单门槛 $%.2f",
-                spec.symbol, spec.exchange, notional, spec.min_notional_usd,
+                "[精度归一化拦截] 标的=%s(%s/%s) 名义金额 $%.2f 低于最小下单门槛 $%.2f",
+                spec.symbol, spec.exchange, spec.market_type, notional, spec.min_notional_usd,
             )
             raise ValueError(
                 f"名义金额 ${notional:.2f} 低于交易所门槛 ${spec.min_notional_usd:.2f}"
@@ -112,7 +120,7 @@ class OrderNormalizer:
         proposal: TradeProposal,
         spec: InstrumentSpec,
     ) -> NormalizedOrderParams:
-        """将 TradeProposal 的委托价、下单数量与止盈止损价一次性对齐到目标交易所精度"""
+        """将 TradeProposal 的委托价、下单数量与止盈止损价一次性对齐到目标交易所市场精度"""
         action = proposal.trade_action
         q_price = cls.quantize_price(action.target_price, spec)
         q_qty = cls.quantize_qty(action.size_in_usd, q_price, spec)
@@ -122,9 +130,10 @@ class OrderNormalizer:
         q_tp = cls.quantize_price(action.take_profit_price, spec) if action.take_profit_price else None
 
         logger.info(
-            "[精度归一化完成] proposal=%s | 交易所=%s | 标的=%s | 委托价 %s -> %s | 数量=%s | 名义额=$%s | SL=%s | TP=%s",
+            "[精度归一化完成] proposal=%s | %s/%s | 标的=%s | 委托价 %s -> %s | 数量=%s | 名义额=$%s | SL=%s | TP=%s",
             proposal.proposal_id,
             spec.exchange,
+            spec.market_type,
             spec.symbol,
             action.target_price,
             q_price,
@@ -135,6 +144,7 @@ class OrderNormalizer:
         )
         return NormalizedOrderParams(
             exchange=spec.exchange,
+            market_type=spec.market_type,
             symbol=spec.symbol,
             price=q_price,
             quantity=q_qty,
@@ -146,68 +156,117 @@ class OrderNormalizer:
 
 class InstrumentRegistry:
     """
-    多交易所标的规格注册表与元数据刷新器。
-    内置主流合约默认精度，并支持从 Binance / OKX 实时元数据响应批量动态刷新。
+    多交易所多市场标的规格注册表与元数据刷新器。
+    查找键严格为 `(exchange, market_type, symbol)`。
     """
 
     def __init__(self) -> None:
-        self._specs: Dict[tuple[str, str], InstrumentSpec] = {}
+        self._specs: Dict[tuple[str, str, str], InstrumentSpec] = {}
+        # P1：规格来源，builtin = 代码内置规格表，exchange = 交易所 exchangeInfo
+        self._sources: Dict[tuple[str, str, str], str] = {}
         self._seed_defaults()
 
     def _seed_defaults(self) -> None:
-        """预置 Binance / OKX / Hyperliquid 主流永续合约的基准精度规格"""
+        """预置 Binance（SPOT & USDM_FUTURES）/ OKX / Hyperliquid 主流标的基准精度规格"""
         defaults = [
             # Binance USDS-M Futures（U 本位永续）
-            InstrumentSpec(exchange="BINANCE", symbol="BTC", tick_size=Decimal("0.1"), step_size=Decimal("0.001"), min_qty=Decimal("0.001"), min_notional_usd=Decimal("5.0")),
-            InstrumentSpec(exchange="BINANCE", symbol="ETH", tick_size=Decimal("0.01"), step_size=Decimal("0.001"), min_qty=Decimal("0.001"), min_notional_usd=Decimal("5.0")),
-            InstrumentSpec(exchange="BINANCE", symbol="SOL", tick_size=Decimal("0.01"), step_size=Decimal("0.1"), min_qty=Decimal("0.1"), min_notional_usd=Decimal("5.0")),
-            InstrumentSpec(exchange="BINANCE", symbol="BNB", tick_size=Decimal("0.01"), step_size=Decimal("0.01"), min_qty=Decimal("0.01"), min_notional_usd=Decimal("5.0")),
-            InstrumentSpec(exchange="BINANCE", symbol="DOGE", tick_size=Decimal("0.00001"), step_size=Decimal("1"), min_qty=Decimal("1"), min_notional_usd=Decimal("5.0")),
-            InstrumentSpec(exchange="BINANCE", symbol="XRP", tick_size=Decimal("0.0001"), step_size=Decimal("0.1"), min_qty=Decimal("0.1"), min_notional_usd=Decimal("5.0")),
-            InstrumentSpec(exchange="BINANCE", symbol="ADA", tick_size=Decimal("0.0001"), step_size=Decimal("1"), min_qty=Decimal("1"), min_notional_usd=Decimal("5.0")),
-            InstrumentSpec(exchange="BINANCE", symbol="AVAX", tick_size=Decimal("0.001"), step_size=Decimal("0.1"), min_qty=Decimal("0.1"), min_notional_usd=Decimal("5.0")),
-            InstrumentSpec(exchange="BINANCE", symbol="SUI", tick_size=Decimal("0.0001"), step_size=Decimal("0.1"), min_qty=Decimal("0.1"), min_notional_usd=Decimal("5.0")),
-            InstrumentSpec(exchange="BINANCE", symbol="LINK", tick_size=Decimal("0.001"), step_size=Decimal("0.01"), min_qty=Decimal("0.01"), min_notional_usd=Decimal("5.0")),
-            InstrumentSpec(exchange="BINANCE", symbol="NEAR", tick_size=Decimal("0.001"), step_size=Decimal("0.1"), min_qty=Decimal("0.1"), min_notional_usd=Decimal("5.0")),
-            InstrumentSpec(exchange="BINANCE", symbol="APT", tick_size=Decimal("0.001"), step_size=Decimal("0.1"), min_qty=Decimal("0.1"), min_notional_usd=Decimal("5.0")),
-            InstrumentSpec(exchange="BINANCE", symbol="ARB", tick_size=Decimal("0.0001"), step_size=Decimal("0.1"), min_qty=Decimal("0.1"), min_notional_usd=Decimal("5.0")),
-            InstrumentSpec(exchange="BINANCE", symbol="OP", tick_size=Decimal("0.0001"), step_size=Decimal("0.1"), min_qty=Decimal("0.1"), min_notional_usd=Decimal("5.0")),
-            InstrumentSpec(exchange="BINANCE", symbol="PEPE", tick_size=Decimal("0.0000001"), step_size=Decimal("1"), min_qty=Decimal("100"), min_notional_usd=Decimal("5.0")),
+            InstrumentSpec(exchange="BINANCE", market_type="USDM_FUTURES", symbol="BTC", tick_size=Decimal("0.1"), step_size=Decimal("0.001"), min_qty=Decimal("0.001"), min_notional_usd=Decimal("5.0")),
+            InstrumentSpec(exchange="BINANCE", market_type="USDM_FUTURES", symbol="ETH", tick_size=Decimal("0.01"), step_size=Decimal("0.001"), min_qty=Decimal("0.001"), min_notional_usd=Decimal("5.0")),
+            InstrumentSpec(exchange="BINANCE", market_type="USDM_FUTURES", symbol="SOL", tick_size=Decimal("0.01"), step_size=Decimal("0.1"), min_qty=Decimal("0.1"), min_notional_usd=Decimal("5.0")),
+            InstrumentSpec(exchange="BINANCE", market_type="USDM_FUTURES", symbol="BNB", tick_size=Decimal("0.01"), step_size=Decimal("0.01"), min_qty=Decimal("0.01"), min_notional_usd=Decimal("5.0")),
+            InstrumentSpec(exchange="BINANCE", market_type="USDM_FUTURES", symbol="DOGE", tick_size=Decimal("0.00001"), step_size=Decimal("1"), min_qty=Decimal("1"), min_notional_usd=Decimal("5.0")),
+            InstrumentSpec(exchange="BINANCE", market_type="USDM_FUTURES", symbol="XRP", tick_size=Decimal("0.0001"), step_size=Decimal("0.1"), min_qty=Decimal("0.1"), min_notional_usd=Decimal("5.0")),
+            InstrumentSpec(exchange="BINANCE", market_type="USDM_FUTURES", symbol="ADA", tick_size=Decimal("0.0001"), step_size=Decimal("1"), min_qty=Decimal("1"), min_notional_usd=Decimal("5.0")),
+            InstrumentSpec(exchange="BINANCE", market_type="USDM_FUTURES", symbol="AVAX", tick_size=Decimal("0.001"), step_size=Decimal("0.1"), min_qty=Decimal("0.1"), min_notional_usd=Decimal("5.0")),
+            InstrumentSpec(exchange="BINANCE", market_type="USDM_FUTURES", symbol="SUI", tick_size=Decimal("0.0001"), step_size=Decimal("0.1"), min_qty=Decimal("0.1"), min_notional_usd=Decimal("5.0")),
+            InstrumentSpec(exchange="BINANCE", market_type="USDM_FUTURES", symbol="LINK", tick_size=Decimal("0.001"), step_size=Decimal("0.01"), min_qty=Decimal("0.01"), min_notional_usd=Decimal("5.0")),
+            InstrumentSpec(exchange="BINANCE", market_type="USDM_FUTURES", symbol="NEAR", tick_size=Decimal("0.001"), step_size=Decimal("0.1"), min_qty=Decimal("0.1"), min_notional_usd=Decimal("5.0")),
+            InstrumentSpec(exchange="BINANCE", market_type="USDM_FUTURES", symbol="APT", tick_size=Decimal("0.001"), step_size=Decimal("0.1"), min_qty=Decimal("0.1"), min_notional_usd=Decimal("5.0")),
+            InstrumentSpec(exchange="BINANCE", market_type="USDM_FUTURES", symbol="ARB", tick_size=Decimal("0.0001"), step_size=Decimal("0.1"), min_qty=Decimal("0.1"), min_notional_usd=Decimal("5.0")),
+            InstrumentSpec(exchange="BINANCE", market_type="USDM_FUTURES", symbol="OP", tick_size=Decimal("0.0001"), step_size=Decimal("0.1"), min_qty=Decimal("0.1"), min_notional_usd=Decimal("5.0")),
+            InstrumentSpec(exchange="BINANCE", market_type="USDM_FUTURES", symbol="PEPE", tick_size=Decimal("0.0000001"), step_size=Decimal("1"), min_qty=Decimal("100"), min_notional_usd=Decimal("5.0")),
+            # Binance SPOT（现货市场独立步长与最小名义额）
+            InstrumentSpec(exchange="BINANCE", market_type="SPOT", symbol="BTC", tick_size=Decimal("0.01"), step_size=Decimal("0.00001"), min_qty=Decimal("0.00001"), min_notional_usd=Decimal("5.0")),
+            InstrumentSpec(exchange="BINANCE", market_type="SPOT", symbol="ETH", tick_size=Decimal("0.01"), step_size=Decimal("0.0001"), min_qty=Decimal("0.0001"), min_notional_usd=Decimal("5.0")),
+            InstrumentSpec(exchange="BINANCE", market_type="SPOT", symbol="SOL", tick_size=Decimal("0.01"), step_size=Decimal("0.001"), min_qty=Decimal("0.001"), min_notional_usd=Decimal("5.0")),
+            InstrumentSpec(exchange="BINANCE", market_type="SPOT", symbol="BNB", tick_size=Decimal("0.01"), step_size=Decimal("0.001"), min_qty=Decimal("0.001"), min_notional_usd=Decimal("5.0")),
+            InstrumentSpec(exchange="BINANCE", market_type="SPOT", symbol="DOGE", tick_size=Decimal("0.00001"), step_size=Decimal("1"), min_qty=Decimal("1"), min_notional_usd=Decimal("5.0")),
+            InstrumentSpec(exchange="BINANCE", market_type="SPOT", symbol="XRP", tick_size=Decimal("0.0001"), step_size=Decimal("1"), min_qty=Decimal("1"), min_notional_usd=Decimal("5.0")),
+            InstrumentSpec(exchange="BINANCE", market_type="SPOT", symbol="PEPE", tick_size=Decimal("0.00000001"), step_size=Decimal("1"), min_qty=Decimal("100"), min_notional_usd=Decimal("5.0")),
             # OKX USDT-SWAP（按张计价，含合约面值 contract_val）
-            InstrumentSpec(exchange="OKX", symbol="BTC", tick_size=Decimal("0.1"), step_size=Decimal("1"), min_qty=Decimal("1"), min_notional_usd=Decimal("5.0"), contract_val=Decimal("0.01")),
-            InstrumentSpec(exchange="OKX", symbol="ETH", tick_size=Decimal("0.01"), step_size=Decimal("1"), min_qty=Decimal("1"), min_notional_usd=Decimal("5.0"), contract_val=Decimal("0.1")),
-            InstrumentSpec(exchange="OKX", symbol="SOL", tick_size=Decimal("0.01"), step_size=Decimal("1"), min_qty=Decimal("1"), min_notional_usd=Decimal("5.0"), contract_val=Decimal("1")),
+            InstrumentSpec(exchange="OKX", market_type="USDM_FUTURES", symbol="BTC", tick_size=Decimal("0.1"), step_size=Decimal("1"), min_qty=Decimal("1"), min_notional_usd=Decimal("5.0"), contract_val=Decimal("0.01")),
+            InstrumentSpec(exchange="OKX", market_type="USDM_FUTURES", symbol="ETH", tick_size=Decimal("0.01"), step_size=Decimal("1"), min_qty=Decimal("1"), min_notional_usd=Decimal("5.0"), contract_val=Decimal("0.1")),
+            InstrumentSpec(exchange="OKX", market_type="USDM_FUTURES", symbol="SOL", tick_size=Decimal("0.01"), step_size=Decimal("1"), min_qty=Decimal("1"), min_notional_usd=Decimal("5.0"), contract_val=Decimal("1")),
             # Hyperliquid Perps
-            InstrumentSpec(exchange="HYPERLIQUID", symbol="BTC", tick_size=Decimal("0.1"), step_size=Decimal("0.0001"), min_qty=Decimal("0.0001"), min_notional_usd=Decimal("10.0")),
-            InstrumentSpec(exchange="HYPERLIQUID", symbol="ETH", tick_size=Decimal("0.01"), step_size=Decimal("0.001"), min_qty=Decimal("0.001"), min_notional_usd=Decimal("10.0")),
-            InstrumentSpec(exchange="HYPERLIQUID", symbol="SOL", tick_size=Decimal("0.01"), step_size=Decimal("0.01"), min_qty=Decimal("0.01"), min_notional_usd=Decimal("10.0")),
+            InstrumentSpec(exchange="HYPERLIQUID", market_type="USDM_FUTURES", symbol="BTC", tick_size=Decimal("0.1"), step_size=Decimal("0.0001"), min_qty=Decimal("0.0001"), min_notional_usd=Decimal("10.0")),
+            InstrumentSpec(exchange="HYPERLIQUID", market_type="USDM_FUTURES", symbol="ETH", tick_size=Decimal("0.01"), step_size=Decimal("0.001"), min_qty=Decimal("0.001"), min_notional_usd=Decimal("10.0")),
+            InstrumentSpec(exchange="HYPERLIQUID", market_type="USDM_FUTURES", symbol="SOL", tick_size=Decimal("0.01"), step_size=Decimal("0.01"), min_qty=Decimal("0.01"), min_notional_usd=Decimal("10.0")),
         ]
         for sp in defaults:
             self.register(sp)
 
-    def register(self, spec: InstrumentSpec) -> None:
-        """注册或覆盖指定交易所标的的精度规格"""
-        key = (spec.exchange.upper().strip(), _normalize_symbol(spec.symbol))
+    def register(self, spec: InstrumentSpec, source: str = "builtin") -> None:
+        """注册或覆盖指定 (exchange, market_type, symbol) 精度规格；source 记录规格来源（builtin / exchange）"""
+        key = (
+            spec.exchange.upper().strip(),
+            _norm_market_type(spec.market_type),
+            _normalize_symbol(spec.symbol),
+        )
         self._specs[key] = spec
+        self._sources[key] = source
 
-    def get_spec(self, exchange: str, symbol: str) -> InstrumentSpec:
-        """查询目标交易所标的的精度规格；未登记时回退至保守通用规格并记录调试日志"""
+    @staticmethod
+    def _key(exchange: str, symbol: str, market_type: Union[str, MarketType, None]) -> tuple:
+        return (exchange.upper().strip(), _norm_market_type(market_type), _normalize_symbol(symbol))
+
+    def has_spec(
+        self,
+        exchange: str,
+        symbol: str,
+        market_type: Union[str, MarketType] = MarketType.USDM_FUTURES,
+    ) -> bool:
+        """P1：该标的是否有已登记的规格（交易所拉取或内置规格表）；False 表示 get_spec 只能给出保守默认精度"""
+        return self._key(exchange, symbol, market_type) in self._specs
+
+    def spec_source(
+        self,
+        exchange: str,
+        symbol: str,
+        market_type: Union[str, MarketType] = MarketType.USDM_FUTURES,
+    ) -> Optional[str]:
+        """P1：规格来源 exchange / builtin；未登记返回 None（get_spec 将使用默认精度）"""
+        return self._sources.get(self._key(exchange, symbol, market_type))
+
+    def get_spec(
+        self,
+        exchange: str,
+        symbol: str,
+        market_type: Union[str, MarketType] = MarketType.USDM_FUTURES,
+    ) -> InstrumentSpec:
+        """按 `(exchange, market_type, symbol)` 精确查询目标市场标的规格；未登记时回退至保守默认规格"""
         ex = exchange.upper().strip()
+        mt = _norm_market_type(market_type)
         sym = _normalize_symbol(symbol)
-        if (ex, sym) in self._specs:
-            return self._specs[(ex, sym)]
-        logger.debug("[标的规格注册表] 未命中已登记规格 (%s/%s)，使用保守默认精度", ex, sym)
+        if (ex, mt, sym) in self._specs:
+            return self._specs[(ex, mt, sym)]
+        logger.debug("[标的规格注册表] 未命中已登记规格 (%s/%s/%s)，使用保守默认精度", ex, mt, sym)
         return InstrumentSpec(
             exchange=ex,
+            market_type=mt,
             symbol=sym,
             tick_size=Decimal("0.01"),
-            step_size=Decimal("0.001"),
-            min_qty=Decimal("0.001"),
+            step_size=Decimal("0.0001") if mt == "SPOT" else Decimal("0.001"),
+            min_qty=Decimal("0.0001") if mt == "SPOT" else Decimal("0.001"),
             min_notional_usd=Decimal("10.0"),
         )
 
-    def refresh_from_binance_exchange_info(self, payload: Dict[str, Any]) -> int:
-        """解析 Binance `/fapi/v1/exchangeInfo` 响应并批量更新合约精度规格"""
+    def refresh_from_binance_exchange_info(
+        self,
+        payload: Dict[str, Any],
+        market_type: Union[str, MarketType] = MarketType.USDM_FUTURES,
+    ) -> int:
+        """解析 Binance `/fapi/v1/exchangeInfo` 或 `/api/v3/exchangeInfo` 响应并批量更新对应市场规格"""
+        mt = _norm_market_type(market_type)
         updated = 0
         for item in payload.get("symbols", []):
             raw_sym = item.get("symbol", "")
@@ -216,21 +275,22 @@ class InstrumentRegistry:
             filters = {f.get("filterType"): f for f in item.get("filters", [])}
             pf = filters.get("PRICE_FILTER", {})
             lf = filters.get("LOT_SIZE", {})
-            nf = filters.get("MIN_NOTIONAL", {})
+            nf = filters.get("MIN_NOTIONAL") or filters.get("NOTIONAL") or {}
             tick = Decimal(str(pf.get("tickSize", "0.01"))).normalize()
             step = Decimal(str(lf.get("stepSize", "0.001"))).normalize()
             min_q = Decimal(str(lf.get("minQty", step))).normalize()
-            min_n = Decimal(str(nf.get("notional", "5.0")))
+            min_n = Decimal(str(nf.get("notional") or nf.get("minNotional") or "5.0"))
             self.register(InstrumentSpec(
                 exchange="BINANCE",
+                market_type=mt,
                 symbol=_normalize_symbol(raw_sym),
                 tick_size=tick,
                 step_size=step,
                 min_qty=min_q,
                 min_notional_usd=min_n,
-            ))
+            ), source="exchange")
             updated += 1
-        logger.info("[标的规格注册表] 已从 Binance exchangeInfo 刷新 %d 个 USDT 永续合约规格", updated)
+        logger.info("[标的规格注册表] 已从 Binance %s exchangeInfo 刷新 %d 个 USDT 交易对规格", mt, updated)
         return updated
 
     def refresh_from_okx_instruments(self, payload: Dict[str, Any]) -> int:
@@ -242,6 +302,7 @@ class InstrumentRegistry:
                 continue
             self.register(InstrumentSpec(
                 exchange="OKX",
+                market_type="USDM_FUTURES",
                 symbol=_normalize_symbol(inst_id),
                 tick_size=Decimal(str(item.get("tickSz", "0.01"))).normalize(),
                 step_size=Decimal(str(item.get("lotSz", "1"))).normalize(),

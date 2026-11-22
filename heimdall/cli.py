@@ -154,7 +154,7 @@ def main():
     # 1. serve 命令
     serve_parser = subparsers.add_parser("serve", help="启动平台 Web API 服务端")
     serve_parser.add_argument("--host", default="0.0.0.0", help="监听网络主机地址")
-    serve_parser.add_argument("--port", type=int, default=8080, help="监听端口")
+    serve_parser.add_argument("--port", type=int, default=8000, help="监听端口（与 Docker、前端开发代理一致）")
     serve_parser.add_argument("--reload", action="store_true", help="热重载模式")
     serve_parser.set_defaults(func=cmd_serve)
 

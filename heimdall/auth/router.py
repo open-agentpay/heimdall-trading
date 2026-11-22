@@ -24,6 +24,8 @@ from heimdall.auth.vault import (
     generate_siwe_message,
     verify_wallet_signature,
     test_key_connectivity,
+    extract_credential_scope,
+    normalize_exchange_scope,
 )
 from heimdall.auth.dependencies import require_authenticated_wallet
 
@@ -61,6 +63,15 @@ class DirectTestKeyRequest(BaseModel):
 class UpdateKeyNetworkRequest(BaseModel):
     """切换交易所密钥所属网络环境（测试网/模拟盘 vs 正式网）"""
     is_testnet: bool = Field(..., description="True 表示测试网/模拟交易密钥，False 表示正式网密钥")
+
+
+class UpdateKeyRequest(BaseModel):
+    """更新凭据配置请求体 (支持修改 model, base_url, label 以及密钥内容)"""
+    label: Optional[str] = Field(default=None, description="自定义别名备注")
+    model: Optional[str] = Field(default=None, description="LLM 模型代码 (如 deepseek-chat, gpt-4o)")
+    base_url: Optional[str] = Field(default=None, description="自定义 API 端点 Base URL")
+    api_key: Optional[str] = Field(default=None, description="更新明文 API Key (留空或空串则保持原密钥)")
+    secret_key: Optional[str] = Field(default=None, description="更新明文 Secret Key (留空或空串则保持原密钥)")
 
 
 # ==============================================================================
@@ -174,10 +185,14 @@ async def list_vault_keys(
         enc = item.pop("encrypted_data", None)
         prov = str(item.get("provider") or "").lower()
         is_testnet = prov == "binance_demo"
+        cred_mt, cred_em = None, None
         if enc:
             try:
                 creds = crypto_vault.decrypt_payload(enc)
-                if prov in ("binance", "binance_demo"):
+                cred_mt, cred_em = extract_credential_scope(prov, creds)
+                if cred_em:
+                    is_testnet = cred_em == "TESTNET"
+                elif prov in ("binance", "binance_demo"):
                     if "is_testnet" in creds:
                         is_testnet = bool(creds.get("is_testnet"))
                     elif str(creds.get("mode", "")).lower() in ("demo", "testnet"):
@@ -187,11 +202,32 @@ async def list_vault_keys(
                     item["base_url"] = creds.get("base_url") or ""
             except Exception:
                 pass
+        item["market_type"] = cred_mt
+        item["execution_mode"] = cred_em
         item["is_testnet"] = is_testnet
         item["is_active"] = bool(item.get("is_active", 1))
         sanitized.append(item)
     logger.info("[密钥金库查询] 钱包=%s | 返回脱敏凭证条数=%d", caller_wallet, len(sanitized))
     return sanitized
+
+
+def _identity_mask(payload: Dict[str, Any]) -> str:
+    """
+    生成用于列表展示的脱敏标识。
+    优先使用可公开的标识（API Key 公钥、钱包地址）；只提供了私钥时（如 Hyperliquid 未填地址），
+    由私钥推导出钱包地址再打码，绝不截取私钥本身的字符展示。
+    """
+    public_id = payload.get("api_key") or payload.get("agent_wallet") or payload.get("wallet_address")
+    if public_id:
+        return mask_secret(str(public_id))
+    private_key = payload.get("private_key") or payload.get("secret_key")
+    if private_key:
+        try:
+            from eth_account import Account
+            return mask_secret(Account.from_key(str(private_key).strip()).address)
+        except Exception:
+            return "••••••••"
+    return ""
 
 
 @auth_router.post("/vault/keys")
@@ -206,11 +242,13 @@ async def create_vault_key(
     now_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
     # 智能提取关键识别信息并打码
-    raw_key = req.payload.get("api_key") or req.payload.get("private_key") or req.payload.get("agent_wallet") or ""
-    mask = mask_secret(str(raw_key))
+    mask = _identity_mask(req.payload)
+
+    # 交易所凭证显式写入 market_type / execution_mode（否则建机器人时精确匹配会失败）
+    payload_to_store = normalize_exchange_scope(req.provider, req.payload)
 
     # 执行 AES-256-GCM 加密
-    encrypted_str = crypto_vault.encrypt_payload(req.payload)
+    encrypted_str = crypto_vault.encrypt_payload(payload_to_store)
 
     is_active = 1
     if req.category == "llms":
@@ -300,8 +338,14 @@ async def update_vault_key_network(
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"凭证解密失败: {exc}")
 
+    prov = str(row.get("provider") or "").lower()
+    if prov == "binance_demo" and not req.is_testnet:
+        raise HTTPException(status_code=400, detail="Binance Spot Demo 只有测试环境，不能切换为正式网")
     creds["is_testnet"] = bool(req.is_testnet)
     creds["mode"] = "demo" if req.is_testnet else "mainnet"
+    # 凭证里显式写着 execution_mode 时它优先于 is_testnet，必须一起更新，否则切换不生效
+    creds["execution_mode"] = "TESTNET" if req.is_testnet else "MAINNET"
+    creds = normalize_exchange_scope(prov, creds)
     new_encrypted = crypto_vault.encrypt_payload(creds)
     now_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
@@ -321,6 +365,94 @@ async def update_vault_key_network(
         "is_testnet": bool(req.is_testnet),
         "mode": creds["mode"],
         "message": f"已将该密钥切换为「{mode_label}」环境",
+    }
+
+
+@auth_router.patch("/vault/keys/{key_id}")
+async def update_vault_key(
+    key_id: str,
+    req: UpdateKeyRequest,
+    caller_wallet: str = Depends(require_authenticated_wallet),
+) -> Dict[str, Any]:
+    """
+    更新加密凭据的配置信息 (model, base_url, label 及可选密钥内容)。
+    【防越权加固】：严格核验所有权，非凭据所属钱包禁止跨租户修改！
+    """
+    rows = await db_manager.execute_query(
+        "SELECT wallet_address, category, provider, label, key_mask, encrypted_data, is_active FROM user_api_keys WHERE key_id = ?",
+        (key_id,),
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail="目标凭据不存在或已被销毁")
+
+    row = dict(rows[0])
+    owner = (row.get("wallet_address") or "").strip().lower()
+    if owner and owner != caller_wallet:
+        raise HTTPException(status_code=403, detail="越权拦截：禁止修改非本人钱包所属的凭据")
+
+    creds = crypto_vault.decrypt_payload(row["encrypted_data"]) if row.get("encrypted_data") else {}
+
+    # 1. 更新 model
+    if req.model is not None:
+        creds["model"] = req.model.strip()
+
+    # 2. 更新 base_url
+    if req.base_url is not None:
+        raw_url = req.base_url.strip()
+        for suffix in ("/chat/completions", "/chat/completions/", "/completions", "/completions/"):
+            if raw_url.endswith(suffix):
+                raw_url = raw_url[:-len(suffix)]
+                break
+        creds["base_url"] = raw_url.rstrip("/")
+
+    # 3. 更新 label
+    new_label = req.label.strip() if req.label is not None else row.get("label", "")
+
+    # 4. 可选更新 key 内容
+    new_mask = row.get("key_mask", "••••••••••••••••")
+    if req.api_key and req.api_key.strip():
+        ak = req.api_key.strip()
+        creds["api_key"] = ak
+        new_mask = ak[:4] + "••••" + ak[-4:] if len(ak) > 8 else "••••••••"
+    if req.secret_key and req.secret_key.strip():
+        sk = req.secret_key.strip()
+        creds["secret_key"] = sk
+        creds["private_key"] = sk
+
+    new_encrypted = crypto_vault.encrypt_payload(creds)
+    now_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+    await db_manager.execute_commit(
+        "UPDATE user_api_keys SET label = ?, key_mask = ?, encrypted_data = ?, updated_at = ? WHERE key_id = ?",
+        (new_label, new_mask, new_encrypted, now_iso, key_id),
+    )
+
+    # 若当前密钥处于激活生效状态，触发热重载（同时通过 configure_credentials 重建交易所 SDK 客户端）
+    if bool(row.get("is_active")):
+        try:
+            from heimdall.api.server import bot_manager
+            for bot in bot_manager.bots.values():
+                if bot.owner_wallet == caller_wallet:
+                    if hasattr(bot, "llm_service") and bot.llm_service:
+                        await bot.llm_service.ensure_credentials(force_refresh=True, owner_wallet=caller_wallet)
+                    if bot.exchange.value.lower() == str(row.get("provider") or "").lower():
+                        await bot.hydrate_exchange_credentials_from_vault(force_refresh=True)
+        except Exception as e:
+            logger.debug("动态热重载活跃 Bot 凭证告警: %s", e)
+
+    logger.info(
+        "[密钥配置更新] 钱包=%s | key_id=%s | model=%s | base_url=%s",
+        caller_wallet, key_id, creds.get("model"), creds.get("base_url"),
+    )
+
+    return {
+        "success": True,
+        "key_id": key_id,
+        "label": new_label,
+        "model": creds.get("model", ""),
+        "base_url": creds.get("base_url", ""),
+        "key_mask": new_mask,
+        "message": "凭据配置已成功更新",
     }
 
 
@@ -492,7 +624,8 @@ async def test_saved_vault_key(
             "success": True,
             "status": status_str,
             "message": f"服务商 [{provider.upper()}] 节点探针响应: {msg}",
-            "latency_ms": latency or 85.0,
+            # 探针没有测到耗时就如实返回 None，不再填 85ms
+            "latency_ms": latency if latency else None,
             "tested_at": now_iso,
         }
 

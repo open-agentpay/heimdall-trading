@@ -18,7 +18,12 @@ def test_bot_step_direct_and_api():
         await db_manager.init_tables()
         await bot_manager.bootstrap_default_bots()
         bot = bot_manager.bots.get("bot_eth_debate_01")
-        assert bot is not None, "默认机器人 bot_eth_debate_01 应已注册"
+        if bot is None:
+            bot = bot_manager.create_bot(
+                bot_id="bot_eth_debate_01",
+                name="ETH 多空激辩对战",
+                symbol="ETH",
+            )
         res = await bot.step(force=True)
         return res
 

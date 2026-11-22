@@ -71,6 +71,14 @@ export async function updateVaultKeyNetwork(keyId, isTestnet) {
   });
 }
 
+/** 更新指定凭据的配置信息 (model, base_url, label 及可选密钥内容) */
+export async function updateVaultKey(keyId, data) {
+  return apiRequest(`/api/v1/vault/keys/${encodeURIComponent(keyId)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(data),
+  });
+}
+
 /** 设为当前默认激活密钥（多密钥中切换活跃大模型） */
 export async function activateVaultKey(keyId) {
   return apiRequest(`/api/v1/vault/keys/${encodeURIComponent(keyId)}/activate`, {
@@ -129,8 +137,11 @@ export async function getPortfolioCapitalDistribution() {
   return apiRequest('/api/v1/portfolio/capital-distribution', { method: 'GET' });
 }
 
+/** 网页启动机器人时使用的决策周期（秒），与后端 StartBotRequest 默认值一致：15 分钟一轮 */
+export const BOT_DECISION_INTERVAL_SECONDS = 900;
+
 /** 启动指定机器人的 24 小时后台守护协程 */
-export async function startBot(botId, intervalSeconds = 60) {
+export async function startBot(botId, intervalSeconds = BOT_DECISION_INTERVAL_SECONDS) {
   return apiRequest(`/api/v1/bots/${encodeURIComponent(botId)}/start`, {
     method: 'POST',
     body: JSON.stringify({ interval_seconds: intervalSeconds }),
@@ -185,6 +196,11 @@ export async function placePaperOrder(botId, orderData) {
   });
 }
 
+/** 获取沙盒下单报价：跨所实时参考价、价格来源与指定价偏差容差（只读，与下单接口同一取价规则） */
+export async function getPaperOrderQuote(botId) {
+  return apiRequest(`/api/v1/bots/${encodeURIComponent(botId)}/orders/paper/quote`, { method: 'GET' });
+}
+
 /** 获取 7 大极端行情避险雷达遥测数据 */
 export async function getRiskRadarTelemetry(symbol = 'ETH') {
   return apiRequest(`/api/v1/market/radar?symbol=${encodeURIComponent(symbol)}`, { method: 'GET' });
@@ -225,9 +241,20 @@ export async function triggerBotReconcile(botId, resumeIfClean = false) {
   });
 }
 
-/** 实盘就绪 5 项预检清单查询 */
-export async function checkLiveReadiness({ exchange = 'HYPERLIQUID', symbol = 'ETH', botId = null } = {}) {
-  const params = new URLSearchParams({ exchange, symbol });
+/** 实盘就绪 5 项预检清单查询（传递 exchange / market_type / execution_mode） */
+export async function checkLiveReadiness({
+  exchange = 'BINANCE',
+  marketType = 'USDM_FUTURES',
+  executionMode = 'TESTNET',
+  symbol = 'ETH',
+  botId = null,
+} = {}) {
+  const params = new URLSearchParams({
+    exchange,
+    market_type: marketType,
+    execution_mode: executionMode,
+    symbol,
+  });
   if (botId) params.append('bot_id', botId);
   return apiRequest(`/api/v1/system/live-readiness?${params.toString()}`, { method: 'GET' });
 }

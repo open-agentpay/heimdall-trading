@@ -2,7 +2,8 @@
 # Heimdall Trading Platform - 前端控制台多阶段 Dockerfile (React/Vite + Nginx)
 # ==============================================================================
 
-FROM node:20-alpine AS builder
+# i18next 27 / react-i18next 18 要求 Node.js 22 及以上
+FROM node:22-alpine AS builder
 
 WORKDIR /web
 

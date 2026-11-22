@@ -1,0 +1,165 @@
+{
+  "roles": {
+    "analyst": {
+      "title": "技术面宏观分析师",
+      "description": "【小白速懂】：负责阅读纯 K 线价格走势，计算均线（EMA）、强弱指标（RSI）、真实波幅（ATR）等量化数学指标，判断当前大盘是单边暴涨、单边暴跌还是横盘拉锯。"
+    },
+    "sentiment": {
+      "title": "情绪与链上巨鲸分析师",
+      "description": "【小白速懂】：专门抓取交易所大户充提币动向（筹码锁仓还是砸盘抛售）、全网恐慌贪婪指数、未平仓合约量 (OI) 与稳定币印钞弹药，防止掉入诱多踩踏陷阱。"
+    },
+    "bull": {
+      "title": "多头先锋研究员",
+      "description": "【小白速懂】：多空辩论里的“正方辩友”。拼命寻找上涨的所有蛛丝马迹，给出坚定的做多买入理由、预估止盈目标价，并测算出合理的风险报酬比（盈亏比）。"
+    },
+    "bear": {
+      "title": "空头质询研究员",
+      "description": "【小白速懂】：多空辩论里的“反方辩友”与找茬专家。无论形势多好，它总能挑出潜在风险，比如上方抛压、宏观美联储议息会议、主力假突破诱多，逼迫团队做好防守。"
+    },
+    "moderator": {
+      "title": "多空博弈首席裁判",
+      "description": "【小白速懂】：法官与终审大裁判。它不偏袒任何一方，主持多头研究员与空头研究员的 3 轮激辩，综合双方证据得出最终结论（买、卖还是空仓观望）。"
+    },
+    "strategy": {
+      "title": "定量执行策略师",
+      "description": "【小白速懂】：精算师。它拿到裁判的批文后，不盲目市价追高追跌，而是计算最佳挂单价、利用凯利公式（Kelly Criterion）精算头寸与止损，无明确信号时严守空仓防守。"
+    },
+    "risk_officer": {
+      "title": "合规风控官",
+      "description": "【小白速懂】：大管家。审查策略师拿来的订单提案，核对盈亏比是否划算、止损是否设得太宽导致暴亏、以及是不是违背了账户的投资组合纪律。"
+    },
+    "hard_guard": {
+      "title": "七大铁律确定性硬风控",
+      "description": "【小白速懂】：绝对零妥协的物理断路器！用纯 Python 代码写死，哪怕大模型疯了、幻觉了、想做空地球，这道防火墙只要检测到 1 条不合格，一微秒内直接拔插头拦截！"
+    },
+    "alert_notifier": {
+      "title": "全天候事件与熔断通知官",
+      "description": "【小白速懂】：全天候情报通讯兵。一旦系统触发熔断锁仓、订单撮合成交、或者跨所行情插针异动，0.5 秒内推送到你的手机微信、飞书或 Telegram 上！"
+    }
+  },
+  "pending": {
+    "tag": "等待推演",
+    "keyThesis": "该机器人尚未产生推演结果，等待首轮决策周期完成后展示真实论据。"
+  },
+  "common": {
+    "confidenceBadge": "置信 {{value}}"
+  },
+  "analyst": {
+    "noSummary": "本轮未返回技术面摘要",
+    "rsiBull": " (多头动能运行)",
+    "rsiBear": " (空头弱势运行)",
+    "rsiNeutral": " (中性震荡整理)",
+    "tag": "{{regime}} · 阻力 {{resistance}}",
+    "evidenceEma": "EMA 动态均线: EMA20={{ema20}} · EMA50={{ema50}}",
+    "evidenceRsi": "RSI-14 动力学指标: {{rsi}}{{label}}",
+    "evidenceLevels": "结构通道: 支撑位 {{support}} · 阻力位 {{resistance}}",
+    "evidenceFunding": "资金与价差: 年化资金费率 {{funding}} · Bifrost 价差 {{spread}}",
+    "invalidation": "若 15m 收盘价跌破支撑位 ({{support}}) 或向上有效突破阻力位 ({{resistance}})，则当前 [{{regime}}] 状态定性失效并需重新校准。",
+    "noLevels": "本轮未返回支撑 / 阻力位",
+    "monologue": "[技术面量化] {{summary}}"
+  },
+  "sentiment": {
+    "whaleShortAccumulation": "吸筹",
+    "whaleShortDistribution": "抛售",
+    "whaleShortNeutral": "观望",
+    "whaleLongAccumulation": "链上大额提现锁仓 (吸筹)",
+    "whaleLongDistribution": "交易所持续集中充值 (抛售隐患)",
+    "whaleLongNeutral": "资金面相对平衡 (观望)",
+    "whaleLongMissing": "未返回",
+    "biasBull": "偏多",
+    "biasBear": "偏空",
+    "tag": "情绪 {{bias}} · 巨鲸 {{whale}}",
+    "badge": "得分 {{score}}",
+    "noScore": "本轮未返回情绪得分",
+    "thesis": "综合情绪打分 {{score}}，巨鲸链上状态 {{whale}}。",
+    "unknown": "未知",
+    "evidenceWhale": "巨鲸行为定性: {{value}}",
+    "evidenceScore": "情绪综合得分: {{score}} (恐慌贪婪指数: {{fgi}})",
+    "evidenceCrowding": "持仓拥挤度: {{value}}",
+    "invalidation": "若链上出现异动转向相反方向（例如巨鲸集中向交易所大额充币），则情绪定性推翻。",
+    "monologue": "[情绪与巨鲸监控] {{summary}}",
+    "noSummary": "本轮未返回情绪摘要"
+  },
+  "debate": {
+    "noBullThesis": "本轮未返回多头论点",
+    "noBearThesis": "本轮未返回空头论点",
+    "tagBull": "目标 {{target}} · 防守 {{inval}}",
+    "tagBear": "防守 {{target}} · 失效 {{inval}}",
+    "bullTarget": "做多目标止盈价格: {{value}}",
+    "bearTarget": "做空下行回踩目标: {{value}}",
+    "bullInval": "立论失效防守止损位: {{value}}",
+    "bearInval": "阻力突破失效点位: {{value}}",
+    "bullConfidence": "多头置信度评分: {{value}}",
+    "bearConfidence": "空头置信度评分: {{value}}",
+    "noInvalidation": "本轮未返回失效价位",
+    "invalidationBull": "价格跌破 {{value}} 时立论失效并触发止损",
+    "invalidationBear": "价格突破 {{value}} 时空头立论失效",
+    "monologueBull": "[多头真实辩护] {{thesis}}{{target}}",
+    "targetSuffix": " (目标: {{value}})",
+    "monologueBear": "[空头真实质询] {{thesis}}"
+  },
+  "moderator": {
+    "noVerdict": "本轮未返回裁决说明",
+    "tag": "裁决: {{action}}",
+    "evidenceDirection": "多空对抗裁定方向: {{action}}",
+    "evidenceConfidence": "投资总监终审置信度: {{value}}",
+    "evidenceRiskWarning": "风险预警提示: {{value}}",
+    "evidenceAuthorization": "执行授权状态: {{status}}",
+    "authorized": "准许策略层签发交易提案",
+    "notAuthorized": "中立观望，不签发交易提案",
+    "invalidation": "若市场在发单前出现结构性反向跳水，裁判即刻撤回本轮裁决授权。",
+    "monologue": "[裁判终审结论] {{verdict}}"
+  },
+  "strategy": {
+    "orderTypeFallback": "委托",
+    "tag": "{{orderType}} {{entry}} · 止损 {{sl}}",
+    "badge": "仓位 {{value}}",
+    "thesis": "基于多空对决裁决签发确定性交易提案（含幂等键）",
+    "evidenceOrder": "委托类型: {{type}} | 方向: {{side}} ({{stance}})",
+    "evidencePrice": "委托价格: {{value}}",
+    "evidenceStops": "确定性止损防线: {{sl}} · 止盈目标: {{tp}}",
+    "evidenceSize": "配置资金敞口: {{size}} · 杠杆倍数: {{leverage}}",
+    "evidenceIdempotency": "幂等键: {{value}}",
+    "invalidation": "若挂单超时未撮合成交，或发单前价格已穿透止损线，该委托提案即刻作废。",
+    "monologue": "[策略师提案] 方向: {{side}}，委托价格: {{entry}}，盈亏比: {{rr}}",
+    "tagNeutral": "空仓防守 · 暂无挂单",
+    "tagWait": "等待信号 · 暂无提案",
+    "badgeNeutral": "防守观望",
+    "badgeWait": "待命",
+    "thesisNoProposal": "裁判终审定性为 {{action}}，本轮策略层未签发任何买卖委托单。",
+    "evidenceVerdict": "终审裁决: {{action}}",
+    "evidenceNoProposal": "本轮未签发交易提案",
+    "invalidationNoProposal": "下一轮若多空博弈形成高置信度突破并获裁判授权，策略师将立即计算入场价与止损。",
+    "monologueNoProposal": "[策略精算师] 裁判裁决为 {{action}}，本轮不签发委托。"
+  },
+  "risk": {
+    "tagUnknown": "风控结果未知",
+    "tagPassed": "风控通过 ✓",
+    "tagRejected": "风控驳回 ✗",
+    "badgePassed": "已放行",
+    "badgeBlocked": "已阻断",
+    "thesisUnknown": "本轮未返回风控结论",
+    "thesisPassed": "本轮硬风控规则全部通过，准许向执行层下发",
+    "thesisRejected": "硬风控拦截: {{reason}}",
+    "reasonFallback": "触发风控红线",
+    "evidenceRule": "规则 [{{rule}}]: {{result}}",
+    "rulePass": "通过 (PASS)",
+    "ruleFail": "违规 (FAIL)",
+    "noRules": "本轮未返回逐条规则明细",
+    "invalidation": "任何单项硬指标只要超出安全阈值，立即触发一票否决，绝对无条件阻断下单。",
+    "monologue": "[风控官审查] 审核结果: {{result}}{{rule}}",
+    "ruleSuffix": " | 触发规则: {{reason}}"
+  },
+  "modal": {
+    "pendingNotice": "⏳ 该机器人尚未产生推演结果，以下仅为角色说明；首轮决策周期完成后将展示真实论据与数据。",
+    "stance": "当前决策观点 (Decision Stance)",
+    "confidence": "模型确定性置信度 (Confidence Score):",
+    "keyThesis": "核心决策论据 (Key Thesis)",
+    "evidence": "数据证据与指标支撑 (Evidence Checklist)",
+    "noEvidence": "暂无数据证据",
+    "invalidation": "立论失效与防守点位 (Invalidation Rule)",
+    "noMonologue": "暂无推演记录",
+    "traceId": "审计追踪 ID:",
+    "dismiss": "已阅知 (Dismiss)"
+  }
+}

@@ -4,9 +4,13 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/shield.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script>
+      try { if (localStorage.getItem('heimdall_theme') === 'dark') document.documentElement.dataset.theme = 'dark'; } catch (e) {}
+      try { var hdLocale = localStorage.getItem('heimdall_locale'); if (hdLocale) document.documentElement.lang = hdLocale; } catch (e) {}
+    </script>
     <title>Heimdall Trading - 多智能体协同量化平台</title>
   </head>
-  <body class="bg-[#F6F2EB] text-[#2E2823] antialiased overflow-hidden select-none">
+  <body class="bg-canvas text-ink antialiased overflow-hidden">
     <div id="root"></div>
     <script type="module" src="/src/main.jsx"></script>
   </body>

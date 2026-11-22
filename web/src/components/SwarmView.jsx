@@ -11,11 +11,13 @@
  */
 
 import React, { useState } from 'react';
+import { useTranslation } from 'react-i18next';
+import { fmt } from '../i18n';
 import { 
   Cpu, Play, Square, RefreshCw, Plus, PieChart, ShieldCheck, 
   ExternalLink, Layers, ArrowUpRight, Activity, TrendingUp, AlertCircle, Trash2
 } from 'lucide-react';
-import { startBot, stopBot, stepBot, setBotMacroBias } from '../api/endpoints';
+import { startBot, stopBot, stepBot, setBotMacroBias, BOT_DECISION_INTERVAL_SECONDS } from '../api/endpoints';
 
 export default function SwarmView({
   bots = [],
@@ -27,27 +29,28 @@ export default function SwarmView({
   onOpenCapitalModal,
   onShowToast,
 }) {
+  const { t } = useTranslation('swarm');
   const [loadingActions, setLoadingActions] = useState({});
 
   // 1. 批量全部启动
   const handleBatchStart = async () => {
-    onShowToast?.("🚀 正在批量启动所有待命中机器人...", "info");
+    onShowToast?.(t('toast.batchStarting'), "info");
     for (const b of bots) {
       if (b.status !== "RUNNING") {
         try {
-          await startBot(b.bot_id || b.id, 60);
+          await startBot(b.bot_id || b.id, BOT_DECISION_INTERVAL_SECONDS);
         } catch (e) {
           console.warn(`启动 ${b.bot_id} 告警:`, e);
         }
       }
     }
     await onRefreshBots?.();
-    onShowToast?.("✅ 所有策略机器人已全部投入后台盯盘！", "success");
+    onShowToast?.(t('toast.batchStarted'), "success");
   };
 
   // 2. 批量全部挂起
   const handleBatchStop = async () => {
-    onShowToast?.("⏸️ 正在批量挂起所有运行中机器人...", "info");
+    onShowToast?.(t('toast.batchStopping'), "info");
     for (const b of bots) {
       if (b.status === "RUNNING") {
         try {
@@ -58,7 +61,7 @@ export default function SwarmView({
       }
     }
     await onRefreshBots?.();
-    onShowToast?.("⏹️ 蜂群策略协程已全量安全挂起", "info");
+    onShowToast?.(t('toast.batchStopped'), "info");
   };
 
   // 3. 单个机器人启停切换
@@ -68,14 +71,14 @@ export default function SwarmView({
     try {
       if (b.status === "RUNNING") {
         await stopBot(id);
-        onShowToast?.(`⏹️ 机器人 [${b.name || id}] 已挂起`, "info");
+        onShowToast?.(t('toast.botStopped', { name: b.name || id }), "info");
       } else {
-        await startBot(id, 60);
-        onShowToast?.(`▶️ 机器人 [${b.name || id}] 已启动盯盘`, "success");
+        await startBot(id, BOT_DECISION_INTERVAL_SECONDS);
+        onShowToast?.(t('toast.botStarted', { name: b.name || id }), "success");
       }
       await onRefreshBots?.();
     } catch (err) {
-      onShowToast?.(`操作失败: ${err.message}`, "critical");
+      onShowToast?.(t('toast.actionFailed', { message: err.message }), "critical");
     } finally {
       setLoadingActions(prev => ({ ...prev, [id]: false }));
     }
@@ -87,10 +90,10 @@ export default function SwarmView({
     setLoadingActions(prev => ({ ...prev, [`step_${id}`]: true }));
     try {
       await stepBot(id);
-      onShowToast?.(`⚡ 机器人 [${b.name || id}] 完成单步多智能体推演`, "success");
+      onShowToast?.(t('toast.stepDone', { name: b.name || id }), "success");
       await onRefreshBots?.();
     } catch (err) {
-      onShowToast?.(`推演失败: ${err.message}`, "critical");
+      onShowToast?.(t('toast.stepFailed', { message: err.message }), "critical");
     } finally {
       setLoadingActions(prev => ({ ...prev, [`step_${id}`]: false }));
     }
@@ -103,20 +106,20 @@ export default function SwarmView({
     try {
       if (isActive) {
         await setBotMacroBias(id, { action: 'NORMAL', risk_scale: 1.0, blocked_directions: [] });
-        onShowToast?.(`✅ 已清除 [${b.name || id}] 宏观门控，恢复正常仓位`, 'success');
+        onShowToast?.(t('toast.macroCleared', { name: b.name || id }), 'success');
       } else {
         await setBotMacroBias(id, {
           action: 'REDUCE_RISK',
           risk_scale: 0.5,
           blocked_directions: [],
-          reason: '蜂群控制台手动启用 0.5x 防守降仓门控',
+          reason: t('macro.manualReason'),
           ttl_minutes: 60,
         });
-        onShowToast?.(`🛡️ 已为 [${b.name || id}] 启用 MacroBias 0.5x 降仓门控 (60分钟)`, 'info');
+        onShowToast?.(t('toast.macroEnabled', { name: b.name || id }), 'info');
       }
       await onRefreshBots?.();
     } catch (err) {
-      onShowToast?.(`宏观门控设置失败: ${err.message}`, 'critical');
+      onShowToast?.(t('toast.macroFailed', { message: err.message }), 'critical');
     }
   };
 
@@ -126,18 +129,18 @@ export default function SwarmView({
   const totalCapital = bots.reduce((sum, b) => sum + (Number(b.allocated_capital) || 0), 0);
 
   return (
-    <div className="flex-1 flex flex-col bg-[#F6F2EB] overflow-hidden select-none">
+    <div className="flex-1 flex flex-col bg-canvas overflow-hidden">
       
       {/* 顶部控制与操作栏 */}
-      <div className="h-14 bg-[#FAF7F2] border-b border-[#E6DFD5] px-6 flex items-center justify-between shrink-0">
+      <div className="h-14 bg-panel border-b border-line px-6 flex items-center justify-between shrink-0">
         <div className="flex items-center space-x-3">
-          <div className="w-8 h-8 rounded-lg bg-[#EFE9DF] border border-[#DFD6C7] flex items-center justify-center text-[#DE6438]">
+          <div className="w-8 h-8 rounded-lg bg-muted border border-line-strong flex items-center justify-center text-brand">
             <Cpu className="w-4 h-4" />
           </div>
           <div>
-            <h1 className="text-sm font-semibold text-[#1F1E1B] tracking-tight">蜂群编排与集群管控 (Swarm)</h1>
-            <p className="text-[10px] text-[#8C8275]">
-              多策略并行矩阵 · 划拨本金 ${totalCapital.toLocaleString()} · 运行状态 {runningBots}/{totalBots}
+            <h1 className="text-sm font-semibold text-ink tracking-tight">{t('header.title')}</h1>
+            <p className="text-xs text-ink-3">
+              {t('header.subtitle', { capital: fmt.usd(totalCapital), running: runningBots, total: totalBots })}
             </p>
           </div>
         </div>
@@ -146,34 +149,34 @@ export default function SwarmView({
         <div className="flex items-center space-x-2">
           <button
             onClick={handleBatchStart}
-            className="flex items-center space-x-1.5 px-3 py-1.5 text-xs font-medium text-[#3D784E] bg-[#3D784E]/10 hover:bg-[#3D784E]/20 border border-[#3D784E]/30 rounded shadow-2xs transition-all cursor-pointer"
+            className="flex items-center space-x-1.5 px-3 py-1.5 text-xs font-medium text-success bg-success-solid/10 hover:bg-success-solid/20 border border-success/30 rounded shadow-2xs transition-all cursor-pointer"
           >
             <Play className="w-3.5 h-3.5 fill-current" />
-            <span>全量启动</span>
+            <span>{t('actions.startAll')}</span>
           </button>
 
           <button
             onClick={handleBatchStop}
-            className="flex items-center space-x-1.5 px-3 py-1.5 text-xs font-medium text-[#7E7469] bg-white hover:bg-[#EFE9DF] border border-[#DFD6C7] rounded shadow-2xs transition-all cursor-pointer"
+            className="flex items-center space-x-1.5 px-3 py-1.5 text-xs font-medium text-ink-3 bg-surface hover:bg-muted border border-line-strong rounded shadow-2xs transition-all cursor-pointer"
           >
             <Square className="w-3.5 h-3.5 fill-current" />
-            <span>全量挂起</span>
+            <span>{t('actions.stopAll')}</span>
           </button>
 
           <button
             onClick={onOpenCapitalModal}
-            className="flex items-center space-x-1.5 px-3 py-1.5 text-xs font-medium text-[#2E2823] bg-white hover:bg-[#EFE9DF] border border-[#DFD6C7] rounded shadow-2xs transition-all cursor-pointer"
+            className="flex items-center space-x-1.5 px-3 py-1.5 text-xs font-medium text-ink bg-surface hover:bg-muted border border-line-strong rounded shadow-2xs transition-all cursor-pointer"
           >
             <PieChart className="w-3.5 h-3.5" />
-            <span>资金配比</span>
+            <span>{t('actions.capital')}</span>
           </button>
 
           <button
             onClick={onOpenCreateModal}
-            className="flex items-center space-x-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-[#DE6438] hover:bg-[#C9552D] rounded shadow-xs transition-all cursor-pointer"
+            className="flex items-center space-x-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-brand hover:bg-brand-hover rounded shadow-xs transition-all cursor-pointer"
           >
             <Plus className="w-3.5 h-3.5" />
-            <span>新建机器人</span>
+            <span>{t('actions.createBot')}</span>
           </button>
         </div>
       </div>
@@ -183,42 +186,46 @@ export default function SwarmView({
         
         {/* 集群状态总览卡片 */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <div className="p-4 rounded-xl border border-[#DFD6C7] bg-[#FAF7F2] shadow-2xs flex items-center justify-between">
+          <div className="p-4 rounded-xl border border-line-strong bg-panel shadow-2xs flex items-center justify-between">
             <div>
-              <div className="text-[10px] text-[#8C8275] uppercase tracking-wider">活跃策略数</div>
-              <div className="text-xl font-bold text-[#1F1E1B] mt-0.5">{runningBots} / {totalBots}</div>
+              <div className="text-xs text-ink-3 uppercase tracking-wider">{t('stats.activeStrategies')}</div>
+              <div className="text-xl font-bold text-ink mt-0.5">{runningBots} / {totalBots}</div>
             </div>
-            <div className="w-10 h-10 rounded-lg bg-[#3D784E]/10 flex items-center justify-center text-[#3D784E]">
+            <div className="w-10 h-10 rounded-lg bg-success-solid/10 flex items-center justify-center text-success">
               <Activity className="w-5 h-5" />
             </div>
           </div>
 
-          <div className="p-4 rounded-xl border border-[#DFD6C7] bg-[#FAF7F2] shadow-2xs flex items-center justify-between">
+          <div className="p-4 rounded-xl border border-line-strong bg-panel shadow-2xs flex items-center justify-between">
             <div>
-              <div className="text-[10px] text-[#8C8275] uppercase tracking-wider">划拨总本金</div>
-              <div className="text-xl font-bold font-mono text-[#1F1E1B] mt-0.5">${totalCapital.toLocaleString()}</div>
+              <div className="text-xs text-ink-3 uppercase tracking-wider">{t('stats.totalCapital')}</div>
+              <div className="text-xl font-bold font-mono text-ink mt-0.5">{fmt.usd(totalCapital)}</div>
             </div>
-            <div className="w-10 h-10 rounded-lg bg-[#DE6438]/10 flex items-center justify-center text-[#DE6438]">
+            <div className="w-10 h-10 rounded-lg bg-brand/10 flex items-center justify-center text-brand">
               <Layers className="w-5 h-5" />
             </div>
           </div>
 
-          <div className="p-4 rounded-xl border border-[#DFD6C7] bg-[#FAF7F2] shadow-2xs flex items-center justify-between">
+          <div className="p-4 rounded-xl border border-line-strong bg-panel shadow-2xs flex items-center justify-between">
             <div>
-              <div className="text-[10px] text-[#8C8275] uppercase tracking-wider">平均轮询周期</div>
-              <div className="text-xl font-bold font-mono text-[#1F1E1B] mt-0.5">60s 盯盘</div>
+              <div className="text-xs text-ink-3 uppercase tracking-wider">{t('stats.decisionInterval')}</div>
+              <div className="text-xl font-bold font-mono text-ink mt-0.5">
+                {BOT_DECISION_INTERVAL_SECONDS % 60 === 0
+                  ? t('stats.intervalMinutes', { minutes: BOT_DECISION_INTERVAL_SECONDS / 60 })
+                  : t('stats.intervalSeconds', { seconds: BOT_DECISION_INTERVAL_SECONDS })}
+              </div>
             </div>
-            <div className="w-10 h-10 rounded-lg bg-[#3B72C2]/10 flex items-center justify-center text-[#3B72C2]">
+            <div className="w-10 h-10 rounded-lg bg-info-solid/10 flex items-center justify-center text-info">
               <TrendingUp className="w-5 h-5" />
             </div>
           </div>
 
-          <div className="p-4 rounded-xl border border-[#DFD6C7] bg-[#FAF7F2] shadow-2xs flex items-center justify-between">
+          <div className="p-4 rounded-xl border border-line-strong bg-panel shadow-2xs flex items-center justify-between">
             <div>
-              <div className="text-[10px] text-[#8C8275] uppercase tracking-wider">风控防御等级</div>
-              <div className="text-xl font-bold text-[#3D784E] mt-0.5">7重全防护</div>
+              <div className="text-xs text-ink-3 uppercase tracking-wider">{t('stats.riskLevel')}</div>
+              <div className="text-xl font-bold text-success mt-0.5">{t('stats.riskLevelValue')}</div>
             </div>
-            <div className="w-10 h-10 rounded-lg bg-[#3D784E]/10 flex items-center justify-center text-[#3D784E]">
+            <div className="w-10 h-10 rounded-lg bg-success-solid/10 flex items-center justify-center text-success">
               <ShieldCheck className="w-5 h-5" />
             </div>
           </div>
@@ -227,16 +234,16 @@ export default function SwarmView({
         {/* 蜂群机器人卡片墙 */}
         <div>
           <div className="flex items-center justify-between mb-3">
-            <h2 className="text-xs font-bold text-[#1F1E1B] uppercase tracking-wider flex items-center space-x-1.5">
-              <span>机器人编队矩阵</span>
-              <span className="text-[10px] text-[#8C8275] font-normal">({bots.length} 台在编)</span>
+            <h2 className="text-xs font-bold text-ink uppercase tracking-wider flex items-center space-x-1.5">
+              <span>{t('grid.title')}</span>
+              <span className="text-xs text-ink-3 font-normal">{t('grid.count', { count: bots.length })}</span>
             </h2>
             <button 
               onClick={onRefreshBots}
-              className="text-[11px] text-[#7E7469] hover:text-[#1F1E1B] flex items-center space-x-1 cursor-pointer"
+              className="text-xs text-ink-3 hover:text-ink flex items-center space-x-1 cursor-pointer"
             >
               <RefreshCw className="w-3 h-3" />
-              <span>刷新集群状态</span>
+              <span>{t('grid.refresh')}</span>
             </button>
           </div>
 
@@ -251,65 +258,65 @@ export default function SwarmView({
               return (
                 <div
                   key={id}
-                  className={`p-5 rounded-xl border transition-all flex flex-col justify-between bg-[#FAF7F2] shadow-2xs ${
-                    isSelected ? "border-[#DE6438] ring-1 ring-[#DE6438]" : "border-[#DFD6C7] hover:border-[#BFB39E]"
+                  className={`p-5 rounded-xl border transition-all flex flex-col justify-between bg-panel shadow-2xs ${
+                    isSelected ? "border-brand ring-1 ring-brand" : "border-line-strong hover:border-line-strong"
                   }`}
                 >
                   <div>
                     {/* 卡片头部 */}
                     <div className="flex items-start justify-between">
                       <div className="flex items-center space-x-2">
-                        <span className="text-base font-bold font-mono text-[#DE6438] bg-[#EFE9DF] px-2 py-0.5 rounded border border-[#DFD6C7]">
+                        <span className="text-base font-bold font-mono text-brand bg-muted px-2 py-0.5 rounded border border-line-strong">
                           {bot.symbol || "ETH"}
                         </span>
                         <div>
-                          <h3 className="text-sm font-bold text-[#1F1E1B]">{bot.name || id}</h3>
-                          <span className="text-[10px] font-mono text-[#8C8275]">{id}</span>
+                          <h3 className="text-sm font-bold text-ink">{bot.name || id}</h3>
+                          <span className="text-xs font-mono text-ink-3">{id}</span>
                         </div>
                       </div>
 
                       <span
-                        className={`text-[10px] font-mono px-2 py-0.5 rounded-full border ${
+                        className={`text-xs font-mono px-2 py-0.5 rounded-full border ${
                           isRunning
-                            ? "bg-[#3D784E]/10 text-[#3D784E] border-[#3D784E]/20"
-                            : "bg-[#7E7469]/10 text-[#7E7469] border-[#7E7469]/20"
+                            ? "bg-success-solid/10 text-success border-success/20"
+                            : "bg-ink-3/10 text-ink-3 border-ink-3/20"
                         }`}
                       >
-                        {isRunning ? "● 运行中" : "○ 待命中"}
+                        {isRunning ? t('card.running') : t('card.idle')}
                       </span>
                     </div>
 
                     {/* 策略详情参数 */}
-                    <div className="mt-4 grid grid-cols-2 gap-2 text-xs bg-[#EFE9DF]/40 p-3 rounded-lg border border-[#E6DFD5]">
+                    <div className="mt-4 grid grid-cols-2 gap-2 text-xs bg-muted/40 p-3 rounded-lg border border-line">
                       <div>
-                        <span className="text-[10px] text-[#8C8275]">策略模型</span>
-                        <div className="font-semibold text-[#2E2823] mt-0.5 text-[11px] font-mono">
+                        <span className="text-xs text-ink-3">{t('card.strategy')}</span>
+                        <div className="font-semibold text-ink mt-0.5 text-xs font-mono">
                           {bot.strategy || bot.strategy_type || 'TREND_FOLLOW'}
                         </div>
                       </div>
                       <div>
-                        <span className="text-[10px] text-[#8C8275]">划拨本金</span>
-                        <div className="font-bold font-mono text-[#2E2823] mt-0.5 text-[11px]">
-                          ${Number(bot.allocated_capital || 10000).toLocaleString()}
+                        <span className="text-xs text-ink-3">{t('card.capital')}</span>
+                        <div className="font-bold font-mono text-ink mt-0.5 text-xs">
+                          {fmt.usd(Number(bot.allocated_capital || 10000))}
                         </div>
                       </div>
                       <div>
-                        <span className="text-[10px] text-[#8C8275]">交易所 · 运行模式</span>
-                        <div className="font-semibold text-[#2E2823] mt-0.5 text-[11px] font-mono">
-                          {bot.exchange || 'BINANCE'} · {bot.execution_mode || 'PAPER'}
+                        <span className="text-xs text-ink-3">{t('card.route')}</span>
+                        <div className="font-semibold text-ink mt-0.5 text-xs font-mono">
+                          {bot.exchange || 'BINANCE'} · {bot.market_type || 'USDM_FUTURES'} · {bot.execution_mode || 'LOCAL_SIM'}
                         </div>
                       </div>
                       <div>
-                        <span className="text-[10px] text-[#8C8275]">宏观门控 (MacroBias)</span>
+                        <span className="text-xs text-ink-3">{t('card.macroBias')}</span>
                         <div className="mt-0.5 flex items-center justify-between">
-                          <span className={`text-[10px] font-mono font-bold ${bot.macro_bias ? 'text-[#C28B38]' : 'text-[#3D784E]'}`}>
+                          <span className={`text-xs font-mono font-bold ${bot.macro_bias ? 'text-warning' : 'text-success'}`}>
                             {bot.macro_bias ? `${bot.macro_bias.action} (${bot.macro_bias.risk_scale}x)` : 'NORMAL'}
                           </span>
                           <button
                             onClick={() => handleToggleMacroBias(bot)}
-                            className="text-[10px] underline text-[#DE6438] cursor-pointer"
+                            className="text-xs underline text-brand cursor-pointer"
                           >
-                            {bot.macro_bias ? '解除' : '降仓'}
+                            {bot.macro_bias ? t('card.macroRelease') : t('card.macroReduce')}
                           </button>
                         </div>
                       </div>
@@ -317,14 +324,14 @@ export default function SwarmView({
                   </div>
 
                   {/* 底部操作工具栏 */}
-                  <div className="mt-5 pt-3 border-t border-[#EFE9DF] flex items-center justify-between">
+                  <div className="mt-5 pt-3 border-t border-line-soft flex items-center justify-between">
                     <button
                       onClick={() => onSelectBot?.(id)}
                       className={`text-xs font-semibold flex items-center space-x-1 cursor-pointer transition ${
-                        isSelected ? "text-[#DE6438]" : "text-[#7E7469] hover:text-[#1F1E1B]"
+                        isSelected ? "text-brand" : "text-ink-3 hover:text-ink"
                       }`}
                     >
-                      <span>{isSelected ? "当前监控中" : "切换席位"}</span>
+                      <span>{isSelected ? t('card.monitoring') : t('card.select')}</span>
                       <ArrowUpRight className="w-3.5 h-3.5" />
                     </button>
 
@@ -332,11 +339,11 @@ export default function SwarmView({
                       <button
                         onClick={() => handleSingleStep(bot)}
                         disabled={isStepping}
-                        title="立即单步推演"
-                        className="px-2.5 py-1 text-xs text-[#5C5549] hover:text-[#1F1E1B] bg-white border border-[#DFD6C7] rounded hover:border-[#1F1E1B] transition cursor-pointer flex items-center space-x-1"
+                        title={t('card.stepTitle')}
+                        className="px-2.5 py-1 text-xs text-ink-2 hover:text-ink bg-surface border border-line-strong rounded hover:border-ink transition cursor-pointer flex items-center space-x-1"
                       >
                         <RefreshCw className={`w-3 h-3 ${isStepping ? 'animate-spin' : ''}`} />
-                        <span>推演</span>
+                        <span>{t('card.step')}</span>
                       </button>
 
                       <button
@@ -344,20 +351,20 @@ export default function SwarmView({
                         disabled={isBusy}
                         className={`px-3 py-1 text-xs font-semibold rounded transition cursor-pointer flex items-center space-x-1 ${
                           isRunning
-                            ? "bg-[#DE6438]/10 text-[#DE6438] hover:bg-[#DE6438]/20 border border-[#DE6438]/30"
-                            : "bg-[#3D784E]/10 text-[#3D784E] hover:bg-[#3D784E]/20 border border-[#3D784E]/30"
+                            ? "bg-brand/10 text-brand hover:bg-brand/20 border border-brand/30"
+                            : "bg-success-solid/10 text-success hover:bg-success-solid/20 border border-success/30"
                         }`}
                       >
                         {isRunning ? <Square className="w-3 h-3 fill-current" /> : <Play className="w-3 h-3 fill-current" />}
-                        <span>{isRunning ? "挂起" : "启动"}</span>
+                        <span>{isRunning ? t('card.stop') : t('card.start')}</span>
                       </button>
 
                       {onDeleteBot && (
                         <button
                           type="button"
                           onClick={() => onDeleteBot(bot)}
-                          title={`删除机器人 ${bot.name || id}`}
-                          className="p-1.5 text-xs text-[#8C8275] hover:text-[#C24D4D] bg-white hover:bg-[#C24D4D]/10 border border-[#DFD6C7] hover:border-[#C24D4D]/40 rounded transition cursor-pointer"
+                          title={t('card.deleteTitle', { name: bot.name || id })}
+                          className="p-1.5 text-xs text-ink-3 hover:text-danger bg-surface hover:bg-danger-solid/10 border border-line-strong hover:border-danger/40 rounded transition cursor-pointer"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
                         </button>

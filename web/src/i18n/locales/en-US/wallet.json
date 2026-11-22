@@ -1,0 +1,42 @@
+{
+  "providers": {
+    "metamask": {
+      "name": "MetaMask",
+      "description": "The most widely used EVM browser extension and mobile wallet",
+      "tag": "Recommended · real signature"
+    },
+    "okx": {
+      "name": "OKX Web3 Wallet",
+      "description": "Multi-chain wallet with native Arbitrum and Hyperliquid L1 support",
+      "tag": "Real signature"
+    },
+    "readonly": {
+      "name": "Read-only preview (no sign-in session)",
+      "description": "Browse public bot market and audit data without an extension (trading actions and backtests still require a real signature)",
+      "tag": "Read-only"
+    }
+  },
+  "errors": {
+    "noPlugin": "{{wallet}} browser extension not detected. Install it or switch to read-only preview.",
+    "rejected": "Account access request was rejected",
+    "nonceFailed": "Failed to get the anti-replay challenge from the backend. Make sure the backend API is running.",
+    "noSession": "Backend signature verification returned no valid Bearer session. Sign-in aborted.",
+    "signFailed": "Signature cancelled or backend verification failed"
+  },
+  "header": {
+    "connected": "Web3 wallet connected",
+    "connect": "Connect a decentralized wallet",
+    "sessionValid": "Bearer session active",
+    "subtitleConnected": "Bound to your current trading and vault session",
+    "subtitleConnect": "Sign a gas-free EIP-191 message to obtain a backend Bearer session"
+  },
+  "dismiss": "Dismiss",
+  "activeAddress": "Active wallet address",
+  "disconnect": "Disconnect and clear local session",
+  "steps": {
+    "connecting": "Reading address...",
+    "challenge": "Fetching challenge...",
+    "signing": "Sign in your wallet...",
+    "verified": "Signature verified!"
+  }
+}

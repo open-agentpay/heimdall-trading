@@ -19,7 +19,7 @@
 [![Python Version](https://img.shields.io/badge/Python-3.10+-3776AB?style=flat&logo=python)](https://python.org)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.110+-009688?style=flat&logo=fastapi)](https://fastapi.tiangolo.com)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/Tests-11%20Passed-success)](tests/)
+[![Tests](https://img.shields.io/badge/tests-pytest-blue)](tests/)
 
 </div>
 
@@ -80,9 +80,9 @@ flowchart TD
     end
 
     subgraph Exec["【执行、核算与推送】Execution, NAV & Alert"]
-        E1["沙盒模拟盘 (Paper Trading Engine)"]
-        E2["Hyperliquid DEX 永续合约执行驱动"]
-        E3["单位净值法核算引擎 (NAV Engine)"]
+        E1["本地模拟 / 测试网 / 实盘适配器 (Binance、Hyperliquid)"]
+        E2["OMS 订单状态机 + 原生止损止盈 + 交易所对账"]
+        E3["机器人独立账本与单位净值引擎"]
         E4["多渠道实时告警网关 (Telegram/飞书/Discord)"]
     end
 
@@ -128,52 +128,54 @@ $$\text{NAV}_{t^+} = \frac{\text{Total Equity}_t + \Delta C}{\text{Total Shares}
 ## 5. 工程目录结构
 
 ```text
-heimdall-trading/
 ├── config/
-│   └── default.yaml               # 系统默认配置 (数据源、数据库、风控阈值)
+│   ├── default.yaml                   # 系统默认配置（数据源、数据库、风控阈值）
+│   └── macro_events.yaml              # 宏观事件日历（FOMC / CPI），供静默期规则使用
 ├── heimdall/
-│   ├── accounting/                # 资产核算与量化绩效模块
-│   │   └── nav.py                 # 单位净值 (NAV) 与夏普/回撤计算引擎
-│   ├── agents/                    # 多智能体协同决策大脑
-│   │   ├── analyst.py             # 宏观技术分析师
-│   │   ├── debate.py              # Tauric/MIT 风格多空对抗辩论团
-│   │   ├── graph.py               # 多智能体状态流水线编排器
-│   │   ├── risk_officer.py        # 逻辑风控官
-│   │   ├── sentiment.py           # 情绪与链上巨鲸异动分析师
-│   │   ├── state.py               # 决策上下文状态流定义
-│   │   └── strategy.py            # 策略生成与头寸管理
-│   ├── alert/                     # 全天候告警网关
-│   │   └── notifier.py            # Telegram, 飞书, Discord 毫秒级推送
-│   ├── api/                       # Web REST API 服务端
-│   │   └── server.py              # FastAPI 控制台中台路由
-│   ├── bifrost/                   # Bifrost Data Hub 客户端
-│   │   └── client.py              # 零前视 K 线与跨所状态只读感知
-│   ├── data/                      # 替代数据与多源情绪情报采集器
-│   │   └── sentiment_collector.py # Alternative.me 恐慌指数、行业快讯与衍生品聚合
-│   ├── database/                  # 数据持久化存储层 (SQLite / PostgreSQL)
-│   │   ├── db.py                  # 连接池与自动建表迁移
-│   │   └── repository.py          # 机器人/决策/成交/净值 CRUD 仓储
-│   ├── engine/                    # 调度中台
-│   │   ├── bot_manager.py         # 交易机器人实例与生命周期调度
-│   │   └── scheduler.py           # 24/7 守护进程调度器与容错看门狗
-│   ├── execution/                 # 交易所执行适配驱动
-│   │   ├── base.py                # 执行器标准接口抽象
-│   │   ├── hyperliquid.py         # Hyperliquid DEX 永续合约适配器
-│   │   └── paper.py               # 高精度沙盒模拟撮合引擎
-│   ├── llm/                       # 大语言模型统一服务
-│   │   └── client.py              # 结构化输出推理与确定性本地降级兜底
-│   ├── models/                    # Pydantic 契约模型与枚举
-│   │   └── schemas.py             # 交易提案与风控结果 Schema
-│   ├── risk/                      # 确定性硬风控模块
-│   │   ├── flash_guard.py         # 极端插针与流动性骤降检测器
-│   │   ├── guard.py               # 具有一票否决权的代码层防火墙 (七大铁律)
-│   │   └── macro_guard.py         # 宏观重大事件避险日历 (FOMC / CPI 静默期)
-│   ├── cli.py                     # 终端交互命令行入口
-│   └── config.py                  # Pydantic Settings 配置解析
-├── migrations/                    # PostgreSQL 16 / TimescaleDB 建表脚本
-├── tests/                         # 单元测试集 (31 个测试用例，100% 通过)
-├── pyproject.toml                 # 项目构建元数据与依赖定义
-└── requirements.txt               # 依赖列表
+│   ├── accounting/                    # 资产核算
+│   │   ├── ledger.py                  # 机器人独立账本（测试网 / 实盘按自身成交记账）
+│   │   └── nav.py                     # 单位净值、日内回撤、夏普 / 卡玛
+│   ├── agents/                        # 多智能体决策流水线
+│   │   ├── analyst.py · sentiment.py  # 技术面与情绪分析
+│   │   ├── debate.py                  # 多空研究员与辩论裁判
+│   │   ├── graph.py                   # 流水线编排（前置门控、检查点续跑）
+│   │   ├── strategy.py · risk_officer.py  # 生成交易提案与逻辑风控
+│   │   └── state.py · tools.py · governance.py  # 共享状态、只读取证工具、预算
+│   ├── alert/
+│   │   ├── notifier.py                # Telegram / 飞书 / Discord 告警
+│   │   └── heartbeat.py               # 外部死信心跳
+│   ├── api/
+│   │   ├── server.py                  # FastAPI 控制台接口
+│   │   ├── workbench_router.py        # OMS、对账、影子报告、回测接口
+│   │   └── websocket.py               # 实时事件推送
+│   ├── auth/                          # 钱包登录（SIWE）与 AES-256-GCM 密钥金库
+│   ├── backtest/                      # 零前视回测与 Walk-Forward 验证
+│   ├── bifrost/ · data/               # 多源行情（Binance → OKX → Hyperliquid）与情绪数据
+│   ├── database/                      # SQLite / PostgreSQL 持久化与仓储
+│   ├── engine/
+│   │   ├── bot_manager.py             # 机器人生命周期、决策循环、对账、止损覆盖
+│   │   ├── scheduler.py               # 后台决策与对账循环
+│   │   └── shadow.py                  # 影子模式运行报告与晋级门控
+│   ├── execution/
+│   │   ├── factory.py                 # 按 交易所 × 市场 × 运行模式 选择适配器
+│   │   ├── binance.py · hyperliquid.py  # 交易所适配器（币安条件单走 Algo 接口）
+│   │   ├── local_sim.py               # 本地模拟撮合（LOCAL_SIM）
+│   │   ├── oms.py                     # 订单状态机、原生止损止盈、查单恢复
+│   │   ├── reconciler.py              # 交易所对账
+│   │   └── precision.py               # Decimal 价格 / 数量精度对齐
+│   ├── factors/                       # 因子引擎
+│   ├── strategies/                    # 策略路由 + 趋势 / 网格 / 资金费套利 / 多空辩论
+│   ├── risk/                          # 硬风控（七大铁律）、宏观日历、插针检测、组合敞口锁
+│   ├── llm/ · models/                 # 大模型服务与 Pydantic 数据模型
+│   ├── utils/                         # CORS、日志脱敏、部署安全预检、单实例锁
+│   └── cli.py · config.py             # 命令行入口与配置加载
+├── migrations/                        # PostgreSQL 建表脚本
+├── scripts/                           # 币安合约测试网验证脚本
+├── tests/                             # pytest 测试集（单元、集成，黄金评测集在 tests/evals/）
+├── web/                               # React / Vite 前端工作台
+├── pyproject.toml                     # 项目构建元数据与依赖定义（依赖唯一事实来源）
+├── requirements.txt                   # 运行时依赖（与 pyproject 保持一致，Docker 使用）
+└── requirements-dev.txt               # 开发 / 测试依赖
 ```
 
 ---
@@ -191,10 +193,10 @@ python3 -m heimdall.cli run-demo --symbol ETH --capital 10000
 ### 启动 Web 控制台中台服务
 
 ```bash
-python3 -m heimdall.cli serve --host 0.0.0.0 --port 8080
+python3 -m heimdall.cli serve --host 0.0.0.0 --port 8000
 ```
 
-访问 `http://localhost:8080/docs` 查看交互式 Swagger API 文档。
+访问 `http://localhost:8000/docs` 查看交互式 Swagger API 文档。
 
 ### 运行自动化单元测试
 
@@ -216,4 +218,11 @@ python3 -m pytest tests/ -v
 | `POST`| `/api/v1/bots/{bot_id}/step` | 手动触发一轮多智能体决策与撮合循环 |
 | `GET` | `/api/v1/bots/{bot_id}/nav` | 获取机器人的时序单位净值走势曲线与夏普指标 |
 | `GET` | `/api/v1/bots/{bot_id}/decisions` | 查验模型完整思维链 (Chain-of-Thought) 审计日志 |
+| `POST`| `/api/v1/bots/{bot_id}/orders/paper` | 手动下单（仅限本地模拟机器人，按跨所实时中位价成交） |
+| `GET` | `/api/v1/bots/{bot_id}/oms/orders` | 查询 OMS 订单与原生保护单 |
+| `POST`| `/api/v1/bots/{bot_id}/reconcile` | 立即执行一次交易所对账（可选对账一致后恢复运行） |
+| `GET` | `/api/v1/bots/{bot_id}/shadow-report` | 影子模式运行报告与 7 天晋级门控 |
+| `GET` | `/api/v1/system/live-readiness` | 实盘就绪检查 |
 | `POST`| `/api/v1/emergency/kill` | **全局紧急急停**：一键撤单并锁死所有机器人 |
+
+> 同一个数据库只能运行**一个**后端进程（`--workers 1`）。第二个进程启动时会被单实例锁拒绝（`HEIMDALL_INSTANCE_LOCK`）。

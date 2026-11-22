@@ -8,8 +8,9 @@ services:
     container_name: heimdall-postgres
     restart: unless-stopped
     environment:
+      # M4：POSTGRES_PASSWORD 为必填项，未设置时 docker compose 直接报错退出（不再回落内置默认密码）
       POSTGRES_USER: ${POSTGRES_USER:-heimdall}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-heimdall_secure_password}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required - set a strong random value in .env (e.g. openssl rand -hex 24)}
       POSTGRES_DB: ${POSTGRES_DB:-heimdall}
     volumes:
       - postgres_data:/var/lib/postgresql/data
@@ -34,8 +35,8 @@ services:
     env_file:
       - .env
     environment:
-      - HEIMDALL_DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-heimdall}:${POSTGRES_PASSWORD:-heimdall_secure_password}@postgres:5432/${POSTGRES_DB:-heimdall}
-      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-heimdall}:${POSTGRES_PASSWORD:-heimdall_secure_password}@postgres:5432/${POSTGRES_DB:-heimdall}
+      - HEIMDALL_DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-heimdall}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required - set a strong random value in .env (e.g. openssl rand -hex 24)}@postgres:5432/${POSTGRES_DB:-heimdall}
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-heimdall}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required - set a strong random value in .env (e.g. openssl rand -hex 24)}@postgres:5432/${POSTGRES_DB:-heimdall}
     volumes:
       - heimdall_data:/app/data
     healthcheck:

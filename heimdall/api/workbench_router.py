@@ -12,6 +12,7 @@ Web3 Bearer 会话鉴权与多租户归属隔离）：
    - `POST /api/v1/bots/{bot_id}/oms/orders/{client_order_id}/recover`：人工触发 UNKNOWN 超时订单查单恢复；
    - `GET  /api/v1/bots/{bot_id}/reconcile/status`：查看最近对账报告、幽灵持仓熔断状态与外部死信心跳；
    - `POST /api/v1/bots/{bot_id}/reconcile`：手动触发一次即时交易所对账（可选对账无误后恢复运行）；
+   - `GET  /api/v1/bots/{bot_id}/shadow-report`：影子模式（Shadow Mode）运行报告与 7 天晋级门控结论；
    - `GET  /api/v1/system/live-readiness`：聚合检查实盘就绪 5 大门槛（金库密钥、精度注册表、行情守卫、死信心跳、原生止损保护）。
 
 2. StrategyRouter、MacroBias 旁路门控与零前视回测接口：
@@ -39,7 +40,10 @@ from heimdall.backtest.engine import BacktestEngine
 from heimdall.backtest.feed import HistoricalDataFeed
 from heimdall.database.db import db_manager
 from heimdall.database.repository import trading_repo
-from heimdall.models.schemas import AgentStatus, ExchangeType, StrategyType
+from heimdall.engine.shadow import build_shadow_report
+from heimdall.models.schemas import AgentStatus, ExchangeType, ExecutionMode, MarketType, StrategyType
+from heimdall.auth.vault import resolve_exchange_credentials
+from heimdall.utils.security_preflight import run_deployment_preflight, summarize as summarize_security
 from heimdall.strategies import MacroBias, StrategyRouter
 from heimdall.strategies.base import MacroBiasAction
 
@@ -317,24 +321,28 @@ def create_workbench_router(bot_manager: Any) -> APIRouter:
             if o.get("reduce_only") and st in ("PENDING", "SUBMITTED", "PARTIAL"):
                 active_protections += 1
 
-        spec = bot.oms.registry.get_spec(bot.exchange.value, bot.symbol)
+        spec = bot.oms.registry.get_spec(bot.exchange.value, bot.symbol, bot.market_type)
         logger.info(
-            "[OMS 查询] bot=%s | 返回订单=%d | 活动原生保护单=%d | UNKNOWN=%d",
-            bot_id, len(orders_sorted), active_protections, state_counts.get("UNKNOWN", 0),
+            "[OMS 查询] bot=%s | 市场=%s | 返回订单=%d | 活动原生保护单=%d | UNKNOWN=%d",
+            bot_id, bot.market_type.value, len(orders_sorted), active_protections, state_counts.get("UNKNOWN", 0),
         )
         return {
             "bot_id": bot_id,
             "symbol": bot.symbol,
             "exchange": bot.exchange.value,
+            "market_type": bot.market_type.value,
             "strict_sl_protection": bot.oms.strict_sl_protection,
             "instrument_spec": {
                 "exchange": spec.exchange,
+                "market_type": spec.market_type,
                 "symbol": spec.symbol,
                 "tick_size": str(spec.tick_size),
                 "step_size": str(spec.step_size),
                 "min_qty": str(spec.min_qty),
                 "min_notional_usd": str(spec.min_notional_usd),
                 "contract_val": str(spec.contract_val),
+                # P1：exchange = 交易所 exchangeInfo，builtin = 内置规格表，default = 未登记（实盘/测试网会拒单）
+                "source": bot.oms.registry.spec_source(bot.exchange.value, bot.symbol, bot.market_type) or "default",
             },
             "summary": {
                 "total": len(orders_sorted),
@@ -375,6 +383,20 @@ def create_workbench_router(bot_manager: Any) -> APIRouter:
     # 2. 对账引擎状态、手动对账与实盘就绪预检
     # --------------------------------------------------------------------------
 
+    @router.get("/api/v1/bots/{bot_id}/shadow-report")
+    async def get_shadow_report(
+        bot_id: str,
+        days: int = Query(default=7, ge=1, le=30),
+        max_gap_minutes: float = Query(default=30.0, ge=1.0, le=1440.0),
+        caller_wallet: Optional[str] = Depends(resolve_caller_wallet),
+    ) -> Dict[str, Any]:
+        """
+        L4：影子模式运行报告。LOCAL_SIM 机器人连续运行 >= days 天、0 次未捕获异常、
+        0 次 OMS/对账异常、平均估算滑点 < 0.2% 时 passed=true（docs/oms_and_live_readiness_design.md 第 6 节）。
+        """
+        bot = _assert_bot_access(bot_manager, bot_id, caller_wallet)
+        return await build_shadow_report(trading_repo, bot, days=days, max_gap_minutes=max_gap_minutes)
+
     @router.get("/api/v1/bots/{bot_id}/reconcile/status")
     async def get_reconcile_status(
         bot_id: str,
@@ -382,12 +404,18 @@ def create_workbench_router(bot_manager: Any) -> APIRouter:
     ) -> Dict[str, Any]:
         """获取指定机器人的最近交易所对账状态、幽灵持仓熔断状态与外部死信心跳快照"""
         bot = _assert_bot_access(bot_manager, bot_id, caller_wallet)
-        positions = await bot.executor.get_open_positions()
+        # E7：独立账本模式只统计本机器人自己的持仓
+        try:
+            positions = await bot.get_bot_positions()
+        except Exception as pos_err:
+            logger.warning("[对账状态] bot=%s 读取持仓失败: %s", bot_id, pos_err)
+            positions = []
         return {
             "bot_id": bot_id,
             "symbol": bot.symbol,
             "exchange": bot.exchange.value,
-            "execution_mode": getattr(bot, "execution_mode", "PAPER"),
+            "market_type": bot.market_type.value if isinstance(getattr(bot, "market_type", None), MarketType) else str(getattr(bot, "market_type", MarketType.USDM_FUTURES.value)),
+            "execution_mode": bot.execution_mode.value if isinstance(getattr(bot, "execution_mode", None), ExecutionMode) else str(getattr(bot, "execution_mode", ExecutionMode.LOCAL_SIM.value)),
             "bot_status": bot.status.value,
             "open_positions_count": len(positions),
             "last_reconciliation": bot.last_reconciliation,
@@ -442,45 +470,46 @@ def create_workbench_router(bot_manager: Any) -> APIRouter:
     @router.get("/api/v1/system/live-readiness")
     async def check_live_readiness(
         exchange: ExchangeType = Query(default=ExchangeType.HYPERLIQUID, description="目标交易所"),
+        market_type: MarketType = Query(default=MarketType.USDM_FUTURES, description="目标市场类型"),
+        execution_mode: ExecutionMode = Query(default=ExecutionMode.TESTNET, description="目标运行模式"),
         symbol: str = Query(default="ETH", description="目标标的"),
         bot_id: Optional[str] = Query(default=None, description="可选指定机器人 ID"),
         caller_wallet: str = Depends(require_authenticated_wallet),
     ) -> Dict[str, Any]:
         """
         实盘就绪自检清单（Live Readiness Preflight）：
-        在新建或切换 Testnet / Mainnet 实盘模式前，逐项核验密钥金库、精度规格、行情守卫、
-        死信心跳与 OMS 裸仓保护开关。
+        按 `owner_wallet + provider + market_type + execution_mode + is_active` 精确校验凭证与市场精度。
         """
         clean_wallet = caller_wallet.strip().lower()
         target_exchange = exchange.value
+        target_market = market_type.value
+        target_mode = execution_mode.value
         target_symbol = symbol.upper().strip()
 
         bot = bot_manager.bots.get(bot_id) if bot_id else None
         if bot is not None:
             _assert_bot_access(bot_manager, bot_id, clean_wallet)
             target_exchange = bot.exchange.value
+            target_market = bot.market_type.value
+            target_mode = bot.execution_mode.value
             target_symbol = bot.symbol.upper().strip()
 
-        # 1. 检查当前用户在密钥金库中是否已配置目标交易所凭证（币安同时兼容 binance 与 binance_demo）
-        provider_name = target_exchange.lower()
-        if provider_name == "binance":
-            vault_rows = await db_manager.execute_query(
-                "SELECT key_id, label, provider, updated_at FROM user_api_keys WHERE LOWER(wallet_address) = ? AND is_active = 1 AND LOWER(provider) IN ('binance', 'binance_demo')",
-                (clean_wallet,),
-            )
-        else:
-            vault_rows = await db_manager.execute_query(
-                "SELECT key_id, label, provider, updated_at FROM user_api_keys WHERE LOWER(wallet_address) = ? AND is_active = 1 AND LOWER(provider) = ?",
-                (clean_wallet, provider_name),
-            )
-        has_exchange_key = len(vault_rows) > 0
+        # 1. 严格五元组精确匹配凭证（无跨市场/跨环境回退）
+        matched_cred = await resolve_exchange_credentials(
+            owner_wallet=clean_wallet,
+            provider=target_exchange.lower(),
+            market_type=target_market,
+            execution_mode=target_mode,
+        )
+        has_exchange_key = matched_cred is not None
+        vault_rows = [matched_cred] if matched_cred else []
 
-        # 2. 检查标的精度规格是否已加载
+        # 2. 按 (exchange, market_type, symbol) 检查标的精度规格
         registry = bot.oms.registry if bot else None
         if registry is None:
             from heimdall.execution.precision import InstrumentRegistry
             registry = InstrumentRegistry()
-        spec = registry.get_spec(target_exchange, target_symbol)
+        spec = registry.get_spec(target_exchange, target_symbol, target_market)
         spec_ready = spec.tick_size > 0 and spec.step_size > 0
 
         # 3. 检查跨所行情守卫是否健康（非 ISOLATED）
@@ -499,13 +528,21 @@ def create_workbench_router(bot_manager: Any) -> APIRouter:
         # 5. 检查 OMS 严格原生止损裸仓保护开关
         strict_sl_ready = bool(bot.oms.strict_sl_protection) if bot else True
 
+        # 6. M4：部署安全预检（数据库弱口令 / 占位密钥 / 金库主密钥格式），MAINNET 要求无 CRITICAL
+        security = summarize_security(run_deployment_preflight())
+        deployment_secure = bool(security["secure"])
+        critical_msgs = [f["message"] for f in security["findings"] if f["severity"] == "CRITICAL"]
+
         checks = [
             {
                 "id": "vault_exchange_key",
                 "name": f"{target_exchange} 交易凭证已托管至安全金库",
                 "passed": has_exchange_key,
                 "required_for": "TESTNET_AND_MAINNET",
-                "detail": f"已找到 {len(vault_rows)} 条有效凭证" if has_exchange_key else f"请先在密钥金库配置 {target_exchange} API Key / 私钥",
+                "detail": (
+                    f"已找到 {len(vault_rows)} 条有效凭证" if has_exchange_key
+                    else f"未找到 {target_exchange} / {target_market} / {target_mode} 的有效凭证（市场类型与测试网/正式网需与机器人一致）"
+                ),
             },
             {
                 "id": "instrument_spec",
@@ -519,7 +556,10 @@ def create_workbench_router(bot_manager: Any) -> APIRouter:
                 "name": "多源行情与跨所价差守卫健康",
                 "passed": market_ready,
                 "required_for": "TESTNET_AND_MAINNET",
-                "detail": f"当前状态={guard_status_str}",
+                "detail": (
+                    f"当前状态={guard_status_str}" if market_ready
+                    else f"当前状态={guard_status_str}：服务器访问不到 Binance / OKX / Hyperliquid 行情（{guard_data.get('warning') or guard_data.get('error') or '全部数据源不可达'}）"
+                ),
             },
             {
                 "id": "oms_strict_sl",
@@ -535,14 +575,23 @@ def create_workbench_router(bot_manager: Any) -> APIRouter:
                 "required_for": "MAINNET_ONLY",
                 "detail": f"已发送 {dms_snap.get('ping_count', 0)} 次心跳" if heartbeat_ready else "未配置 HEIMDALL_HEARTBEAT_URL（主网实盘强建议启用）",
             },
+            {
+                "id": "deployment_security",
+                "name": "部署安全预检（无弱口令 / 占位密钥）",
+                "passed": deployment_secure,
+                "required_for": "MAINNET_ONLY",
+                "detail": "未发现 CRITICAL 级部署安全问题" if deployment_secure else "；".join(critical_msgs),
+            },
         ]
 
         ready_for_testnet = has_exchange_key and spec_ready and market_ready and strict_sl_ready
-        ready_for_mainnet = ready_for_testnet and heartbeat_ready
+        ready_for_mainnet = ready_for_testnet and heartbeat_ready and deployment_secure
 
+        failed = [f"{c['id']}({c['detail']})" for c in checks if not c["passed"]]
         logger.info(
-            "[实盘就绪预检] 钱包=%s | 交易所=%s | 标的=%s | Testnet就绪=%s | Mainnet就绪=%s",
-            clean_wallet, target_exchange, target_symbol, ready_for_testnet, ready_for_mainnet,
+            "[实盘就绪预检] 钱包=%s | 交易所=%s | 市场=%s | 环境=%s | 标的=%s | Testnet就绪=%s | Mainnet就绪=%s | 未通过=%s",
+            clean_wallet, target_exchange, target_market, target_mode, target_symbol,
+            ready_for_testnet, ready_for_mainnet, "; ".join(failed) or "无",
         )
         return {
             "exchange": target_exchange,
@@ -550,6 +599,7 @@ def create_workbench_router(bot_manager: Any) -> APIRouter:
             "ready_for_testnet": ready_for_testnet,
             "ready_for_mainnet": ready_for_mainnet,
             "checks": checks,
+            "deployment_security": security,
             "checked_at": datetime.now(timezone.utc).isoformat(),
         }
 

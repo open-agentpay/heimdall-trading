@@ -15,7 +15,7 @@ import pytest
 from heimdall.auth.vault import crypto_vault
 from heimdall.database.db import DatabaseManager
 from heimdall.database.repository import TradingRepository
-from heimdall.execution.binance import BinanceExecutionAdapter
+from heimdall.execution.local_sim import LocalFuturesSimulationAdapter
 from heimdall.execution.oms import (
     ManagedOrder,
     OrderLifecycleState,
@@ -136,7 +136,7 @@ def test_oms_write_ahead_idempotency_and_native_sl_tp(tmp_path):
         db = DatabaseManager(db_path=str(tmp_path / "oms.db"))
         await db.init_tables()
         repo = TradingRepository(db=db)
-        adapter = BinanceExecutionAdapter(initial_cash=10000.0, testnet=True)
+        adapter = LocalFuturesSimulationAdapter(initial_cash=10000.0)
         oms = OrderManagementSystem(adapter=adapter, repo=repo)
 
         prop = _make_proposal(price=3123.4567, size_usd=1000.0, sl=3050.1234, tp=3300.9876)
@@ -171,8 +171,8 @@ def test_oms_write_ahead_idempotency_and_native_sl_tp(tmp_path):
 def test_oms_timeout_unknown_and_recovery():
     """验证网络超时时转入 UNKNOWN（不盲目重发），并通过 poll_unknown_orders 查单恢复终态。"""
     async def _run():
-        adapter = BinanceExecutionAdapter(initial_cash=10000.0)
-        adapter.execute_proposal = AsyncMock(side_effect=httpx.ReadTimeout("exchange timeout"))
+        adapter = LocalFuturesSimulationAdapter(initial_cash=10000.0)
+        adapter.submit_order = AsyncMock(side_effect=httpx.ReadTimeout("exchange timeout"))
         adapter.query_order = AsyncMock(return_value={
             "found": True,
             "status": "FILLED",
@@ -203,7 +203,7 @@ def test_oms_sl_failure_triggers_protective_close_and_trailing_stop_protocol():
     """验证原生止损挂载连续失败触发保护性市价平仓，以及追踪止损先挂新单再撤旧单协议。"""
     async def _run():
         # 1. 止损挂载连续 3 次失败 -> 触发保护性市价平仓，仓位归零（绝不裸奔）
-        adapter = BinanceExecutionAdapter(initial_cash=10000.0)
+        adapter = LocalFuturesSimulationAdapter(initial_cash=10000.0)
         adapter.place_conditional_order = AsyncMock(side_effect=RuntimeError("exchange SL error"))
         oms = OrderManagementSystem(adapter=adapter, strict_sl_protection=True, sl_max_retries=3)
 
@@ -216,7 +216,7 @@ def test_oms_sl_failure_triggers_protective_close_and_trailing_stop_protocol():
         assert await adapter.get_open_positions() == []
 
         # 2. 追踪止损无缝切换：验证先 place_conditional_order 再 cancel_order
-        adapter2 = BinanceExecutionAdapter(initial_cash=10000.0)
+        adapter2 = LocalFuturesSimulationAdapter(initial_cash=10000.0)
         oms2 = OrderManagementSystem(adapter=adapter2)
         prop2 = _make_proposal(idemp="idemp_trail_01", sl=3050.0, tp=None)
         parent, _ = await oms2.submit_proposal("bot_oms_01", prop2)
@@ -248,7 +248,7 @@ def test_oms_sl_failure_triggers_protective_close_and_trailing_stop_protocol():
 def test_oms_limit_ttl_expiry_releases_portfolio_exposure():
     """验证超过 TTL 的 SUBMITTED 限价单自动撤单并释放 PortfolioCoordinator 预占敞口。"""
     async def _run():
-        adapter = BinanceExecutionAdapter(initial_cash=10000.0)
+        adapter = LocalFuturesSimulationAdapter(initial_cash=10000.0)
         oms = OrderManagementSystem(adapter=adapter, limit_order_ttl_seconds=60.0)
         coord = PortfolioCoordinator(max_total_exposure_usd=10000.0)
         await coord.check_and_reserve("bot_ttl", "ETH", "LONG", 2000.0)
@@ -288,7 +288,7 @@ def test_reconciler_ghost_position_and_external_close():
             status = AgentStatus.RUNNING
 
         # Case 1: 幽灵持仓（本地空仓，交易所实际持有 ETH LONG）-> 自动暂停 Bot
-        adapter = BinanceExecutionAdapter(initial_cash=10000.0)
+        adapter = LocalFuturesSimulationAdapter(initial_cash=10000.0)
         await adapter.execute_proposal(_make_proposal(size_usd=1000.0))
         reconciler = ExchangeReconciler(adapter=adapter)
         bot = DummyBot()
@@ -300,7 +300,7 @@ def test_reconciler_ghost_position_and_external_close():
         assert rep1.diffs[0].diff_type == "GHOST_POSITION"
 
         # Case 2: 外部平仓（本地认为有仓位，交易所已空仓）-> 撤销残留孤儿条件单
-        adapter_flat = BinanceExecutionAdapter(initial_cash=10000.0)
+        adapter_flat = LocalFuturesSimulationAdapter(initial_cash=10000.0)
         await adapter_flat.place_conditional_order(
             symbol="ETH",
             side=OrderSide.SELL,

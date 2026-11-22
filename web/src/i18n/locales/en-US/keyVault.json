@@ -1,0 +1,179 @@
+{
+  "header": {
+    "title": "API Key Vault",
+    "encrypted": "AES-256-GCM encrypted",
+    "subtitle": "Secure custody for Hyperliquid trading credentials and AI model inference keys — plaintext never leaves the vault",
+    "addKey": "Add credential",
+    "locked": "Vault locked",
+    "close": "Close"
+  },
+  "locked": {
+    "title": "Your encrypted credential vault is locked",
+    "desc1": "You are not signed in. Under Heimdall's security architecture, all exchange private keys (Hyperliquid / Binance / OKX) and LLM API keys are protected with hardware-grade AES-256-GCM authenticated encryption and isolated one-to-one by your Web3 wallet address.",
+    "desc2": "Unauthorized cross-tenant lookup or display of credentials is strictly prohibited. Connect your Web3 wallet and sign to verify your identity to unlock your private vault.",
+    "connect": "Connect wallet to unlock vault"
+  },
+  "tabs": {
+    "exchanges": "Exchange credentials ({{n}})",
+    "llms": "AI model keys ({{n}})",
+    "security": "Local security lock",
+    "probeStatus": "Self-check probes on standby: 4 connections OK"
+  },
+  "banner": {
+    "hlTitle": "Hyperliquid security best practice:",
+    "hlBody": "Never enter the seed phrase or private key of a main wallet holding your assets! Instead, create a dedicated agent private key under \"API Agents\" on the Hyperliquid website that can only open and close positions, keeping your main assets fully isolated from the trading environment.",
+    "llmTitle": "Multi-model orchestration:",
+    "llmBody": "Claude 3.5 Sonnet handles the core long/short debate and win-rate assessment, while DeepSeek V3 / R1 rapidly scans news and on-chain anomalies — combining strong reasoning with millisecond-level response."
+  },
+  "empty": {
+    "title": "No credentials in this category yet",
+    "hint": "Click \"Add credential\" in the top-right corner to register and encrypt one"
+  },
+  "footer": {
+    "note": "All private keys and credentials are stored only on this node and are never synced in plaintext to third-party servers"
+  },
+  "status": {
+    "justNow": "just now",
+    "untested": "Untested"
+  },
+  "badge": {
+    "encrypted": "AES-256-GCM encrypted",
+    "newEncrypted": "New · encrypted"
+  },
+  "messages": {
+    "probeError": "Probe request failed",
+    "switchedTestnet": "Switched to testnet / demo key",
+    "switchedMainnet": "Switched to mainnet key",
+    "activated": "🟢 Now the default active LLM",
+    "configUpdated": "Configuration updated and applied"
+  },
+  "errors": {
+    "unknown": "Unknown error",
+    "networkOrAuth": "Network or authentication error"
+  },
+  "alerts": {
+    "toggleNetworkFailed": "Failed to switch network",
+    "activateFailed": "Failed to activate key",
+    "saveConfigFailed": "Failed to save configuration",
+    "deleteConfirm": "Destroy credential \"{{label}}\"?\nBots currently using it may stop running.",
+    "deleteTitle": "Destroy credential",
+    "deleteConfirmText": "Destroy",
+    "deleteFailed": "Failed to destroy credential",
+    "revokeNone": "No credentials are saved under this wallet.",
+    "revokeNoneTitle": "Nothing to revoke",
+    "revokeConfirm": "All {{n}} credentials under this wallet (exchanges and LLMs) will be deleted from the database. Bots using them may stop running. This cannot be undone.",
+    "revokeTitle": "Emergency revoke all credentials",
+    "revokeConfirmText": "Delete all {{n}}",
+    "itemFailed": "{{label}}: {{message}}",
+    "revokeDone": "All {{n}} credentials deleted.\nIf you suspect a leak, also revoke the corresponding API keys in your exchange and LLM provider dashboards.",
+    "revokeDoneTitle": "Revocation complete",
+    "revokePartial": "Deleted {{deleted}}, {{failed}} failed:\n{{details}}",
+    "revokePartialTitle": "Some credentials could not be deleted"
+  },
+  "add": {
+    "title": "Register exchange / LLM credential",
+    "close": "Close",
+    "categoryLabel": "Credential type",
+    "categoryExchange": "⚡ Exchange API / agent key",
+    "categoryLlm": "🧠 AI model inference key",
+    "providerLabel": "Provider",
+    "options": {
+      "hyperliquid": "Hyperliquid L1 (agent private key)",
+      "binance": "Binance Futures (USDⓈ-M perpetuals · official SDK, mainnet & testnet)",
+      "binanceDemo": "Binance Spot Demo (spot demo-api · spot long only)",
+      "okx": "OKX (API Key)",
+      "bybit": "Bybit Derivatives API",
+      "custom": "Custom LLM (OpenAI-compatible endpoint)",
+      "deepseek": "DeepSeek (V3 / R1 reasoning core)"
+    },
+    "labelField": "Alias / note",
+    "labelPlaceholder": "e.g. Binance main account / DeepSeek-V3 core",
+    "hlPrivateKey": "Agent private key",
+    "hlPrivateKeyPlaceholder": "0x... agent private key (hex)",
+    "hlMainAddress": "Main account wallet address (optional)",
+    "hlMainAddressPlaceholder": "0x... EVM wallet address (optional; derived from the private key if left blank)",
+    "networkTitle": "Key network",
+    "hlNetworkHint": "Testnet keys use api.hyperliquid-testnet.xyz, mainnet keys use api.hyperliquid.xyz (testnet and mainnet agent keys are not interchangeable)",
+    "mainnet": "Mainnet",
+    "testnet": "Testnet",
+    "apiKeyLabel": "API Key (public key)",
+    "apiKeyPlaceholder": "API key generated on {{provider}}",
+    "apiSecretLabel": "API Secret (secret key)",
+    "apiSecretPlaceholder": "Matching {{provider}} secret key",
+    "binanceNetworkHint": "Testnet / demo keys use demo-api.binance.com, mainnet keys use api.binance.com",
+    "passphraseLabel": "Passphrase (API passphrase)",
+    "passphrasePlaceholder": "Passphrase set when creating the OKX API key",
+    "modelLabel": "Model",
+    "modelHint": "(custom, or enter a model ID)",
+    "modelPlaceholder": "e.g. deepseek-chat, deepseek-reasoner, gpt-4o, qwen-plus, claude-3-5-sonnet",
+    "quickFill": "Quick fill:",
+    "llmApiKeyLabel": "API Key",
+    "baseUrlLabel": "API Base URL (custom endpoint / proxy, optional)",
+    "baseUrlPlaceholder": "e.g. https://openrouter.ai/api/v1, https://api.deepseek.com, http://localhost:11434/v1",
+    "commonEndpoints": "Common endpoints:",
+    "ollamaLocal": "Ollama (local)",
+    "baseUrlTip": "* Tip: for standard OpenAI-compatible endpoints, just keep the trailing /v1 (trailing slashes are normalized per RFC 3986; the path is kept intact)",
+    "setActive": "Set as the active key after saving (used first by the agents during analysis)",
+    "cancel": "Cancel",
+    "submit": "Encrypt & save to vault",
+    "alerts": {
+      "walletRequired": "Connect a Web3 wallet before adding credentials to the vault.",
+      "walletRequiredTitle": "Wallet not connected",
+      "labelRequired": "Please enter an alias.",
+      "incompleteTitle": "Missing information",
+      "hlKeyRequired": "Please enter the Hyperliquid agent private key.",
+      "apiPairRequired": "Please enter both the {{provider}} API Key (public key) and API Secret (secret key).",
+      "okxPassphraseRequired": "OKX requires a passphrase (API passphrase).",
+      "llmKeyRequired": "Please enter the LLM API key.",
+      "saveFailed": "Make sure the backend is running and your wallet session is valid.",
+      "saveFailedTitle": "Failed to save credential"
+    }
+  },
+  "card": {
+    "active": "Active",
+    "standby": "Standby",
+    "modelTag": "Model: {{model}}",
+    "testTitle": "Test connectivity",
+    "editTitle": "Edit model or API endpoint (Base URL)",
+    "deleteTitle": "Destroy this credential",
+    "editHeader": "Edit credential",
+    "labelPlaceholder": "e.g. DeepSeek core reasoning key",
+    "modelCode": "Model ID",
+    "modelPlaceholder": "e.g. deepseek-chat, gpt-4o, qwen-plus",
+    "quickModel": "Quick select:",
+    "baseUrl": "API endpoint (Base URL)",
+    "baseUrlPlaceholder": "e.g. https://api.deepseek.com (without /chat/completions)",
+    "updateKey": "Update API Key / secret",
+    "keepHint": "(leave blank to keep the current key)",
+    "newKeyPlaceholder": "Enter a new key to replace it, or leave blank to keep it",
+    "saving": "Saving...",
+    "save": "Save",
+    "maskedTitle": "The raw key is kept only in the backend's encrypted vault and cannot be viewed or copied in the browser",
+    "maskedOnly": "Masked value only",
+    "modelConfig": "Model:",
+    "permissions": "Permissions:",
+    "fullPermissions": "Full access",
+    "activeInEffect": "Active",
+    "activateTitle": "Make this LLM key the active one",
+    "switching": "Switching...",
+    "setActive": "Set as active",
+    "mainnetKey": "Mainnet",
+    "networkToggleTitle": "Switch this exchange key between testnet / demo and mainnet",
+    "testnetKey": "Testnet / demo"
+  },
+  "security": {
+    "masterTitle": "Vault master key",
+    "masterDesc": "Protected by a local, independent 32-byte high-entropy random key",
+    "defending": "Active protection",
+    "encStandard": "Encryption: AES-256-GCM (NIST SP 800-38D)",
+    "antiReplay": "Replay protection: 12-byte random nonce + 16-byte MAC authentication tag",
+    "storage": "Key file: heimdall/data/.vault.key (host permission isolation)",
+    "exportTitle": "Export encrypted backup",
+    "exportDesc": "Export all credentials as an encrypted backup. Not available yet — the backend has no export API.",
+    "exportDisabledTitle": "The backend has no export API yet, so this feature is unavailable",
+    "exportBtn": "Export not supported yet",
+    "revokeTitle": "Emergency revoke all",
+    "revokeDesc": "If you suspect a leak, delete all credentials under this wallet from the database (API keys on the exchange side are not revoked).",
+    "revokeBtn": "Destroy all credentials"
+  }
+}

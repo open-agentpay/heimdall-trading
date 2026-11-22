@@ -1,0 +1,69 @@
+{
+  "sound": {
+    "on": "🔊 Trade-fill and risk alert sounds plus desktop notifications enabled",
+    "off": "🔇 Alert sounds muted"
+  },
+  "bot": {
+    "deleteNeedAuth": "🔐 Connect and sign in with your wallet to delete a bot",
+    "deleteConfirm": "Stop and permanently delete bot \"{{label}}\" ({{id}})?\nThis cancels its remaining open orders and removes its decision history, NAV and trade records. This cannot be undone.",
+    "deleteTitle": "Delete bot",
+    "deleteConfirmText": "Stop & delete",
+    "deleted": "🗑️ Bot stopped and deleted: {{label}}",
+    "deleteFailed": "Delete failed: {{message}}",
+    "switched": "Switched to bot: {{name}} ({{symbol}})",
+    "created": "🎉 Bot [{{botId}}] created and loaded into the arena"
+  },
+  "refresh": {
+    "needAuth": "🔐 Connect and sign in with your wallet to force a new LLM run",
+    "done": "🔄 Arena ran a new round and refreshed",
+    "failed": "Refresh failed: {{message}}"
+  },
+  "ws": {
+    "step": "⚡ WebSocket: new decision received for [{{botId}}]",
+    "orderFill": "Fill report [{{botId}}]: {{symbol}} {{orderId}}",
+    "orderNotifyTitle": "Heimdall order filled",
+    "riskFallback": "Hard risk guard triggered",
+    "riskNotifyTitle": "Heimdall critical risk alert",
+    "riskToast": "🚨 Risk circuit-breaker alert: {{message}}"
+  },
+  "kill": {
+    "done": "🚨 [Kill switch triggered] All open orders cancelled and positions locked!",
+    "failed": "🚨 Kill switch request: {{message}}"
+  },
+  "step": {
+    "starting": "⚡ Triggering a single multi-agent step for bot [{{botId}}]...",
+    "rejected": "⛔ This round was rejected: {{error}}",
+    "done": "⚡ [Run complete] {{symbol}} price {{price}} | Verdict: {{consensus}}{{proposal}}",
+    "withProposal": " | Proposal generated",
+    "noProposal": " | No proposal",
+    "failed": "⚡ Step trigger: {{message}}"
+  },
+  "views": {
+    "arena": "Arena",
+    "swarm": "Swarm",
+    "sentiment": "Sentiment & Intel",
+    "nav": "NAV",
+    "risk": "Seven Iron Rules Risk",
+    "audit": "Audit Trail",
+    "backtest": "Backtest",
+    "switched": "Switched view: {{name}}"
+  },
+  "capital": {
+    "updated": "📊 Portfolio capital allocation updated"
+  },
+  "wallet": {
+    "sessionExpired": "Session expired. Please reconnect your wallet and sign in again",
+    "connected": "🎉 Wallet connected! Authorized: {{address}}",
+    "disconnected": "👋 Wallet safely disconnected"
+  },
+  "api": {
+    "requestFailed": "Request failed",
+    "timeout": "Request timed out. Check that the backend is running, or try a shorter backtest range",
+    "network": "Network error. Make sure the backend API is running on port 8000"
+  },
+  "context": {
+    "useBotOutside": "useBot must be called inside BotProvider",
+    "useRiskOutside": "useRisk must be called inside RiskProvider",
+    "killFallback": "Kill switch triggered; all in-flight orders cancelled"
+  }
+}

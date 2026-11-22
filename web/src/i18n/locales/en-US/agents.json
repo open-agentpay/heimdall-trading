@@ -1,0 +1,165 @@
+{
+  "roles": {
+    "analyst": {
+      "title": "Technical & Macro Analyst",
+      "description": "[Quick take]: Reads pure candlestick price action and computes quantitative indicators such as moving averages (EMA), relative strength (RSI) and average true range (ATR) to judge whether the market is in a strong uptrend, a strong downtrend, or a choppy sideways range."
+    },
+    "sentiment": {
+      "title": "Sentiment & On-chain Whale Analyst",
+      "description": "[Quick take]: Tracks large holders' exchange deposits and withdrawals (accumulating or dumping), the Fear & Greed Index, open interest (OI) and stablecoin minting, to avoid bull traps and liquidation cascades."
+    },
+    "bull": {
+      "title": "Lead Bull Researcher",
+      "description": "[Quick take]: The \"for\" side of the long/short debate. Hunts for every clue pointing higher, makes a firm case for going long, estimates a take-profit target and works out a sensible risk/reward ratio."
+    },
+    "bear": {
+      "title": "Bear Skeptic Researcher",
+      "description": "[Quick take]: The \"against\" side and fault-finder of the debate. However good things look, it digs out hidden risks — overhead supply, Fed (FOMC) rate meetings, fake breakouts — and keeps the team on defense."
+    },
+    "moderator": {
+      "title": "Chief Debate Moderator",
+      "description": "[Quick take]: The judge with the final say. Impartial, it runs 3 rounds of debate between the bull and bear researchers and weighs both sides' evidence to reach a final call (buy, sell, or stay flat)."
+    },
+    "strategy": {
+      "title": "Quant Execution Strategist",
+      "description": "[Quick take]: The number-cruncher. Given the moderator's ruling, it never blindly chases with market orders: it computes the best limit price, sizes the position and stop-loss with the Kelly Criterion, and stays flat when there is no clear signal."
+    },
+    "risk_officer": {
+      "title": "Compliance Risk Officer",
+      "description": "[Quick take]: The steward. Reviews the strategist's order proposal: is the risk/reward worth it, is the stop-loss so wide it risks a blow-up, and does it break the account's portfolio rules?"
+    },
+    "hard_guard": {
+      "title": "Seven Iron Rules Hard Risk Guard",
+      "description": "[Quick take]: A zero-compromise circuit breaker! Hard-coded in pure Python — even if the LLM goes rogue, hallucinates or wants to short the planet, this firewall pulls the plug within a microsecond the moment a single check fails!"
+    },
+    "alert_notifier": {
+      "title": "24/7 Event & Circuit-Breaker Notifier",
+      "description": "[Quick take]: The round-the-clock messenger. Whenever the system trips a circuit breaker, fills an order or sees a cross-exchange price spike, it pushes an alert to your phone via WeChat, Feishu or Telegram within 0.5 seconds!"
+    }
+  },
+  "pending": {
+    "tag": "Awaiting first run",
+    "keyThesis": "This bot has no results yet. Real arguments will appear once the first decision cycle completes."
+  },
+  "common": {
+    "confidenceBadge": "Conf. {{value}}"
+  },
+  "analyst": {
+    "noSummary": "No technical summary returned this round",
+    "rsiBull": " (bullish momentum)",
+    "rsiBear": " (bearish weakness)",
+    "rsiNeutral": " (neutral, range-bound)",
+    "tag": "{{regime}} · Resistance {{resistance}}",
+    "evidenceEma": "EMA: EMA20={{ema20}} · EMA50={{ema50}}",
+    "evidenceRsi": "RSI-14 momentum: {{rsi}}{{label}}",
+    "evidenceLevels": "Structure: support {{support}} · resistance {{resistance}}",
+    "evidenceFunding": "Funding & spread: annualized funding {{funding}} · Bifrost spread {{spread}}",
+    "invalidation": "If a 15m candle closes below support ({{support}}) or breaks decisively above resistance ({{resistance}}), the current [{{regime}}] regime is invalidated and must be recalibrated.",
+    "noLevels": "No support / resistance levels returned this round",
+    "monologue": "[Technical analysis] {{summary}}"
+  },
+  "sentiment": {
+    "whaleShortAccumulation": "accumulating",
+    "whaleShortDistribution": "distributing",
+    "whaleShortNeutral": "neutral",
+    "whaleLongAccumulation": "Large on-chain withdrawals into cold storage (accumulation)",
+    "whaleLongDistribution": "Sustained exchange inflows (distribution risk)",
+    "whaleLongNeutral": "Flows roughly balanced (neutral)",
+    "whaleLongMissing": "not returned",
+    "biasBull": "bullish",
+    "biasBear": "bearish",
+    "tag": "Sentiment {{bias}} · Whales {{whale}}",
+    "badge": "Score {{score}}",
+    "noScore": "No sentiment score returned this round",
+    "thesis": "Composite sentiment score {{score}}; on-chain whale activity: {{whale}}.",
+    "unknown": "unknown",
+    "evidenceWhale": "Whale behavior: {{value}}",
+    "evidenceScore": "Composite sentiment score: {{score}} (Fear & Greed Index: {{fgi}})",
+    "evidenceCrowding": "Position crowding: {{value}}",
+    "invalidation": "If on-chain flows reverse direction (e.g. whales moving large amounts onto exchanges), the sentiment call is overturned.",
+    "monologue": "[Sentiment & whale watch] {{summary}}",
+    "noSummary": "No sentiment summary returned this round"
+  },
+  "debate": {
+    "noBullThesis": "No bull thesis returned this round",
+    "noBearThesis": "No bear thesis returned this round",
+    "tagBull": "Target {{target}} · Stop {{inval}}",
+    "tagBear": "Target {{target}} · Invalid above {{inval}}",
+    "bullTarget": "Long take-profit target: {{value}}",
+    "bearTarget": "Short downside target: {{value}}",
+    "bullInval": "Thesis invalidation stop-loss: {{value}}",
+    "bearInval": "Invalidated on breakout above: {{value}}",
+    "bullConfidence": "Bull confidence: {{value}}",
+    "bearConfidence": "Bear confidence: {{value}}",
+    "noInvalidation": "No invalidation level returned this round",
+    "invalidationBull": "Thesis invalidated and stop-loss triggered if price breaks below {{value}}",
+    "invalidationBear": "Bear thesis invalidated if price breaks above {{value}}",
+    "monologueBull": "[Bull case] {{thesis}}{{target}}",
+    "targetSuffix": " (target: {{value}})",
+    "monologueBear": "[Bear challenge] {{thesis}}"
+  },
+  "moderator": {
+    "noVerdict": "No verdict returned this round",
+    "tag": "Verdict: {{action}}",
+    "evidenceDirection": "Debate ruling: {{action}}",
+    "evidenceConfidence": "Final review confidence: {{value}}",
+    "evidenceRiskWarning": "Risk warning: {{value}}",
+    "evidenceAuthorization": "Execution authorization: {{status}}",
+    "authorized": "Strategy layer cleared to issue a trade proposal",
+    "notAuthorized": "Neutral — no trade proposal issued",
+    "invalidation": "If the market sharply reverses before the order is sent, the moderator immediately withdraws this round's authorization.",
+    "monologue": "[Moderator verdict] {{verdict}}"
+  },
+  "strategy": {
+    "orderTypeFallback": "Order",
+    "tag": "{{orderType}} {{entry}} · SL {{sl}}",
+    "badge": "Size {{value}}",
+    "thesis": "Deterministic trade proposal issued from the debate verdict (with idempotency key)",
+    "evidenceOrder": "Order type: {{type}} | Side: {{side}} ({{stance}})",
+    "evidencePrice": "Order price: {{value}}",
+    "evidenceStops": "Stop-loss: {{sl}} · Take-profit: {{tp}}",
+    "evidenceSize": "Notional: {{size}} · Leverage: {{leverage}}",
+    "evidenceIdempotency": "Idempotency key: {{value}}",
+    "invalidation": "If the order times out unfilled, or price has already crossed the stop-loss before submission, this proposal is void.",
+    "monologue": "[Strategy proposal] Side: {{side}}, price: {{entry}}, risk/reward: {{rr}}",
+    "tagNeutral": "Flat · No open orders",
+    "tagWait": "Awaiting signal · No proposal",
+    "badgeNeutral": "Standing aside",
+    "badgeWait": "Standby",
+    "thesisNoProposal": "The moderator ruled {{action}}; the strategy layer issued no orders this round.",
+    "evidenceVerdict": "Final verdict: {{action}}",
+    "evidenceNoProposal": "No trade proposal issued this round",
+    "invalidationNoProposal": "If the next debate produces a high-confidence breakout authorized by the moderator, the strategist will immediately compute entry and stop-loss.",
+    "monologueNoProposal": "[Strategy] Verdict is {{action}}; no orders this round."
+  },
+  "risk": {
+    "tagUnknown": "Risk result unknown",
+    "tagPassed": "Risk passed ✓",
+    "tagRejected": "Risk rejected ✗",
+    "badgePassed": "Cleared",
+    "badgeBlocked": "Blocked",
+    "thesisUnknown": "No risk verdict returned this round",
+    "thesisPassed": "All hard risk rules passed this round; cleared for execution",
+    "thesisRejected": "Blocked by hard risk guard: {{reason}}",
+    "reasonFallback": "risk limit breached",
+    "evidenceRule": "Rule [{{rule}}]: {{result}}",
+    "rulePass": "PASS",
+    "ruleFail": "FAIL",
+    "noRules": "No per-rule details returned this round",
+    "invalidation": "If any single hard limit exceeds its safety threshold, it triggers an immediate veto and unconditionally blocks the order.",
+    "monologue": "[Risk review] Result: {{result}}{{rule}}",
+    "ruleSuffix": " | Triggered rule: {{reason}}"
+  },
+  "modal": {
+    "pendingNotice": "⏳ This bot has no results yet; below is the role description only. Real arguments and data will appear once the first decision cycle completes.",
+    "stance": "Decision Stance",
+    "confidence": "Confidence Score:",
+    "keyThesis": "Key Thesis",
+    "evidence": "Evidence Checklist",
+    "noEvidence": "No evidence yet",
+    "invalidation": "Invalidation Rule",
+    "noMonologue": "No reasoning recorded yet",
+    "traceId": "Audit trace ID:",
+    "dismiss": "Dismiss"
+  }
+}

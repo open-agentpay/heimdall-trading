@@ -1,0 +1,62 @@
+{
+  "btc": {
+    "name": "Bitcoin",
+    "category": "Layer 1 / Large cap"
+  },
+  "eth": {
+    "name": "Ethereum",
+    "category": "Layer 1 / Smart contracts"
+  },
+  "sol": {
+    "name": "Solana",
+    "category": "High-TPS L1"
+  },
+  "bnb": {
+    "name": "BNB",
+    "category": "CEX / BNB Chain"
+  },
+  "doge": {
+    "name": "Dogecoin",
+    "category": "Meme / Payments"
+  },
+  "xrp": {
+    "name": "Ripple",
+    "category": "Cross-border Payment"
+  },
+  "ada": {
+    "name": "Cardano",
+    "category": "Layer 1 PoS"
+  },
+  "avax": {
+    "name": "Avalanche",
+    "category": "Layer 1 Subnets"
+  },
+  "sui": {
+    "name": "Sui Network",
+    "category": "High-throughput Move L1"
+  },
+  "link": {
+    "name": "Chainlink",
+    "category": "DeFi oracle infrastructure"
+  },
+  "near": {
+    "name": "NEAR Protocol",
+    "category": "Sharded L1 / AI+Crypto"
+  },
+  "apt": {
+    "name": "Aptos",
+    "category": "High-throughput Move L1"
+  },
+  "arb": {
+    "name": "Arbitrum",
+    "category": "Ethereum Layer 2 Rollup"
+  },
+  "op": {
+    "name": "Optimism",
+    "category": "Ethereum Layer 2 Superchain"
+  },
+  "pepe": {
+    "name": "Pepe",
+    "category": "Top Meme Token"
+  }
+}

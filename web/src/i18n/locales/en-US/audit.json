@@ -1,0 +1,61 @@
+{
+  "header": {
+    "title": "Decision Audit & Observability Traces",
+    "sourceBadge": "From backend decision records",
+    "subtitle": "End-to-end record of multi-agent debate chain-of-thought (COT), StepTrace latency, idempotency keys and dual-track hard risk veto rationale"
+  },
+  "filter": {
+    "all": "All directions"
+  },
+  "empty": {
+    "noRecords": "No decision audit records for this bot yet. Real decision traces will appear here after the first run.",
+    "noMatch": "No records match the current filter."
+  },
+  "status": {
+    "completed": "Risk approved",
+    "rejected": "Risk rejected",
+    "halted": "No proposal",
+    "unknown": "Outcome unknown"
+  },
+  "row": {
+    "verdict": "Verdict: {{action}}",
+    "confidence": "(confidence {{pct}}%)",
+    "decisionId": "Decision ID: {{id}}",
+    "time": "Time: {{time}}",
+    "latency": "Latency: {{latency}}"
+  },
+  "detail": {
+    "moderator": "Debate Moderator · Final Verdict",
+    "noVerdict": "No verdict returned for this round",
+    "bull": "Bull Researcher",
+    "noBull": "No bull thesis returned for this round",
+    "bear": "Bear Researcher",
+    "noBear": "No bear thesis returned for this round",
+    "riskCheck": "Dual-track Risk Enforcement Check",
+    "rejectReason": "Rejection reason: {{reason}}",
+    "noRules": "No per-rule results returned for this round",
+    "noSteps": "No StepTrace details for this record (database history only stores the chain-of-thought, proposal and risk outcome)."
+  },
+  "steps": {
+    "inspectHint": "Click to inspect the actual prompt sent to the LLM and its raw output",
+    "inspect": "🔍 Inspect prompt"
+  },
+  "drawer": {
+    "meta": "Decision ID: {{id}} · Latency: {{latency}}",
+    "close": "Close",
+    "promptTitle": "Prompt & market context sent to the LLM",
+    "noPrompt": "No full prompt recorded for this step (the LLM may not have been called, or a local fallback was used).",
+    "inputSummary": "Input summary: {{summary}}",
+    "responseTitle": "LLM Response & Feature Schema",
+    "outputSummary": "Output summary: {{summary}}",
+    "noOutput": "No output recorded for this step.",
+    "fallback": "Local fallback: {{value}}",
+    "yes": "Yes",
+    "no": "No",
+    "error": "Error: {{message}}",
+    "none": "None",
+    "idempotencyKey": "Idempotency key:",
+    "dataSource": "Source: backend StepTrace records",
+    "done": "Done"
+  }
+}

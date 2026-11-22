@@ -1,0 +1,42 @@
+{
+  "providers": {
+    "metamask": {
+      "name": "MetaMask (小狐狸)",
+      "description": "全球使用最广泛的 EVM 浏览器插件与移动端钱包",
+      "tag": "真实签名推荐"
+    },
+    "okx": {
+      "name": "OKX Web3 Wallet (欧易)",
+      "description": "原生支持 Arbitrum 与 Hyperliquid L1 的多链钱包",
+      "tag": "真实签名"
+    },
+    "readonly": {
+      "name": "只读预览模式 (不写入登录会话)",
+      "description": "免插件浏览系统公共机器人行情与审计数据（写操作与回测仍需真实签名）",
+      "tag": "只读预览"
+    }
+  },
+  "errors": {
+    "noPlugin": "未检测到 {{wallet}} 浏览器插件，请先安装或切换只读预览模式",
+    "rejected": "用户拒绝了账户授权请求",
+    "nonceFailed": "获取后端防重放挑战报文失败，请确认后端 API 运行正常",
+    "noSession": "后端验签未返回有效 Bearer 会话凭证，登录已中止",
+    "signFailed": "用户取消了签名或后端验签失败"
+  },
+  "header": {
+    "connected": "已连接 Web3 钱包",
+    "connect": "连接去中心化钱包",
+    "sessionValid": "Bearer 会话有效",
+    "subtitleConnected": "已绑定当前量化交易与金库托管会话",
+    "subtitleConnect": "通过 EIP-191 免 Gas 签名换取后端 Bearer 会话"
+  },
+  "dismiss": "关闭",
+  "activeAddress": "当前活跃钱包地址",
+  "disconnect": "断开连接并销毁本地 Session",
+  "steps": {
+    "connecting": "读取地址...",
+    "challenge": "获取挑战...",
+    "signing": "请在钱包签名...",
+    "verified": "验签成功！"
+  }
+}
