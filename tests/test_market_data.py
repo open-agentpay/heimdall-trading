@@ -21,12 +21,25 @@ from unittest.mock import AsyncMock, patch
 from heimdall.data.market_data import (
     BinanceMarketDataProvider,
     HyperliquidMarketDataProvider,
+    OKXMarketDataProvider,
     BifrostMarketDataProvider,
     OfflineFallbackDataProvider,
     CompositeMarketDataProvider,
     MarketDataHub,
 )
 from heimdall.bifrost.client import BifrostClient
+
+
+def _offline_okx() -> OKXMarketDataProvider:
+    """
+    行情中枢的数据源顺序为 Binance -> OKX -> Hyperliquid。原测试只替换了 Binance 和 Hyperliquid，
+    OKX 会真实联网：能连上 OKX 时测试拿到真实 K 线 / 真实价格而失败，断网时才碰巧通过。
+    这里把 OKX 固定为不可用，使测试与网络环境无关。
+    """
+    okx = OKXMarketDataProvider()
+    okx.get_klines = AsyncMock(side_effect=ConnectionError("OKX disabled in unit test"))
+    okx.get_ticker_price = AsyncMock(side_effect=ConnectionError("OKX disabled in unit test"))
+    return okx
 
 
 # ============================================================================
@@ -156,6 +169,7 @@ def test_composite_provider_failover():
 
         hub = CompositeMarketDataProvider(
             binance_provider=mock_binance,
+            okx_provider=_offline_okx(),
             hyperliquid_provider=mock_hl,
             offline_provider=mock_offline,
         )
@@ -185,6 +199,7 @@ def test_cross_exchange_guard_spread_states():
         mock_hl = HyperliquidMarketDataProvider()
         hub = CompositeMarketDataProvider(
             binance_provider=mock_binance,
+            okx_provider=_offline_okx(),
             hyperliquid_provider=mock_hl,
         )
 
@@ -231,19 +246,33 @@ def test_cross_exchange_guard_spread_states():
 # ============================================================================
 
 def test_bifrost_client_backward_compatibility():
-    """验证任何现存调用 BifrostClient 的代码均可无缝享受多源互补与容灾能力"""
+    """
+    验证任何现存调用 BifrostClient 的代码均可无缝享受多源互补与容灾能力。
+    三个实时源全部不可用时：K 线与资金费率降级到离线沙盒（并标注来源），跨所守卫返回 ISOLATED 锁死开仓。
+    原测试没有隔离实时源，能连上交易所时拿到真实资金费率（可能为负，例如 -6.2e-07）而失败，断网时才碰巧通过。
+    """
     async def _test():
         client = BifrostClient()
         assert isinstance(client, CompositeMarketDataProvider)
+        assert [name for name, _ in client._ordered_live_sources] == ["Binance", "OKX", "Hyperliquid"]
 
-        # 离线沙盒自适应调用
+        # 让三个实时源全部不可用，确定性地走离线兜底路径
+        for provider in (client.binance, client.okx, client.hyperliquid):
+            provider.get_klines = AsyncMock(side_effect=ConnectionError("live source disabled in unit test"))
+            provider.get_funding_rate = AsyncMock(side_effect=ConnectionError("live source disabled in unit test"))
+            provider.get_ticker_price = AsyncMock(side_effect=ConnectionError("live source disabled in unit test"))
+        client.bifrost.get_klines = AsyncMock(side_effect=NotImplementedError("bifrost stub"))
+
         klines = await client.get_klines("ETH", limit=20)
         assert len(klines) == 20
+        assert all(k.get("source") == "offline_fallback" for k in klines)
 
         funding = await client.get_funding_rate("ETH")
-        assert funding["funding_rate"] > 0 or funding["funding_rate"] == 0.0001
+        assert funding["source"] == "offline_fallback"
+        assert funding["funding_rate"] == 0.0001
 
         guard = await client.check_cross_exchange_guard("ETH")
-        assert guard["status"] in ("HEALTHY", "WARNING", "DEGRADED", "ISOLATED")
+        assert guard["status"] == "ISOLATED"
+        assert guard["median_price"] is None and guard["degraded"] is True
 
     asyncio.run(_test())
