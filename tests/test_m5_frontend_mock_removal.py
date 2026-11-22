@@ -27,6 +27,24 @@ WEB_SRC = ROOT / "web" / "src"
 # 1 & 2. 前端源码静态检查
 # -----------------------------------------------------------------------------
 
+# 大组件拆分后，同时检查拆出去的子模块
+_SPLIT_PARTS = {
+    "web/src/App.jsx": ["web/src/data/decisionToAgents.js", "web/src/hooks", "web/src/components/Toast.jsx"],
+    "web/src/components/NavView.jsx": ["web/src/components/nav"],
+    "web/src/components/KeyVaultModal.jsx": ["web/src/components/keyVault"],
+}
+
+
+def _component_sources(rel_path):
+    parts = [(ROOT / rel_path).read_text(encoding="utf-8")]
+    for extra in _SPLIT_PARTS.get(rel_path, []):
+        p = ROOT / extra
+        files = sorted(p.glob("*.js*")) if p.is_dir() else [p]
+        assert files, f"{extra} 不存在"
+        parts += [f.read_text(encoding="utf-8") for f in files]
+    return "\n".join(parts)
+
+
 def _web_sources():
     return [p for p in WEB_SRC.rglob("*") if p.suffix in (".js", ".jsx")]
 
@@ -57,7 +75,7 @@ def test_mock_data_module_removed():
     ],
 )
 def test_frontend_has_no_fabricated_fallbacks(rel_path, forbidden):
-    text = (ROOT / rel_path).read_text(encoding="utf-8")
+    text = _component_sources(rel_path)
     found = [tok for tok in forbidden if tok in text]
     assert found == [], f"{rel_path} 仍含编造的默认值 / 文案: {found}"
 

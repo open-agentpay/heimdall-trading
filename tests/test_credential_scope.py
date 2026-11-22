@@ -88,7 +88,8 @@ def test_resolve_matches_legacy_binance_and_spot_demo_keys(tmp_path):
 def test_frontend_sends_market_type_and_execution_mode():
     from pathlib import Path
 
-    src = (Path(__file__).resolve().parent.parent / "web" / "src" / "components" / "KeyVaultModal.jsx").read_text(encoding="utf-8")
+    # 新增凭据的表单与提交逻辑在 components/keyVault/AddKeyModal.jsx
+    src = (Path(__file__).resolve().parent.parent / "web" / "src" / "components" / "keyVault" / "AddKeyModal.jsx").read_text(encoding="utf-8")
     assert "market_type: EXCHANGE_MARKET[newKeyForm.provider]" in src
     assert "...exchangeScope," in src
     assert "{newKeyForm.provider === 'hyperliquid' && (" in src  # Hyperliquid 也可选择测试网 / 正式网

@@ -21,6 +21,15 @@ from tests._auth_helper import issue_bearer_headers
 
 ROOT = Path(__file__).resolve().parent.parent
 KEY_VAULT_JSX = ROOT / "web" / "src" / "components" / "KeyVaultModal.jsx"
+# 密钥金库已拆分：卡片、新增弹窗、安全面板、展示转换在 components/keyVault/ 下
+KEY_VAULT_DIR = ROOT / "web" / "src" / "components" / "keyVault"
+ADD_KEY_JSX = KEY_VAULT_DIR / "AddKeyModal.jsx"
+
+
+def _key_vault_sources() -> str:
+    parts = [KEY_VAULT_JSX.read_text(encoding="utf-8")]
+    parts += [p.read_text(encoding="utf-8") for p in sorted(KEY_VAULT_DIR.glob("*.js*"))]
+    return "\n".join(parts)
 
 
 # -----------------------------------------------------------------------------
@@ -32,16 +41,20 @@ KEY_VAULT_JSX = ROOT / "web" / "src" / "components" / "KeyVaultModal.jsx"
     ["fullSecretMock", "rawSecret", "generatedMask", "toggleReveal", "revealedKeys", "handleCopyKey", "navigator.clipboard"],
 )
 def test_key_vault_frontend_holds_no_raw_secret(token):
-    assert token not in KEY_VAULT_JSX.read_text(encoding="utf-8"), f"KeyVaultModal.jsx 仍包含 {token}"
+    assert token not in _key_vault_sources(), f"密钥金库前端仍包含 {token}"
 
 
 def test_key_vault_frontend_clears_forms_on_close():
     text = KEY_VAULT_JSX.read_text(encoding="utf-8")
+    add = ADD_KEY_JSX.read_text(encoding="utf-8")
     assert "const closeAddModal = () =>" in text
-    assert "setNewKeyForm(EMPTY_NEW_KEY_FORM)" in text
+    # 新增弹窗按条件渲染，关闭即卸载；表单状态只存在于 AddKeyModal 内部，每次打开都从空白表单开始
+    assert "{showAddModal && (" in text and "<AddKeyModal" in text
+    assert "useState(EMPTY_NEW_KEY_FORM)" in add
+    assert "newKeyForm" not in text, "密钥表单状态不应留在 KeyVaultModal 里"
     # 新增弹窗的关闭入口都走 closeAddModal（唯一剩下的 setShowAddModal(false) 在 closeAddModal 内部）
     assert text.count("setShowAddModal(false)") == 1
-    assert "mask: createdKeyMask ||" in text
+    assert "mask: createdKeyMask ||" in add
 
 
 # -----------------------------------------------------------------------------
