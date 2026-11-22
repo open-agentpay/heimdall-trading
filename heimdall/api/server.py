@@ -348,7 +348,7 @@ async def start_bot(
                 ),
             )
 
-    interval = req.interval_seconds if req else 60
+    interval = req.interval_seconds if req else 900
 
     # E7：同一交易所账户的同一标的只允许一个机器人运行（单向持仓下交易所会合并多个机器人的仓位）
     conflict = await bot_manager.check_account_conflict(bot)
