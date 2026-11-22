@@ -15,7 +15,7 @@ import {
   Cpu, Play, Square, RefreshCw, Plus, PieChart, ShieldCheck, 
   ExternalLink, Layers, ArrowUpRight, Activity, TrendingUp, AlertCircle, Trash2
 } from 'lucide-react';
-import { startBot, stopBot, stepBot, setBotMacroBias } from '../api/endpoints';
+import { startBot, stopBot, stepBot, setBotMacroBias, BOT_DECISION_INTERVAL_SECONDS } from '../api/endpoints';
 
 export default function SwarmView({
   bots = [],
@@ -35,7 +35,7 @@ export default function SwarmView({
     for (const b of bots) {
       if (b.status !== "RUNNING") {
         try {
-          await startBot(b.bot_id || b.id, 60);
+          await startBot(b.bot_id || b.id, BOT_DECISION_INTERVAL_SECONDS);
         } catch (e) {
           console.warn(`启动 ${b.bot_id} 告警:`, e);
         }
@@ -70,7 +70,7 @@ export default function SwarmView({
         await stopBot(id);
         onShowToast?.(`⏹️ 机器人 [${b.name || id}] 已挂起`, "info");
       } else {
-        await startBot(id, 60);
+        await startBot(id, BOT_DECISION_INTERVAL_SECONDS);
         onShowToast?.(`▶️ 机器人 [${b.name || id}] 已启动盯盘`, "success");
       }
       await onRefreshBots?.();
@@ -205,8 +205,10 @@ export default function SwarmView({
 
           <div className="p-4 rounded-xl border border-[#DFD6C7] bg-[#FAF7F2] shadow-2xs flex items-center justify-between">
             <div>
-              <div className="text-[10px] text-[#8C8275] uppercase tracking-wider">平均轮询周期</div>
-              <div className="text-xl font-bold font-mono text-[#1F1E1B] mt-0.5">60s 盯盘</div>
+              <div className="text-[10px] text-[#8C8275] uppercase tracking-wider">启动决策周期</div>
+              <div className="text-xl font-bold font-mono text-[#1F1E1B] mt-0.5">
+                {BOT_DECISION_INTERVAL_SECONDS % 60 === 0 ? `${BOT_DECISION_INTERVAL_SECONDS / 60} 分钟` : `${BOT_DECISION_INTERVAL_SECONDS}s`} 盯盘
+              </div>
             </div>
             <div className="w-10 h-10 rounded-lg bg-[#3B72C2]/10 flex items-center justify-center text-[#3B72C2]">
               <TrendingUp className="w-5 h-5" />

@@ -137,8 +137,11 @@ export async function getPortfolioCapitalDistribution() {
   return apiRequest('/api/v1/portfolio/capital-distribution', { method: 'GET' });
 }
 
+/** 网页启动机器人时使用的决策周期（秒），与后端 StartBotRequest 默认值一致：15 分钟一轮 */
+export const BOT_DECISION_INTERVAL_SECONDS = 900;
+
 /** 启动指定机器人的 24 小时后台守护协程 */
-export async function startBot(botId, intervalSeconds = 60) {
+export async function startBot(botId, intervalSeconds = BOT_DECISION_INTERVAL_SECONDS) {
   return apiRequest(`/api/v1/bots/${encodeURIComponent(botId)}/start`, {
     method: 'POST',
     body: JSON.stringify({ interval_seconds: intervalSeconds }),
