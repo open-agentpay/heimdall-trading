@@ -58,6 +58,13 @@ export default function AgentModal({ agent, onClose }) {
         {/* 弹窗主体内容滚动区 */}
         <div className="p-5 overflow-y-auto max-h-[70vh] space-y-4 text-xs">
           
+          {/* M5：机器人尚未产生推演结果时明确提示，不展示任何编造的结论 */}
+          {agent.pending && (
+            <div className="bg-[#FDF3E3] p-3 rounded-xl border border-[#F1DDB8] text-[#B9770E] text-[11px] font-semibold">
+              ⏳ 该机器人尚未产生推演结果，以下仅为角色说明；首轮决策周期完成后将展示真实论据与数据。
+            </div>
+          )}
+
           {/* 1. 角色白话速懂介绍 */}
           <div className="bg-[#FFFDFB] p-3 rounded-xl border border-[#E8DEC0] leading-relaxed text-[#5E554B]">
             {agent.roleDescription}
@@ -84,13 +91,15 @@ export default function AgentModal({ agent, onClose }) {
             <div className="space-y-1 pt-1">
               <div className="flex justify-between text-[11px] text-[#7E7469] font-mono">
                 <span>模型确定性置信度 (Confidence Score):</span>
-                <span className="font-bold text-[#2E2823]">{Math.round(agent.confidence * 100)}%</span>
+                <span className="font-bold text-[#2E2823]">
+                  {Number.isFinite(agent.confidence) ? `${Math.round(agent.confidence * 100)}%` : '--'}
+                </span>
               </div>
               <div className="w-full h-2 bg-[#EFE9DF] rounded-full overflow-hidden">
                 <div 
                   className="h-full rounded-full transition-all duration-500"
                   style={{ 
-                    width: `${agent.confidence * 100}%`,
+                    width: `${Number.isFinite(agent.confidence) ? agent.confidence * 100 : 0}%`,
                     backgroundColor: agent.color 
                   }}
                 />
@@ -105,7 +114,7 @@ export default function AgentModal({ agent, onClose }) {
               <span>核心决策论据 (Key Thesis)</span>
             </div>
             <p className="text-[#4A4237] leading-relaxed text-[11px] bg-[#FAF7F2] p-2.5 rounded-lg border border-[#EDE5DA]">
-              {agent.keyThesis}
+              {agent.keyThesis || '--'}
             </p>
           </div>
 
@@ -116,7 +125,10 @@ export default function AgentModal({ agent, onClose }) {
               <span>数据证据与指标支撑 (Evidence Checklist)</span>
             </div>
             <div className="space-y-1.5">
-              {agent.evidence.map((item, idx) => (
+              {(!agent.evidence || agent.evidence.length === 0) && (
+                <div className="text-[11px] text-[#9E917F]">暂无数据证据</div>
+              )}
+              {(agent.evidence || []).map((item, idx) => (
                 <div key={idx} className="flex items-start space-x-2 text-[11px] text-[#4A4237]">
                   <span className="text-[#4D835C] font-bold">✓</span>
                   <span className="leading-tight">{item}</span>
@@ -132,7 +144,7 @@ export default function AgentModal({ agent, onClose }) {
               <span>立论失效与防守点位 (Invalidation Rule)</span>
             </div>
             <p className="text-[#8C3A3A] text-[11px] leading-relaxed">
-              {agent.invalidation}
+              {agent.invalidation || '--'}
             </p>
           </div>
 
@@ -140,10 +152,10 @@ export default function AgentModal({ agent, onClose }) {
           <div className="bg-[#241F1C] p-3 rounded-xl border border-[#3D352E] space-y-1 text-[#EAE2D8] font-mono text-[10px]">
             <div className="flex items-center justify-between text-[#8E8276] border-b border-[#3D352E] pb-1">
               <span>🧠 LLM Chain-of-Thought Stream</span>
-              <span>Latency: {agent.latency || '45ms'}</span>
+              <span>Latency: {agent.latency || '--'}</span>
             </div>
             <p className="leading-relaxed pt-1 text-[#D2C8BC]">
-              {agent.thinkingMonologue}
+              {agent.thinkingMonologue || '暂无推演记录'}
             </p>
           </div>
 
@@ -152,7 +164,7 @@ export default function AgentModal({ agent, onClose }) {
         {/* 弹窗底栏操作 */}
         <div className="p-3 bg-white border-t border-[#EBE3D7] flex items-center justify-between">
           <span className="text-[10px] text-[#9E917F]">
-            审计追踪 ID: <code className="bg-[#EFE9DF] px-1 rounded">{agent.traceId || `cot_agent_${agent.id}_v1`}</code>
+            审计追踪 ID: <code className="bg-[#EFE9DF] px-1 rounded">{agent.traceId || '--'}</code>
           </span>
           <button 
             onClick={onClose}

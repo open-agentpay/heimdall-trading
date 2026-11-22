@@ -193,6 +193,11 @@ export async function placePaperOrder(botId, orderData) {
   });
 }
 
+/** 获取沙盒下单报价：跨所实时参考价、价格来源与指定价偏差容差（只读，与下单接口同一取价规则） */
+export async function getPaperOrderQuote(botId) {
+  return apiRequest(`/api/v1/bots/${encodeURIComponent(botId)}/orders/paper/quote`, { method: 'GET' });
+}
+
 /** 获取 7 大极端行情避险雷达遥测数据 */
 export async function getRiskRadarTelemetry(symbol = 'ETH') {
   return apiRequest(`/api/v1/market/radar?symbol=${encodeURIComponent(symbol)}`, { method: 'GET' });

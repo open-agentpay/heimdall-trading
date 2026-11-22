@@ -22,17 +22,18 @@ export default function SentimentView({
   const report = sentimentReport || {};
 
   const hasLiveReport = Boolean(sentimentReport && Object.keys(sentimentReport).length > 0);
-  const sentimentScore = typeof report.sentiment_score === 'number' ? report.sentiment_score : 0.0;
+  // 字段缺失时显示 “--”，不再把“没有数据”显示成 +0.00 中性 / NEUTRAL / BALANCED 这类看似真实的读数
+  const sentimentScore = typeof report.sentiment_score === 'number' && Number.isFinite(report.sentiment_score) ? report.sentiment_score : null;
   const fearGreed = report.fear_greed_index ?? report.fear_greed_score ?? null;
-  const whaleActivity = report.whale_activity || 'NEUTRAL';
-  const crowdingRisk = report.crowding_risk || 'BALANCED';
+  const whaleActivity = report.whale_activity || null;
+  const crowdingRisk = report.crowding_risk || null;
   const provenance = report.provenance || report.data_source || (hasLiveReport ? 'live_collector' : 'awaiting_step');
   const summaryText = report.summary || '尚未收到最新一轮情绪感知报告，请在「对弈大厅」触发推演或等待后台巡检。';
   const newsItems = Array.isArray(report.news_items) ? report.news_items : (Array.isArray(report.headlines) ? report.headlines : []);
   const whaleTransfers = Array.isArray(report.whale_transfers) ? report.whale_transfers : [];
 
-  const scoreLabel = sentimentScore >= 0.15 ? '偏多' : sentimentScore <= -0.15 ? '偏空' : '中性';
-  const scoreColor = sentimentScore >= 0.15 ? 'text-[#3D784E]' : sentimentScore <= -0.15 ? 'text-[#C24D4D]' : 'text-[#5A5046]';
+  const scoreLabel = sentimentScore === null ? '--' : sentimentScore >= 0.15 ? '偏多' : sentimentScore <= -0.15 ? '偏空' : '中性';
+  const scoreColor = sentimentScore === null ? 'text-[#9E9486]' : sentimentScore >= 0.15 ? 'text-[#3D784E]' : sentimentScore <= -0.15 ? 'text-[#C24D4D]' : 'text-[#5A5046]';
 
   return (
     <div className="flex-1 flex flex-col bg-[#F6F2EB] overflow-hidden select-none">
@@ -78,7 +79,7 @@ export default function SentimentView({
             </div>
             <div className="flex items-baseline space-x-2">
               <span className={`text-3xl font-extrabold font-mono ${scoreColor}`}>
-                {sentimentScore >= 0 ? '+' : ''}{sentimentScore.toFixed(2)}
+                {sentimentScore === null ? '--' : `${sentimentScore >= 0 ? '+' : ''}${sentimentScore.toFixed(2)}`}
               </span>
               <span className="text-xs text-[#7E7469]">[-1.0 ~ +1.0]</span>
             </div>
@@ -107,14 +108,16 @@ export default function SentimentView({
           <div className="bg-white p-4 rounded-xl border border-[#E6DFD5] shadow-xs space-y-2">
             <div className="flex items-center justify-between text-xs font-bold text-[#7E7469]">
               <span>{sym} 巨鲸动向定性</span>
-              <span className="text-[10px] bg-[#FAF7F2] px-2 py-0.5 rounded font-mono">{whaleActivity}</span>
+              <span className="text-[10px] bg-[#FAF7F2] px-2 py-0.5 rounded font-mono">{whaleActivity || '--'}</span>
             </div>
             <div className="text-xl font-extrabold font-mono text-[#2E2823] pt-1">
               {whaleActivity === 'ACCUMULATION'
                 ? '吸筹净流出'
                 : whaleActivity === 'DISTRIBUTION'
                 ? '派发净流入'
-                : '中性观望'}
+                : whaleActivity
+                ? '中性观望'
+                : '--'}
             </div>
             <p className="text-[11px] text-[#7E7469]">
               无链上巨鲸 API 密钥时严格返回 NEUTRAL，绝不伪造净流出
@@ -124,10 +127,10 @@ export default function SentimentView({
           <div className="bg-white p-4 rounded-xl border border-[#E6DFD5] shadow-xs space-y-2">
             <div className="flex items-center justify-between text-xs font-bold text-[#7E7469]">
               <span>{sym} 衍生品拥挤度</span>
-              <span className="text-[10px] bg-[#FAF7F2] px-2 py-0.5 rounded font-mono">{crowdingRisk}</span>
+              <span className="text-[10px] bg-[#FAF7F2] px-2 py-0.5 rounded font-mono">{crowdingRisk || '--'}</span>
             </div>
             <div className="text-xl font-extrabold font-mono text-[#2E2823] pt-1">
-              {crowdingRisk}
+              {crowdingRisk || '--'}
             </div>
             <p className="text-[11px] text-[#7E7469]">
               用于识别资金费率极端拥挤与多空踩踏风险
@@ -156,7 +159,7 @@ export default function SentimentView({
                   <div key={idx} className="p-3 bg-[#FAF7F2] rounded-lg border border-[#EDE5DA] space-y-1">
                     <div className="flex items-center justify-between text-[10px] text-[#7E7469]">
                       <span className="font-semibold text-[#5A5046]">{news.source || provenance}</span>
-                      <span>{news.time || news.published_at || '最新'}</span>
+                      <span>{news.time || news.published_at || '--'}</span>
                     </div>
                     <div className="text-xs font-semibold text-[#2E2823]">
                       {typeof news === 'string' ? news : news.title || JSON.stringify(news)}

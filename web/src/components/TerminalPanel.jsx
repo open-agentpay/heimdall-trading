@@ -15,111 +15,122 @@
  */
 
 import React, { useState, useEffect, useRef } from 'react';
+import { numOrNull, fmtUsd, fmtPct } from '../data/agentRoles';
+
+// 推演时间：使用决策记录自身的时间戳，而不是页面渲染时刻
+function formatRecordTime(ts) {
+  if (!ts) return '--';
+  const d = new Date(ts);
+  return Number.isNaN(d.getTime()) ? '--' : d.toLocaleTimeString('zh-CN', { hour12: false });
+}
 
 export default function TerminalPanel({ 
   decisionRecord = null, 
   activeBotId = "bot_eth_debate_01",
   isWsConnected = false,
+  symbol = null,
   onExecuteTrade = null,
   onEmergencyKill = null
 }) {
   const [activeTab, setActiveTab] = useState("stream"); // "stream" | "console"
   const [filterAgent, setFilterAgent] = useState("ALL");
   const [commandInput, setCommandInput] = useState("");
+  // 启动提示只说明控制台本身已就绪，不再声称推流、OMS 或风控“已激活”（这些状态以实际数据为准）
   const [consoleLogs, setConsoleLogs] = useState([
-    { type: "sys", time: new Date().toLocaleTimeString('zh-CN', { hour12: false }), text: "Heimdall /ws/stream 实时推流总线已就绪（steps / orders / risk）" },
-    { type: "success", time: new Date().toLocaleTimeString('zh-CN', { hour12: false }), text: "OMS 状态机、原生条件止损与 7 大确定性风控守卫已激活" }
+    { type: "sys", time: new Date().toLocaleTimeString('zh-CN', { hour12: false }), text: "控制台已启动，输入 'help' 查看可用指令" }
   ]);
 
   const streamEndRef = useRef(null);
   const consoleEndRef = useRef(null);
   const lastProcessedKeyRef = useRef(null);
 
-  // 1. 动态生成思维链日志条目 (优先使用后端真实 thinking_logs)
-  const defaultLogs = [
-    {
-      agent: "AnalystAgent",
-      role: "技术量化分析师",
-      time: "19:42:01",
-      latency: "82ms",
-      color: "#3E6B89",
-      text: "扫描 15m 闭合 K 线，确认在 EMA20 上方获得支撑，RSI 为 58.4（处于健康强势未超买区间），初步定性为 TREND_UP。"
-    },
-    {
-      agent: "SentimentWhaleAnalyst",
-      role: "情绪与巨鲸侦探",
-      time: "19:42:02",
-      latency: "115ms",
-      color: "#4D835C",
-      text: "恐慌指数从 18 拐头回升至 24，大户连续 24h 提现 1,250 万美元 ETH 锁仓，链上抛压极轻，综合情绪得分 +0.45。"
-    },
-    {
-      agent: "DebateModerator",
-      role: "博弈裁判",
-      time: "19:42:04",
-      latency: "240ms",
-      color: "#DE6438",
-      text: "多头研究员立论充分（现货买盘真实），空头提出的 3200 阻力位已通过将止损点收紧至 3060 得到有效防御。裁决：批准发起做多！"
-    },
-    {
-      agent: "RiskOfficerAgent",
-      role: "合规风控官",
-      time: "19:42:05",
-      latency: "4ms",
-      color: "#4D835C",
-      text: "确定性七大铁律校验全部通过！杠杆率 1.5x <= 3.0x，止损距离 1.9% <= 5.0%，Bifrost 基差 0.03% <= 0.5%，签发确定性幂等键。"
-    }
-  ];
-
-  // 组装实际展示的思维链
+  // 1. 思维链只展示后端真实返回的 thinking_logs；没有推演记录时显示空状态（不再内置编造的示例推演）
+  const recordTime = formatRecordTime(decisionRecord?.timestamp);
   const activeThinkingLogs = React.useMemo(() => {
-    if (!decisionRecord) return defaultLogs;
-
+    const logs = decisionRecord?.thinking_logs || [];
+    if (logs.length === 0) return [];
     const traces = decisionRecord.step_traces || [];
-    const logs = decisionRecord.thinking_logs || [];
 
-    if (logs.length > 0) {
-      return logs.map((logStr, idx) => {
-        let agentName = "Agent";
-        let text = logStr;
-        let color = "#3E6B89";
-        const trace = traces[idx] || {};
-
-        if (logStr.startsWith("[")) {
-          const closeBracket = logStr.indexOf("]");
-          if (closeBracket !== -1) {
-            agentName = logStr.slice(1, closeBracket);
-            text = logStr.slice(closeBracket + 1).trim();
-          }
+    return logs.map((logStr) => {
+      let agentName = "Agent";
+      let text = logStr;
+      if (logStr.startsWith("[")) {
+        const closeBracket = logStr.indexOf("]");
+        if (closeBracket !== -1) {
+          agentName = logStr.slice(1, closeBracket);
+          text = logStr.slice(closeBracket + 1).replace(/^[:：]\s*/, '').trim();
         }
+      }
+      const lower = agentName.toLowerCase();
+      let color = "#3E6B89";
+      if (lower.includes("risk") || lower.includes("guard")) color = "#C24D4D";
+      else if (lower.includes("bull")) color = "#4D835C";
+      else if (lower.includes("bear")) color = "#D48B38";
+      else if (lower.includes("debate") || lower.includes("moderator")) color = "#DE6438";
 
-        if (agentName.toLowerCase().includes("risk")) color = "#C24D4D";
-        else if (agentName.toLowerCase().includes("bull")) color = "#4D835C";
-        else if (agentName.toLowerCase().includes("bear")) color = "#D48B38";
-        else if (agentName.toLowerCase().includes("debate") || agentName.toLowerCase().includes("moderator")) color = "#DE6438";
+      // 按名称匹配对应的 StepTrace，取后端真实耗时；匹配不到就不显示耗时（不再按序号编造）
+      const key = lower.split(/[\s\/·:]/)[0];
+      const trace = key ? traces.find((t) => (t.step_name || '').toLowerCase().includes(key)) : null;
+      const ms = numOrNull(trace?.latency_ms ?? trace?.duration_ms);
 
-        return {
-          agent: agentName,
-          role: trace.agent_role || "系统节点",
-          time: new Date().toLocaleTimeString('zh-CN', { hour12: false }),
-          latency: trace.duration_ms ? `${trace.duration_ms}ms` : `${40 + idx * 25}ms`,
-          color,
-          text
-        };
-      });
-    }
-
-    return defaultLogs;
+      return {
+        agent: agentName,
+        time: recordTime,
+        latency: ms === null ? '' : `${Math.round(ms)}ms`,
+        color,
+        text,
+      };
+    });
   }, [decisionRecord]);
+
+  // 2. 控制台的 status / risk / nav 回复全部取自最近一轮推演记录；没有记录就如实说明
+  const buildStatusReply = (now) => ({
+    type: "info",
+    time: now,
+    text: `[Status] 机器人: ${activeBotId} | 最近推演: ${decisionRecord?.timestamp ? recordTime : '暂无'} | 结论: ${decisionRecord?.debate_consensus || '--'} | 推流: ${isWsConnected ? 'WebSocket 已连接' : 'WebSocket 未连接（轮询中）'}`,
+  });
+
+  const buildRiskReply = (now) => {
+    if (!decisionRecord?.timestamp) {
+      return { type: "info", time: now, text: "[Risk] 暂无推演记录，无法给出风控结果。请先点击【▶ 推演】。" };
+    }
+    const rv = decisionRecord.risk_review || null;
+    const rules = rv?.checked_rules || {};
+    const total = Object.keys(rules).length;
+    const passedCount = Object.values(rules).filter(Boolean).length;
+    const lev = numOrNull(decisionRecord.trade_proposal?.trade_action?.leverage);
+    let verdict = '本轮无风控结论';
+    if (rv && rv.approved === true) verdict = '通过';
+    else if (rv && rv.approved === false) verdict = `拦截（${rv.rejection_reason || '原因未返回'}）`;
+    else if (!decisionRecord.proposal_generated) verdict = '本轮无提案';
+    return {
+      type: rv && rv.approved === false ? "critical" : "success",
+      time: now,
+      text: `[Risk] ${recordTime} | 当日回撤 ${fmtPct(decisionRecord.daily_drawdown_pct)} | 历史回撤 ${fmtPct(decisionRecord.drawdown_pct)} | 杠杆 ${lev === null ? '--' : `${lev}x`} | 规则 ${total ? `${passedCount}/${total} 通过` : '未返回明细'} | 结论: ${verdict}`,
+    };
+  };
+
+  const buildNavReply = (now) => {
+    const nav = numOrNull(decisionRecord?.nav);
+    if (!decisionRecord?.timestamp || nav === null) {
+      return { type: "info", time: now, text: "[NAV] 暂无净值快照。请先点击【▶ 推演】，或到「NAV 单位净值」页查看。" };
+    }
+    const cum = (nav - 1) * 100;
+    return {
+      type: "highlight",
+      time: now,
+      text: `[NAV] ${recordTime} 快照 | 单位净值 ${nav.toFixed(4)} | 累计 ${cum >= 0 ? '+' : ''}${cum.toFixed(2)}% | 账户权益 ${fmtUsd(decisionRecord.equity)}`,
+    };
+  };
 
   // 监听 decisionRecord 变化，自动写入执行控制台
   useEffect(() => {
     if (!decisionRecord) return;
     
     // 避免重复写入同一轮推演数据
-    const currentKey = decisionRecord.idempotency_key || 
-      (decisionRecord.thinking_logs && decisionRecord.thinking_logs.join('|')) || 
-      decisionRecord.timestamp;
+    const currentKey = decisionRecord.decision_id ||
+      decisionRecord.timestamp ||
+      (decisionRecord.thinking_logs && decisionRecord.thinking_logs.join('|'));
     if (currentKey && currentKey === lastProcessedKeyRef.current) return;
 
     const now = new Date().toLocaleTimeString('zh-CN', { hour12: false });
@@ -131,7 +142,7 @@ export default function TerminalPanel({
       newItems.push({
         type: "highlight",
         time: now,
-        text: `=== [LLM 多智能体决策推演] ${decisionRecord.symbol || 'ETH'} (共 ${thinkingLogs.length} 个节点) ===`
+        text: `=== [LLM 多智能体决策推演] ${decisionRecord.symbol || symbol || '--'} (共 ${thinkingLogs.length} 个节点) ===`
       });
 
       thinkingLogs.forEach((logStr) => {
@@ -158,7 +169,7 @@ export default function TerminalPanel({
       newItems.push({
         type: "success",
         time: now,
-        text: `[DECISION] 博弈达成一致共识: ${decisionRecord.debate_consensus} | 标的: ${decisionRecord.symbol || 'ETH'}`
+        text: `[DECISION] 博弈结论: ${decisionRecord.debate_consensus} | 标的: ${decisionRecord.symbol || symbol || '--'}`
       });
     }
 
@@ -171,29 +182,31 @@ export default function TerminalPanel({
       });
     }
 
-    if (decisionRecord.idempotency_key) {
+    const idemKey = decisionRecord.trade_proposal?.idempotency_key;
+    if (idemKey) {
       newItems.push({
         type: "sys",
         time: now,
-        text: `[IDEMPOTENCY] 幂等校验通过 SHA256: ${decisionRecord.idempotency_key.slice(0, 18)}...`
+        text: `[IDEMPOTENCY] 提案幂等键: ${idemKey.slice(0, 18)}...`
       });
     }
 
-    if (decisionRecord.risk_evaluation) {
-      const passed = decisionRecord.risk_evaluation.passed;
+    // 风控结论读取后端真实字段 risk_review.approved（旧代码读的 risk_evaluation.passed 后端从不返回）
+    const rv = decisionRecord.risk_review;
+    if (rv && typeof rv.approved === 'boolean') {
       newItems.push({
-        type: passed ? "success" : "critical",
+        type: rv.approved ? "success" : "critical",
         time: now,
-        text: `[RISK_AUDIT] 7大硬规则风控结果: ${passed ? "PASSED (全部通过)" : "REJECTED (已拦截)"}`
+        text: `[RISK_AUDIT] 硬风控结论: ${rv.approved ? "通过" : `拦截（${rv.rejection_reason || '原因未返回'}）`}`
       });
     }
 
-    if (decisionRecord.execution_result) {
-      const ex = decisionRecord.execution_result;
+    // 成交只报告后端真实返回的成交编号，不再用 1.5 ETH @ $3120 之类的默认值填充
+    if (decisionRecord.execution_id) {
       newItems.push({
         type: "highlight",
         time: now,
-        text: `[PAPER_FILL] 撮合成交: ${ex.filled_amount || 1.5} ETH @ $${ex.filled_price || 3120.00} | 订单: ${ex.order_id || 'ord_paper_live'}`
+        text: `[EXECUTION] 本轮已提交执行 | 成交编号: ${decisionRecord.execution_id}`
       });
     }
 
@@ -254,11 +267,7 @@ export default function TerminalPanel({
         };
       }
     } else if (lower === "status") {
-      reply = {
-        type: "info",
-        time: now,
-        text: `[Status] 活跃机器人: ${activeBotId} | 状态: RUNNING | 引擎: PaperEngine Live`
-      };
+      reply = buildStatusReply(now);
     } else if (lower === "step") {
       reply = {
         type: "highlight",
@@ -274,17 +283,9 @@ export default function TerminalPanel({
       };
       if (onEmergencyKill) onEmergencyKill();
     } else if (lower === "risk") {
-      reply = {
-        type: "success",
-        time: now,
-        text: "[Risk Guard] 7大确定性铁律检测: 最大回撤 1.2% (OK) | 价差 0.03% (OK) | 杠杆 1.5x (OK)"
-      };
+      reply = buildRiskReply(now);
     } else if (lower === "nav") {
-      reply = {
-        type: "highlight",
-        time: now,
-        text: "[NAV Engine] 当前单位净值: 1.0422 | 总份额: 10,000.00 | 资产净值: $10,422.00 (已剔除出入金干扰)"
-      };
+      reply = buildNavReply(now);
     } else if (lower === "clear") {
       setConsoleLogs([]);
       setCommandInput("");
@@ -329,7 +330,7 @@ export default function TerminalPanel({
             }`}
           >
             <span>💻 控制台</span>
-            <span className="w-1.5 h-1.5 rounded-full bg-[#4D835C] animate-pulse"></span>
+            <span className={`w-1.5 h-1.5 rounded-full ${isWsConnected ? 'bg-[#4D835C] animate-pulse' : 'bg-[#C28B38]'}`}></span>
           </button>
         </div>
 
@@ -368,6 +369,11 @@ export default function TerminalPanel({
 
           {/* 思维链条目滚动列表 */}
           <div className="flex-1 overflow-y-auto p-2.5 space-y-2 text-xs font-mono">
+            {activeThinkingLogs.length === 0 && (
+              <div className="p-3 rounded-xl border border-dashed border-[#DFD6C7] bg-white text-[10.5px] text-[#9E917F] leading-relaxed font-sans">
+                暂无推演记录。机器人完成首轮决策后，这里会显示后端返回的真实思维链。
+              </div>
+            )}
             {activeThinkingLogs
               .filter((item) => filterAgent === "ALL" || item.agent.toLowerCase().includes(filterAgent.toLowerCase()))
               .map((item, index) => (
@@ -377,7 +383,7 @@ export default function TerminalPanel({
                 >
                   <div className="flex items-center justify-between text-[10px] font-bold mb-1">
                     <span style={{ color: item.color }} className="truncate max-w-[120px]">[{item.agent}]</span>
-                    <span className="text-[#9E917F] text-[9px] shrink-0">{item.time} · {item.latency}</span>
+                    <span className="text-[#9E917F] text-[9px] shrink-0">{item.latency ? `${item.time} · ${item.latency}` : item.time}</span>
                   </div>
                   <p className="text-[#4A4237] text-[10.5px] leading-relaxed break-words">
                     {item.text}
@@ -444,11 +450,8 @@ export default function TerminalPanel({
             <button
               onClick={() => {
                 const now = new Date().toLocaleTimeString('zh-CN', { hour12: false });
-                setConsoleLogs(prev => [...prev, {
-                  type: "success",
-                  time: now,
-                  text: "[AUDIT] 7项风控检测通过: 回撤 1.2% | 基差 0.03% | 杠杆 1.5x"
-                }]);
+                setConsoleLogs(prev => [...prev, buildRiskReply(now)]);
+                setTimeout(() => consoleEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 50);
               }}
               className="px-1.5 py-0.5 rounded bg-[#3A332C] hover:bg-[#4A4237] text-[#D8CEBE] transition shrink-0"
             >
@@ -457,11 +460,8 @@ export default function TerminalPanel({
             <button
               onClick={() => {
                 const now = new Date().toLocaleTimeString('zh-CN', { hour12: false });
-                setConsoleLogs(prev => [...prev, {
-                  type: "highlight",
-                  time: now,
-                  text: "[NAV] 单位净值: 1.0422 | 累计: +4.22%"
-                }]);
+                setConsoleLogs(prev => [...prev, buildNavReply(now)]);
+                setTimeout(() => consoleEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 50);
               }}
               className="px-1.5 py-0.5 rounded bg-[#3A332C] hover:bg-[#4A4237] text-[#D8CEBE] transition shrink-0"
             >
@@ -499,10 +499,10 @@ export default function TerminalPanel({
       {/* 底部执行守护进程迷你指示器 */}
       <div className="h-9 px-2.5 bg-[#231F1C] flex items-center justify-between font-mono text-[9px] text-[#9E917F] border-t border-[#3A332C]">
         <div className="flex items-center space-x-1.5">
-          <span className="w-1.5 h-1.5 rounded-full bg-[#62C554]"></span>
-          <span className="text-[#D8CEBE]">PaperEngine</span>
+          <span className={`w-1.5 h-1.5 rounded-full ${isWsConnected ? 'bg-[#62C554]' : 'bg-[#C28B38]'}`}></span>
+          <span className="text-[#D8CEBE]">{isWsConnected ? '推流已连接' : '推流未连接（轮询）'}</span>
         </div>
-        <span className="text-[#DE6438]">ARMED</span>
+        <span className="text-[#9E917F]">最近推演 {decisionRecord?.timestamp ? recordTime : '--'}</span>
       </div>
 
     </aside>

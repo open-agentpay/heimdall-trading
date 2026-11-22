@@ -32,6 +32,7 @@ export default function RiskRadarView({
   const [isLoading, setIsLoading] = useState(false);
   const [isReconciling, setIsReconciling] = useState(false);
   const [reconcileMsg, setReconcileMsg] = useState(null);
+  const [radarError, setRadarError] = useState(null);
 
   const fetchRadarAndReconcile = async () => {
     setIsLoading(true);
@@ -42,6 +43,11 @@ export default function RiskRadarView({
       ]);
       if (radarRes.status === 'fulfilled' && radarRes.value && radarRes.value.rules) {
         setRadarData(radarRes.value);
+        setRadarError(null);
+      } else {
+        // 遥测失败时清空旧数据，避免继续展示过期的“健康”结论
+        setRadarData(null);
+        setRadarError(radarRes.status === 'rejected' ? (radarRes.reason?.message || '雷达接口请求失败') : '雷达接口未返回规则数据');
       }
       if (reconRes.status === 'fulfilled' && reconRes.value) {
         setReconcileData(reconRes.value);
@@ -62,7 +68,11 @@ export default function RiskRadarView({
   const rules = radarData?.rules || [];
   const triggeredCount = rules.filter((r) => r.status === 'TRIGGERED').length;
   const warningCount = rules.filter((r) => r.status === 'WARNING').length;
-  const overallStatus = radarData?.overall_status || (triggeredCount > 0 ? 'TRIGGERED' : warningCount > 0 ? 'WARNING' : 'HEALTHY');
+  // 没有遥测数据时状态为 UNKNOWN，不再默认显示“全防线健康”
+  const overallStatus = rules.length === 0
+    ? 'UNKNOWN'
+    : (radarData?.overall_status || (triggeredCount > 0 ? 'TRIGGERED' : warningCount > 0 ? 'WARNING' : 'HEALTHY'));
+  const isUnknown = overallStatus === 'UNKNOWN';
 
   const handleManualReconcile = async (resumeIfClean = false) => {
     setIsReconciling(true);
@@ -74,7 +84,7 @@ export default function RiskRadarView({
         ok: Boolean(isClean),
         text: isClean
           ? (res.resumed ? '对账一致，机器人已从暂停/熔断状态恢复运行！' : '交易所与本地持仓对账完全一致，无幽灵持仓偏差。')
-          : `对账发现 ${res?.report?.discrepancies?.length || 1} 项偏差${res?.report?.bot_paused ? '，系统已自动暂停机器人保护本金！' : ''}`,
+          : `对账发现${Array.isArray(res?.report?.discrepancies) ? ` ${res.report.discrepancies.length} 项` : ''}偏差${res?.report?.bot_paused ? '，系统已自动暂停机器人保护本金！' : ''}`,
       });
       await fetchRadarAndReconcile();
     } catch (err) {
@@ -168,6 +178,8 @@ export default function RiskRadarView({
               ? 'border-[#F2B8B5] bg-[#FEF3F2]'
               : overallStatus === 'WARNING'
               ? 'border-[#F3D8A8] bg-[#FFFBEB]'
+              : isUnknown
+              ? 'border-[#E2D9CC] bg-[#F5F2EB]'
               : 'border-[#DFD6C7] bg-[#FAF7F2]'
           }`}
         >
@@ -178,12 +190,14 @@ export default function RiskRadarView({
                   ? 'bg-[#C24D4D]/15 border-[#C24D4D]/30 text-[#C24D4D]'
                   : overallStatus === 'WARNING'
                   ? 'bg-[#C28B38]/15 border-[#C28B38]/30 text-[#C28B38]'
+                  : isUnknown
+                  ? 'bg-[#9E917F]/10 border-[#9E917F]/30 text-[#9E917F]'
                   : 'bg-[#3D784E]/10 border-[#3D784E]/30 text-[#3D784E]'
               }`}
             >
               {overallStatus === 'TRIGGERED' ? (
                 <AlertOctagon className="w-6 h-6" />
-              ) : overallStatus === 'WARNING' ? (
+              ) : overallStatus === 'WARNING' || isUnknown ? (
                 <AlertTriangle className="w-6 h-6" />
               ) : (
                 <ShieldCheck className="w-6 h-6" />
@@ -196,7 +210,9 @@ export default function RiskRadarView({
                     ? '极端行情硬风控已触发拦截'
                     : overallStatus === 'WARNING'
                     ? '防线处于警戒状态（请留意波动）'
-                    : '全防线健康巡航中'}
+                    : isUnknown
+                    ? (radarError ? '风控雷达遥测不可用' : '正在获取风控雷达遥测…')
+                    : '全部规则正常'}
                 </span>
                 <span
                   className={`text-[10px] px-2 py-0.5 rounded-full font-medium border ${
@@ -204,14 +220,18 @@ export default function RiskRadarView({
                       ? 'bg-[#C24D4D]/15 text-[#C24D4D] border-[#C24D4D]/30'
                       : overallStatus === 'WARNING'
                       ? 'bg-[#C28B38]/15 text-[#C28B38] border-[#C28B38]/30'
+                      : isUnknown
+                      ? 'bg-[#9E917F]/15 text-[#7E7469] border-[#9E917F]/20'
                       : 'bg-[#3D784E]/15 text-[#3D784E] border-[#3D784E]/20'
                   }`}
                 >
-                  {rules.length > 0 ? `${rules.length - triggeredCount}/${rules.length} 规则正常` : '等待遥测'}
+                  {rules.length > 0 ? `${rules.length - triggeredCount}/${rules.length} 规则未触发` : '等待遥测'}
                 </span>
               </div>
               <p className="text-xs text-[#706757] mt-0.5">
-                标的对象: {symbol} · 任何分钟级剧烈插针、跨所基差隔离或宏观静默窗口，系统将在毫秒内硬驳回开仓提案
+                {isUnknown && radarError
+                  ? `标的对象: ${symbol} · ${radarError}`
+                  : `标的对象: ${symbol} · 任何分钟级剧烈插针、跨所基差隔离或宏观静默窗口，系统将在毫秒内硬驳回开仓提案`}
               </p>
             </div>
           </div>
@@ -227,10 +247,12 @@ export default function RiskRadarView({
               <div className="text-[10px] text-[#8C8275] uppercase tracking-wider">当前拦截状态</div>
               <div
                 className={`text-xs font-bold mt-0.5 ${
-                  triggeredCount > 0 ? 'text-[#C24D4D]' : warningCount > 0 ? 'text-[#C28B38]' : 'text-[#3D784E]'
+                  isUnknown ? 'text-[#9E917F]' : triggeredCount > 0 ? 'text-[#C24D4D]' : warningCount > 0 ? 'text-[#C28B38]' : 'text-[#3D784E]'
                 }`}
               >
-                {triggeredCount > 0
+                {isUnknown
+                  ? '--'
+                  : triggeredCount > 0
                   ? `${triggeredCount} 项拦截中`
                   : warningCount > 0
                   ? `${warningCount} 项告警`
@@ -249,7 +271,7 @@ export default function RiskRadarView({
                 交易所持仓对账引擎 (ExchangeReconciler) &amp; 外部死信心跳
               </h2>
               <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-[#EFE9DF] text-[#5C5549]">
-                Bot: {activeBotId} ({reconcileData?.market_type || 'USDM_FUTURES'} · {reconcileData?.execution_mode || 'LOCAL_SIM'})
+                Bot: {activeBotId} ({reconcileData?.market_type || '--'} · {reconcileData?.execution_mode || '--'})
               </span>
             </div>
 
@@ -330,7 +352,9 @@ export default function RiskRadarView({
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {rules.length === 0 ? (
             <div className="col-span-full p-8 text-center text-xs text-[#8C8275] bg-white rounded-xl border border-[#DFD6C7]">
-              正在连接后端 `/api/v1/market/radar` 获取 7 大极端风控遥测数据...
+              {radarError
+                ? `风控雷达遥测不可用：${radarError}`
+                : '正在连接后端 /api/v1/market/radar 获取风控遥测数据…'}
             </div>
           ) : (
             rules.map((rule) => {
@@ -376,7 +400,7 @@ export default function RiskRadarView({
 
                   <div className="mt-4 pt-3 border-t border-[#EFE9DF] flex items-center justify-between text-xs">
                     <span className="text-[10px] text-[#8C8275]">当前实时遥测</span>
-                    <span className={`font-mono font-semibold ${rule.valueColor || 'text-[#3D784E]'}`}>
+                    <span className={`font-mono font-semibold ${rule.valueColor || 'text-[#7E7469]'}`}>
                       {rule.value}
                     </span>
                   </div>

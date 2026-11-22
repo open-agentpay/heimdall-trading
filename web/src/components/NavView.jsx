@@ -15,7 +15,42 @@ import {
   TrendingUp, BarChart3, ArrowUpRight, ArrowDownRight, DollarSign, 
   ShieldCheck, RefreshCw, Calendar, Download, Layers, Activity 
 } from 'lucide-react';
-import { getBotNav, getBotTrades, placePaperOrder, listBotOmsOrders, recoverOmsOrder } from '../api/endpoints';
+import { getBotNav, getBotTrades, placePaperOrder, getPaperOrderQuote, listBotOmsOrders, recoverOmsOrder } from '../api/endpoints';
+import { numOrNull, fmtNum, fmtUsd } from '../data/agentRoles';
+
+// 成交价来源标签（对应后端 place_paper_order 返回的 price_source / reference_price_source）
+const PRICE_SOURCE_META = {
+  LIVE: { label: '跨所实时中位价', className: 'bg-[#EBF5EE] text-[#3D784E] border-[#CDE3D2]' },
+  USER: { label: '手动指定价', className: 'bg-[#F3EEE6] text-[#5A5046] border-[#DFD6C7]' },
+  SIMULATED: { label: '离线仿真价', className: 'bg-[#FDF3E3] text-[#B9770E] border-[#F1DDB8]' },
+};
+
+function priceSourceMeta(source) {
+  return PRICE_SOURCE_META[String(source || '').toUpperCase()] || {
+    label: source || '未知来源',
+    className: 'bg-[#F3EEE6] text-[#7E7469] border-[#DFD6C7]',
+  };
+}
+
+function formatUsd(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num) || num <= 0) return '--';
+  return `$${num.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+function formatDeviation(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return '--';
+  return `${(num * 100).toFixed(2)}%`;
+}
+
+// 偏差着色：≤0.3% 绿 / ≤0.7% 橙 / 其余红（后端默认容差 1%）
+function deviationClass(value) {
+  const num = Math.abs(Number(value) || 0);
+  if (num <= 0.003) return 'text-[#3D784E]';
+  if (num <= 0.007) return 'text-[#C28B38]';
+  return 'text-[#C24D4D]';
+}
 
 export default function NavView({ activeBotId = "bot_eth_debate_01" }) {
   const [timeRange, setTimeRange] = useState('1M'); // 1D | 1W | 1M | ALL
@@ -33,19 +68,15 @@ export default function NavView({ activeBotId = "bot_eth_debate_01" }) {
   const [orderLoading, setOrderLoading] = useState(false);
   const [orderStatus, setOrderStatus] = useState(null);
 
-  // 零数据时的真实基准指标（彻底清除历史写死的假盈利 Mock 指标、假曲线与假流水）
-  const emptyMetrics = {
-    current_nav: 1.0,
-    cumulative_return_pct: 0.0,
-    annualized_return_pct: 0.0,
-    sharpe_ratio: 0.0,
-    sortino_ratio: 0.0,
-    max_drawdown_pct: 0.0,
-    win_rate_pct: 0.0,
-    profit_loss_ratio: 0.0,
-    total_trades: 0,
-    total_equity_usd: 10000.0,
-  };
+  // 指定成交价（可选）：开启后按输入价格撮合，后端校验其与跨所实时中位价的偏差
+  const [useCustomPrice, setUseCustomPrice] = useState(false);
+  const [customPrice, setCustomPrice] = useState('');
+  const [quote, setQuote] = useState(null);
+  const [quoteLoading, setQuoteLoading] = useState(false);
+  const [quoteError, setQuoteError] = useState(null);
+
+  // 接口失败时记录错误并显示 “--”，不再用 $10,000 / 净值 1.0 之类的默认值冒充真实账户
+  const [navError, setNavError] = useState(null);
 
   const fetchData = async () => {
     setLoading(true);
@@ -58,11 +89,10 @@ export default function NavView({ activeBotId = "bot_eth_debate_01" }) {
 
       if (navRes.status === 'fulfilled' && navRes.value && navRes.value.metrics) {
         setNavData(navRes.value);
+        setNavError(null);
       } else {
-        setNavData({
-          metrics: { current_nav: 1.0, cumulative_return_pct: 0, sharpe_ratio: 0, max_drawdown_pct: 0, win_rate_pct: 0, profit_loss_ratio: 0, total_trades: 0, total_equity_usd: 10000.0 },
-          nav_series: [],
-        });
+        setNavData(null);
+        setNavError(navRes.status === 'rejected' ? (navRes.reason?.message || '净值接口请求失败') : '净值接口未返回数据');
       }
 
       if (tradesRes.status === 'fulfilled' && Array.isArray(tradesRes.value)) {
@@ -94,35 +124,96 @@ export default function NavView({ activeBotId = "bot_eth_debate_01" }) {
     }
   };
 
+  // 读取跨所实时参考价与偏差容差（与后端下单接口同一取价规则）
+  const fetchQuote = async () => {
+    setQuoteLoading(true);
+    try {
+      const q = await getPaperOrderQuote(activeBotId);
+      setQuote(q);
+      setQuoteError(null);
+    } catch (err) {
+      setQuote(null);
+      setQuoteError(err?.message || '参考价读取失败');
+    } finally {
+      setQuoteLoading(false);
+    }
+  };
+
   const handlePlaceOrder = async () => {
     setOrderLoading(true);
     setOrderStatus(null);
+    let dismissMs = 8000;
     try {
-      const res = await placePaperOrder(activeBotId, {
+      const payload = {
         side: orderSide,
         size_usd: Number(orderAmount),
         leverage: Number(orderLeverage),
-      });
+      };
+      if (useCustomPrice && customPriceNum > 0) {
+        payload.price = customPriceNum;
+      }
+      const res = await placePaperOrder(activeBotId, payload);
       if (res && res.success) {
         setOrderStatus({
           success: true,
-          msg: res.message || `模拟下单撮合成交成功！最新 NAV: ${Number(res.nav || 1.0).toFixed(4)}`
+          title: '撮合成交成功',
+          msg: res.message || `模拟下单撮合成交成功！最新 NAV: ${Number(res.nav || 1.0).toFixed(4)}`,
+          // M2：成交价锚定跨所实时中位价，回显参考价、价格来源与偏差，便于核对成交是否可信
+          pricing: {
+            fillPrice: res.trade?.price,
+            priceSource: res.price_source,
+            referencePrice: res.reference_price,
+            referenceSource: res.reference_price_source,
+            deviationPct: res.price_deviation_pct,
+          },
+          nav: res.nav,
         });
         await fetchData();
+        fetchQuote();
       } else {
+        dismissMs = 12000;
         setOrderStatus({
           success: false,
+          title: '下单未能完成',
           msg: res?.detail || res?.message || '下单未能完成'
         });
       }
     } catch (err) {
+      // 按后端拒单原因分类展示：503 行情不可用 / 400 价格偏差 / 400 风控拦截 / 400 资金不足 / 其他
+      dismissMs = 12000;
+      const statusCode = err?.status;
+      const detail = err?.message || '模拟下单请求异常';
+      let title = '下单被拒绝';
+      let kind = 'generic';
+      if (statusCode === 503) {
+        title = '行情不可用，已拒单';
+        kind = 'market_unavailable';
+      } else if (statusCode === 400 && detail.includes('偏离')) {
+        title = '价格偏离实时行情，已拒单';
+        kind = 'price_deviation';
+      } else if (statusCode === 400 && detail.includes('风控拦截')) {
+        title = '风控拦截';
+        kind = 'risk_guard';
+      } else if (statusCode === 400 && detail.includes('资金不足')) {
+        title = '可用资金不足';
+        kind = 'insufficient_funds';
+      } else if (statusCode === 401 || statusCode === 403) {
+        title = '无权限下单';
+        kind = 'auth';
+      } else if (statusCode === 0 || statusCode === 408) {
+        title = '网络异常';
+        kind = 'network';
+      }
       setOrderStatus({
         success: false,
-        msg: err.message || '模拟下单请求异常'
+        title,
+        kind,
+        statusCode,
+        msg: detail,
       });
     } finally {
       setOrderLoading(false);
-      setTimeout(() => setOrderStatus(null), 6000);
+      setTimeout(() => setOrderStatus(null), dismissMs);
     }
   };
 
@@ -130,55 +221,71 @@ export default function NavView({ activeBotId = "bot_eth_debate_01" }) {
     fetchData();
   }, [activeBotId]);
 
-  const rawMetrics = (navData && navData.metrics) || emptyMetrics;
-  const balance = (navData && navData.balance) || {
-    total_equity: rawMetrics.total_equity_usd ?? 10000.0,
-    cash_balance: rawMetrics.total_equity_usd ?? 10000.0,
-    margin_used: 0.0,
-    unrealized_pnl: 0.0,
-    realized_pnl_cum: 0.0,
-  };
+  useEffect(() => {
+    fetchQuote();
+    if (!useCustomPrice) return undefined;
+    const timer = setInterval(fetchQuote, 15000);
+    return () => clearInterval(timer);
+  }, [activeBotId, useCustomPrice]);
+
+  const rawMetrics = (navData && navData.metrics) || {};
+  const balance = (navData && navData.balance) || {};
   const positions = (navData && navData.positions) || [];
   const activePosition = positions.find(p => p.quantity > 0);
-  const freeCash = Math.max(0, Number(balance.cash_balance ?? 10000.0));
+  const accountKnown = Boolean(navData && navData.balance);
+  // 账户数据未知时购买力为 0，禁止在未知资金状态下提交开仓
+  const freeCash = accountKnown ? Math.max(0, Number(balance.cash_balance) || 0) : 0;
   const maxPurchasingPower = Math.floor(freeCash * Number(orderLeverage || 1));
 
+  // 指定成交价偏差（前端预检；后端会用下单时刻的最新实时价再校验一次）
+  const referencePrice = quote?.tradable ? Number(quote.reference_price) : null;
+  const maxDeviationPct = Number(quote?.max_deviation_pct ?? 0.01);
+  const customPriceNum = Number(customPrice);
+  const customPriceValid = useCustomPrice && Number.isFinite(customPriceNum) && customPriceNum > 0;
+  const customDeviationPct = customPriceValid && referencePrice > 0
+    ? Math.abs(customPriceNum - referencePrice) / referencePrice
+    : null;
+  const customPriceExceeds = customDeviationPct !== null && customDeviationPct > maxDeviationPct;
+  const overBuyingPower = accountKnown && orderSide !== 'CLOSE' && Number(orderAmount) > maxPurchasingPower;
+  const submitBlocked = orderLoading
+    || (orderSide !== 'CLOSE' && !accountKnown)
+    || overBuyingPower
+    || (useCustomPrice && (!customPriceValid || customPriceExceeds));
+
   const metrics = {
-    current_nav: rawMetrics.current_nav ?? rawMetrics.latest_nav ?? 1.0,
-    cumulative_return_pct: rawMetrics.cumulative_return_pct ?? 0.0,
-    sharpe_ratio: rawMetrics.sharpe_ratio ?? rawMetrics.annualized_sharpe_ratio ?? 0.0,
-    max_drawdown_pct: rawMetrics.max_drawdown_pct ?? 0.0,
-    win_rate_pct: rawMetrics.win_rate_pct ?? 0.0,
-    profit_loss_ratio: rawMetrics.profit_loss_ratio ?? 0.0,
-    total_trades: rawMetrics.total_trades ?? trades.length,
-    total_equity_usd: balance.total_equity || rawMetrics.total_equity_usd || 10000.0,
+    current_nav: numOrNull(rawMetrics.current_nav ?? rawMetrics.latest_nav),
+    cumulative_return_pct: numOrNull(rawMetrics.cumulative_return_pct),
+    sharpe_ratio: numOrNull(rawMetrics.sharpe_ratio ?? rawMetrics.annualized_sharpe_ratio),
+    max_drawdown_pct: numOrNull(rawMetrics.max_drawdown_pct),
+    win_rate_pct: numOrNull(rawMetrics.win_rate_pct),
+    profit_loss_ratio: numOrNull(rawMetrics.profit_loss_ratio),
+    total_trades: numOrNull(rawMetrics.total_trades),
   };
+  const cumRet = metrics.cumulative_return_pct;
+  const sharpe = metrics.sharpe_ratio;
+  const sharpeLabel = sharpe === null ? '--' : sharpe >= 2 ? '优秀 (≥2.0)' : sharpe >= 1 ? '良好 (1.0–2.0)' : sharpe > 0 ? '一般 (0–1.0)' : '偏弱 (≤0)';
+  const sharpeLabelColor = sharpe === null ? 'text-[#9E9486]' : sharpe >= 1 ? 'text-[#3D784E]' : sharpe > 0 ? 'text-[#C28B38]' : 'text-[#C24D4D]';
+  const pf = metrics.profit_loss_ratio;
+  const pfLabel = pf === null
+    ? ((metrics.total_trades ?? 0) > 0 ? '暂无亏损交易，无法计算' : '暂无已平仓交易')
+    : pf > 1 ? '盈利交易总额大于亏损' : pf < 1 ? '亏损交易总额大于盈利' : '盈亏持平';
+  const pfLabelColor = pf === null ? 'text-[#9E9486]' : pf > 1 ? 'text-[#3D784E]' : pf < 1 ? 'text-[#C24D4D]' : 'text-[#7E7469]';
 
-  let series = (navData && navData.nav_series && navData.nav_series.length > 0)
-    ? navData.nav_series
-    : [
-        { date: '初始', nav: 1.0000, total_equity: balance.total_equity || 10000.0 },
-        { date: '当前', nav: Number(metrics.current_nav || 1.0), total_equity: balance.total_equity || 10000.0 },
-      ];
-
-  // 确保至少有两个点，防止 series.length === 1 时产生除以零 NaN
-  if (series.length === 1) {
-    const single = series[0];
-    series = [
-      { date: "初始", timestamp: single.timestamp, nav: 1.0000, total_equity: single.total_equity || 10000.0 },
-      single,
-    ];
-  }
+  // 净值曲线只画后端真实快照；不足两个点时显示空状态，不再补“初始 1.0000”这类虚拟点
+  const series = (navData && Array.isArray(navData.nav_series))
+    ? navData.nav_series.filter((p) => numOrNull(p.nav) !== null)
+    : [];
+  const hasCurve = series.length >= 2;
 
   // 简易 SVG 净值曲线计算
-  const navValues = series.map(s => Number(s.nav || 1.0));
+  const navValues = hasCurve ? series.map(s => Number(s.nav)) : [1.0];
   const minNav = Math.min(...navValues, 0.99) * 0.99;
   const maxNav = Math.max(...navValues, 1.01) * 1.01;
   const range = maxNav - minNav || 0.1;
 
   const points = series.map((s, idx) => {
     const x = series.length > 1 ? (idx / (series.length - 1)) * 600 : 300;
-    const y = 180 - ((Number(s.nav || 1.0) - minNav) / range) * 160;
+    const y = 180 - ((Number(s.nav) - minNav) / range) * 160;
     return `${x},${y}`;
   }).join(' ');
 
@@ -236,6 +343,12 @@ export default function NavView({ activeBotId = "bot_eth_debate_01" }) {
       {/* 2. 核心主内容区 */}
       <div className="flex-1 overflow-y-auto p-6 space-y-6">
         
+        {navError && (
+          <div className="p-3 rounded-xl bg-[#FDF3E3] border border-[#F1DDB8] text-xs font-semibold text-[#B9770E]">
+            📡 净值与账户数据不可用：{navError}。以下指标显示为 “--”，请检查后端服务后点击刷新。
+          </div>
+        )}
+
         {/* 2.0 账户资金状态与当前持仓总控看板 */}
         <div className="bg-white p-4 rounded-2xl border border-[#E6DFD5] shadow-xs flex flex-wrap items-center justify-between gap-4">
           <div className="flex flex-wrap items-center gap-6">
@@ -245,7 +358,7 @@ export default function NavView({ activeBotId = "bot_eth_debate_01" }) {
                 <span>账户总资产 (Equity)</span>
               </span>
               <div className="text-base font-bold font-mono text-[#2E2823] mt-0.5">
-                ${Number(balance.total_equity || 10000).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                {fmtUsd(accountKnown ? balance.total_equity : null)}
               </div>
             </div>
 
@@ -257,7 +370,7 @@ export default function NavView({ activeBotId = "bot_eth_debate_01" }) {
                 <span>空闲可用现金 (Free Cash)</span>
               </span>
               <div className="text-base font-bold font-mono text-[#3D784E] mt-0.5">
-                ${Number(balance.cash_balance ?? 10000).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                {fmtUsd(accountKnown ? balance.cash_balance : null)}
               </div>
             </div>
 
@@ -269,7 +382,7 @@ export default function NavView({ activeBotId = "bot_eth_debate_01" }) {
                 <span>占用保证金 (Margin Used)</span>
               </span>
               <div className="text-base font-bold font-mono text-[#8C5E2E] mt-0.5">
-                ${Number(balance.margin_used || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                {accountKnown ? `$${Number(balance.margin_used || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '--'}
               </div>
             </div>
 
@@ -280,8 +393,8 @@ export default function NavView({ activeBotId = "bot_eth_debate_01" }) {
                 <span>📈</span>
                 <span>持仓浮动盈亏 (Unrealized)</span>
               </span>
-              <div className={`text-base font-bold font-mono mt-0.5 ${Number(balance.unrealized_pnl || 0) >= 0 ? 'text-[#3D784E]' : 'text-[#C24D4D]'}`}>
-                {Number(balance.unrealized_pnl || 0) >= 0 ? '+' : ''}${Number(balance.unrealized_pnl || 0).toFixed(2)}
+              <div className={`text-base font-bold font-mono mt-0.5 ${!accountKnown ? 'text-[#9E9486]' : Number(balance.unrealized_pnl || 0) >= 0 ? 'text-[#3D784E]' : 'text-[#C24D4D]'}`}>
+                {!accountKnown ? '--' : `${Number(balance.unrealized_pnl || 0) >= 0 ? '+' : '-'}$${Math.abs(Number(balance.unrealized_pnl || 0)).toFixed(2)}`}
               </div>
             </div>
           </div>
@@ -297,11 +410,13 @@ export default function NavView({ activeBotId = "bot_eth_debate_01" }) {
                 <span>{Number(activePosition.quantity).toFixed(4)} {activePosition.symbol}</span>
                 <span className="text-[11px] text-[#7E7469]">@ ${Number(activePosition.entry_price).toFixed(2)}</span>
               </span>
-            ) : (
+            ) : accountKnown ? (
               <span className="text-xs font-bold font-mono text-[#7E7469] flex items-center space-x-1.5">
                 <span className="w-2 h-2 rounded-full bg-[#3D784E]" />
-                <span>当前空仓 (FLAT) · 100% 现金就绪</span>
+                <span>当前空仓 (FLAT)</span>
               </span>
+            ) : (
+              <span className="text-xs font-bold font-mono text-[#9E9486]">--（账户数据不可用）</span>
             )}
           </div>
         </div>
@@ -311,7 +426,7 @@ export default function NavView({ activeBotId = "bot_eth_debate_01" }) {
           <div className="bg-white p-3.5 rounded-xl border border-[#E6DFD5] shadow-xs">
             <span className="text-[11px] font-semibold text-[#7E7469]">单位净值 (NAV)</span>
             <div className="text-xl font-bold font-mono text-[#2E2823] mt-1 flex items-baseline space-x-1">
-              <span>{Number(metrics.current_nav || 1.0).toFixed(4)}</span>
+              <span>{fmtNum(metrics.current_nav, 4)}</span>
               <span className="text-xs text-[#3D784E] font-sans">USD</span>
             </div>
             <span className="text-[10px] text-[#9E9486] font-mono">基准面值 1.0000</span>
@@ -319,9 +434,9 @@ export default function NavView({ activeBotId = "bot_eth_debate_01" }) {
 
           <div className="bg-white p-3.5 rounded-xl border border-[#E6DFD5] shadow-xs">
             <span className="text-[11px] font-semibold text-[#7E7469]">累计真实收益率</span>
-            <div className="text-xl font-bold font-mono text-[#3D784E] mt-1 flex items-center">
-              <ArrowUpRight className="w-4 h-4 mr-0.5" />
-              <span>+{Number(metrics.cumulative_return_pct || 0).toFixed(2)}%</span>
+            <div className={`text-xl font-bold font-mono mt-1 flex items-center ${cumRet === null ? 'text-[#9E9486]' : cumRet >= 0 ? 'text-[#3D784E]' : 'text-[#C24D4D]'}`}>
+              {cumRet !== null && (cumRet >= 0 ? <ArrowUpRight className="w-4 h-4 mr-0.5" /> : <ArrowDownRight className="w-4 h-4 mr-0.5" />)}
+              <span>{cumRet === null ? '--' : `${cumRet >= 0 ? '+' : ''}${cumRet.toFixed(2)}%`}</span>
             </div>
             <span className="text-[10px] text-[#9E9486]">消除出入金扰动</span>
           </div>
@@ -329,34 +444,34 @@ export default function NavView({ activeBotId = "bot_eth_debate_01" }) {
           <div className="bg-white p-3.5 rounded-xl border border-[#E6DFD5] shadow-xs">
             <span className="text-[11px] font-semibold text-[#7E7469]">夏普比率 (Sharpe)</span>
             <div className="text-xl font-bold font-mono text-[#2E2823] mt-1">
-              <span>{Number(metrics.sharpe_ratio || 0).toFixed(2)}</span>
+              <span>{fmtNum(sharpe, 2)}</span>
             </div>
-            <span className="text-[10px] text-[#3D784E] font-semibold">优秀 (&gt;2.0)</span>
+            <span className={`text-[10px] font-semibold ${sharpeLabelColor}`}>{sharpeLabel}</span>
           </div>
 
           <div className="bg-white p-3.5 rounded-xl border border-[#E6DFD5] shadow-xs">
             <span className="text-[11px] font-semibold text-[#7E7469]">历史最大回撤 (MDD)</span>
             <div className="text-xl font-bold font-mono text-[#C24D4D] mt-1 flex items-center">
               <ArrowDownRight className="w-4 h-4 mr-0.5" />
-              <span>-{Number(metrics.max_drawdown_pct || 0).toFixed(2)}%</span>
+              <span>{metrics.max_drawdown_pct === null ? '--' : `-${metrics.max_drawdown_pct.toFixed(2)}%`}</span>
             </div>
-            <span className="text-[10px] text-[#9E9486]">单日熔断线 5.0%</span>
+            <span className="text-[10px] text-[#9E9486]">相对历史最高净值</span>
           </div>
 
           <div className="bg-white p-3.5 rounded-xl border border-[#E6DFD5] shadow-xs">
             <span className="text-[11px] font-semibold text-[#7E7469]">交易胜率 (Win Rate)</span>
             <div className="text-xl font-bold font-mono text-[#2E2823] mt-1">
-              <span>{Number(metrics.win_rate_pct || 0).toFixed(1)}%</span>
+              <span>{metrics.win_rate_pct === null ? '--' : `${metrics.win_rate_pct.toFixed(1)}%`}</span>
             </div>
-            <span className="text-[10px] text-[#7E7469]">共 {metrics.total_trades ?? 0} 笔成交流水</span>
+            <span className="text-[10px] text-[#7E7469]">共 {metrics.total_trades ?? '--'} 笔成交流水</span>
           </div>
 
           <div className="bg-white p-3.5 rounded-xl border border-[#E6DFD5] shadow-xs">
             <span className="text-[11px] font-semibold text-[#7E7469]">盈亏比 (Profit Factor)</span>
             <div className="text-xl font-bold font-mono text-[#2E2823] mt-1">
-              <span>{Number(metrics.profit_loss_ratio || 0).toFixed(2)}:1</span>
+              <span>{pf === null ? '--' : `${pf.toFixed(2)}:1`}</span>
             </div>
-            <span className="text-[10px] text-[#3D784E] font-semibold">正期望盈利模型</span>
+            <span className={`text-[10px] font-semibold ${pfLabelColor}`}>{pfLabel}</span>
           </div>
         </div>
 
@@ -380,6 +495,11 @@ export default function NavView({ activeBotId = "bot_eth_debate_01" }) {
           </div>
 
           {/* SVG 矢量走势图 */}
+          {!hasCurve ? (
+            <div className="w-full h-48 bg-[#FAF8F5] rounded-xl border border-dashed border-[#E2D9CC] flex items-center justify-center text-xs text-[#9E9486]">
+              {navError ? `净值数据不可用：${navError}` : '净值快照不足两个，暂无走势曲线'}
+            </div>
+          ) : (
           <div className="w-full h-48 bg-[#FAF8F5] rounded-xl border border-[#F0EBE1] p-3 relative flex flex-col justify-between">
             <svg viewBox="0 0 600 180" className="w-full h-full overflow-visible">
               {/* 基准虚线 1.000 */}
@@ -422,6 +542,7 @@ export default function NavView({ activeBotId = "bot_eth_debate_01" }) {
               ))}
             </div>
           </div>
+          )}
         </div>
 
         {/* 2.3 快捷沙盒模拟交易下单舱 */}
@@ -495,7 +616,7 @@ export default function NavView({ activeBotId = "bot_eth_debate_01" }) {
                     value={orderAmount}
                     onChange={(e) => setOrderAmount(e.target.value)}
                     className={`w-28 pl-6 pr-2 py-1.5 text-xs font-mono font-bold bg-white border rounded-lg focus:outline-none ${
-                      Number(orderAmount) > maxPurchasingPower
+                      overBuyingPower
                         ? 'border-[#C24D4D] text-[#C24D4D] focus:border-[#C24D4D]'
                         : 'border-[#DFD6C7] text-[#2E2823] focus:border-[#DE6438]'
                     }`}
@@ -548,18 +669,70 @@ export default function NavView({ activeBotId = "bot_eth_debate_01" }) {
               </div>
             )}
 
+            {/* 指定成交价（可选） */}
+            <div className="flex flex-wrap items-center gap-2">
+              <label className="flex items-center space-x-1.5 text-xs text-[#7E7469] font-medium cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={useCustomPrice}
+                  onChange={(e) => {
+                    const on = e.target.checked;
+                    setUseCustomPrice(on);
+                    if (on && !customPrice && referencePrice > 0) {
+                      setCustomPrice(String(referencePrice));
+                    }
+                  }}
+                  className="accent-[#DE6438]"
+                />
+                <span>指定成交价</span>
+              </label>
+              {useCustomPrice && (
+                <>
+                  <div className="relative">
+                    <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-[#7E7469] font-mono">$</span>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={customPrice}
+                      onChange={(e) => setCustomPrice(e.target.value)}
+                      placeholder={referencePrice > 0 ? String(referencePrice) : '价格'}
+                      className={`w-28 pl-6 pr-2 py-1.5 text-xs font-mono font-bold bg-white border rounded-lg focus:outline-none ${
+                        customPriceExceeds || (customPrice !== '' && !customPriceValid)
+                          ? 'border-[#C24D4D] text-[#C24D4D] focus:border-[#C24D4D]'
+                          : 'border-[#DFD6C7] text-[#2E2823] focus:border-[#DE6438]'
+                      }`}
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => referencePrice > 0 && setCustomPrice(String(referencePrice))}
+                    disabled={!(referencePrice > 0)}
+                    className="text-[10px] px-2 py-1 rounded border font-mono bg-white text-[#7E7469] border-[#DFD6C7] hover:border-[#DE6438] disabled:opacity-40"
+                  >
+                    用参考价
+                  </button>
+                  {customDeviationPct !== null && (
+                    <span className={`text-[11px] font-mono font-bold ${customPriceExceeds ? 'text-[#C24D4D]' : deviationClass(customDeviationPct)}`}>
+                      偏差 {formatDeviation(customDeviationPct)}
+                    </span>
+                  )}
+                </>
+              )}
+            </div>
+
             {/* 提交按钮 */}
             <button
               type="button"
               onClick={handlePlaceOrder}
-              disabled={orderLoading || (orderSide !== 'CLOSE' && Number(orderAmount) > maxPurchasingPower)}
+              disabled={submitBlocked}
               className={`px-4 py-2 rounded-xl text-xs font-bold text-white shadow-xs transition flex items-center space-x-1.5 ${
                 orderSide === 'BUY'
                   ? 'bg-[#3D784E] hover:bg-[#346642]'
                   : orderSide === 'SELL'
                   ? 'bg-[#C24D4D] hover:bg-[#A93F3F]'
                   : 'bg-[#2E2823] hover:bg-[#1A1614]'
-              } ${(orderLoading || (orderSide !== 'CLOSE' && Number(orderAmount) > maxPurchasingPower)) ? 'opacity-50 cursor-not-allowed' : ''}`}
+              } ${submitBlocked ? 'opacity-50 cursor-not-allowed' : ''}`}
             >
               <RefreshCw className={`w-3.5 h-3.5 ${orderLoading ? 'animate-spin' : ''}`} />
               <span>{orderLoading ? '撮合中...' : '🚀 提交模拟撮合成交'}</span>
@@ -570,11 +743,14 @@ export default function NavView({ activeBotId = "bot_eth_debate_01" }) {
           {orderSide !== 'CLOSE' && (
             <div className="flex flex-wrap items-center justify-between text-[11px] px-1 pt-0.5 text-[#7E7469]">
               <div className="flex items-center space-x-2 font-mono">
-                <span>空闲可用现金: <strong className="text-[#3D784E]">${freeCash.toLocaleString(undefined, { minimumFractionDigits: 2 })}</strong></span>
+                <span>空闲可用现金: <strong className="text-[#3D784E]">{accountKnown ? `$${freeCash.toLocaleString(undefined, { minimumFractionDigits: 2 })}` : '--'}</strong></span>
                 <span>·</span>
-                <span>当前杠杆购买力上限: <strong className="text-[#2E2823]">${maxPurchasingPower.toLocaleString()}</strong> USD</span>
+                <span>当前杠杆购买力上限: <strong className="text-[#2E2823]">{accountKnown ? `$${maxPurchasingPower.toLocaleString()}` : '--'}</strong> USD</span>
               </div>
-              {Number(orderAmount) > maxPurchasingPower && (
+              {!accountKnown && (
+                <span className="text-[#B9770E] font-semibold">📡 账户数据不可用，暂不能开仓</span>
+              )}
+              {overBuyingPower && (
                 <span className="text-[#C24D4D] font-semibold flex items-center space-x-1">
                   <span>⚠️</span>
                   <span>委托规模超出可用资金上限，请降低金额或提高杠杆</span>
@@ -583,17 +759,127 @@ export default function NavView({ activeBotId = "bot_eth_debate_01" }) {
             </div>
           )}
 
+          {/* 跨所实时参考价 & 指定价偏差预检 */}
+          <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] px-1 text-[#7E7469]">
+            <div className="flex flex-wrap items-center gap-2 font-mono">
+              <span>
+                跨所参考价:{' '}
+                <strong className={quote?.tradable ? 'text-[#2E2823]' : 'text-[#B9770E]'}>
+                  {quote?.tradable ? formatUsd(quote.reference_price) : (quoteLoading && !quote ? '读取中…' : '不可用')}
+                </strong>
+              </span>
+              {quote?.tradable && (
+                <span className={`px-1.5 py-0.5 rounded border font-sans font-semibold ${priceSourceMeta(quote.reference_price_source).className}`}>
+                  {priceSourceMeta(quote.reference_price_source).label}
+                </span>
+              )}
+              <span>·</span>
+              <span>指定价容差 ±{formatDeviation(maxDeviationPct)}</span>
+              <button
+                type="button"
+                onClick={fetchQuote}
+                disabled={quoteLoading}
+                className="flex items-center space-x-1 text-[#7E7469] hover:text-[#DE6438] disabled:opacity-40"
+                title="刷新参考价"
+              >
+                <RefreshCw className={`w-3 h-3 ${quoteLoading ? 'animate-spin' : ''}`} />
+                <span className="font-sans">刷新</span>
+              </button>
+            </div>
+            {useCustomPrice && customPriceExceeds && (
+              <span className="text-[#C24D4D] font-semibold">
+                ⚠️ 指定价偏离参考价 {formatDeviation(customDeviationPct)}，超过 ±{formatDeviation(maxDeviationPct)} 容差，提交将被拒绝
+              </span>
+            )}
+            {useCustomPrice && customPrice !== '' && !customPriceValid && (
+              <span className="text-[#C24D4D] font-semibold">⚠️ 请输入大于 0 的价格</span>
+            )}
+            {!quote?.tradable && (quote?.message || quoteError) && (
+              <span className="text-[#B9770E] font-semibold">📡 {quote?.message || quoteError}</span>
+            )}
+          </div>
+
           {/* 状态提示 */}
           {orderStatus && (
             <div
-              className={`p-2.5 rounded-lg text-xs font-medium border flex items-center space-x-2 animate-fade-in ${
+              className={`p-3 rounded-lg text-xs border animate-fade-in ${
                 orderStatus.success
                   ? 'bg-[#EBF5EE] text-[#3D784E] border-[#CDE3D2]'
+                  : orderStatus.kind === 'market_unavailable'
+                  ? 'bg-[#FDF3E3] text-[#B9770E] border-[#F1DDB8]'
                   : 'bg-[#FBEFEA] text-[#C24D4D] border-[#F2D6CA]'
               }`}
             >
-              <span>{orderStatus.success ? '✓' : '⚠️'}</span>
-              <span>{orderStatus.msg}</span>
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex items-start space-x-2 min-w-0">
+                  <span className="shrink-0">
+                    {orderStatus.success ? '✓' : orderStatus.kind === 'market_unavailable' ? '📡' : '⚠️'}
+                  </span>
+                  <div className="min-w-0">
+                    <div className="font-bold">
+                      {orderStatus.title || (orderStatus.success ? '撮合成交成功' : '下单被拒绝')}
+                      {!orderStatus.success && orderStatus.statusCode ? (
+                        <span className="ml-1.5 font-mono font-normal opacity-70">HTTP {orderStatus.statusCode}</span>
+                      ) : null}
+                    </div>
+                    <div className="mt-0.5 font-medium break-words">{orderStatus.msg}</div>
+                    {orderStatus.kind === 'market_unavailable' && (
+                      <div className="mt-1 text-[11px] opacity-80">
+                        跨所行情源暂不可用或价格严重背离，为避免按失真价格成交已暂停下单，请稍后重试。
+                      </div>
+                    )}
+                    {orderStatus.kind === 'price_deviation' && (
+                      <div className="mt-1 text-[11px] opacity-80">
+                        成交价须贴近跨所实时中位价（默认容差 1%），不填价格将直接按实时价成交。
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setOrderStatus(null)}
+                  className="shrink-0 opacity-60 hover:opacity-100 font-mono"
+                  aria-label="关闭提示"
+                >
+                  ✕
+                </button>
+              </div>
+
+              {/* M2：成交价格核对明细（成交价 / 价格来源 / 跨所参考价 / 偏差） */}
+              {orderStatus.success && orderStatus.pricing && (
+                <div className="mt-2 pt-2 border-t border-[#CDE3D2] grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px] text-[#5A5046]">
+                  <div>
+                    <div className="text-[#7E7469]">成交价</div>
+                    <div className="font-mono font-bold text-[#2E2823]">{formatUsd(orderStatus.pricing.fillPrice)}</div>
+                  </div>
+                  <div>
+                    <div className="text-[#7E7469]">价格来源</div>
+                    <span className={`inline-block mt-0.5 px-1.5 py-0.5 rounded border font-semibold ${priceSourceMeta(orderStatus.pricing.priceSource).className}`}>
+                      {priceSourceMeta(orderStatus.pricing.priceSource).label}
+                    </span>
+                  </div>
+                  <div>
+                    <div className="text-[#7E7469]">跨所参考价</div>
+                    <div className="font-mono font-bold text-[#2E2823]">
+                      {formatUsd(orderStatus.pricing.referencePrice)}
+                    </div>
+                    {orderStatus.pricing.referenceSource && orderStatus.pricing.referenceSource !== 'LIVE' && (
+                      <div className="text-[10px] text-[#B9770E]">{priceSourceMeta(orderStatus.pricing.referenceSource).label}</div>
+                    )}
+                  </div>
+                  <div>
+                    <div className="text-[#7E7469]">偏差</div>
+                    <div className={`font-mono font-bold ${deviationClass(orderStatus.pricing.deviationPct)}`}>
+                      {formatDeviation(orderStatus.pricing.deviationPct)}
+                    </div>
+                  </div>
+                </div>
+              )}
+              {orderStatus.success && orderStatus.pricing?.priceSource === 'SIMULATED' && (
+                <div className="mt-2 text-[11px] text-[#B9770E] font-semibold">
+                  ⚠️ 本笔按离线仿真价成交（已显式开启离线兜底），净值与盈亏不代表真实行情。
+                </div>
+              )}
             </div>
           )}
         </div>

@@ -36,13 +36,13 @@ export default function DecisionArena({
   const [leverage, setLeverage] = useState(1.5);
   const [isExecuting, setIsExecuting] = useState(false);
 
-  const defaultPrices = { BTC: 96500.0, ETH: 3120.0, SOL: 185.0 };
   const symbol = (propSymbol || decisionRecord?.symbol || activeBot?.symbol || (activeBotId.includes("btc") ? "BTC" : activeBotId.includes("sol") ? "SOL" : "ETH")).toUpperCase();
-  const [livePrice, setLivePrice] = useState(defaultPrices[symbol] || 3120.0);
+  // M5：不再预置写死的“当前价”，收到真实行情（推演记录或 Binance WS）之前显示 "--"
+  const [livePrice, setLivePrice] = useState(null);
 
-  // 标的切换时同步初始价格
+  // 标的切换时清空旧标的价格
   useEffect(() => {
-    setLivePrice(defaultPrices[symbol] || 3120.0);
+    setLivePrice(null);
   }, [symbol]);
 
   // 1. 直连币安公开行情 WebSocket，保持与 TradingView 实时毫秒级同频跳动
@@ -69,14 +69,35 @@ export default function DecisionArena({
   // 2. 动态数据解析（若当前决策记录标的与实际标的一致则采用，否则采用实时盘口价）
   const isRecordMatching = decisionRecord && decisionRecord.symbol?.toUpperCase() === symbol;
   const latestPrice = (isRecordMatching && decisionRecord.latest_price) ? decisionRecord.latest_price : livePrice;
-  const consensus = decisionRecord?.debate_consensus || "LONG";
+  const hasLatestPrice = Number.isFinite(Number(latestPrice)) && Number(latestPrice) > 0;
+  const latestPriceText = hasLatestPrice
+    ? `$${Number(latestPrice).toLocaleString(undefined, { minimumFractionDigits: 2 })}`
+    : '--';
+  // M5：无推演记录时不再默认显示“开多 LONG”与“风控全票核准”，也不再按现价倍数编造委托 / 止损 / 止盈价
+  const hasDecision = Boolean(decisionRecord && decisionRecord.timestamp);
+  const consensus = hasDecision ? (decisionRecord.debate_consensus || 'NEUTRAL') : null;
   const proposal = decisionRecord?.trade_proposal;
-  const targetEntry = proposal?.trade_action?.target_price || +(latestPrice * 0.998).toFixed(2);
-  const stopLoss = proposal?.trade_action?.stop_loss_price || +(latestPrice * 0.980).toFixed(2);
-  const takeProfit = proposal?.trade_action?.take_profit_price || +(latestPrice * 1.045).toFixed(2);
-  const sizeUsd = proposal?.trade_action?.size_in_usd || +(latestPrice * 1.5).toFixed(2);
+  const fmtPx = (v) => (Number.isFinite(Number(v)) && Number(v) > 0 ? `$${Number(v).toFixed(2)}` : '--');
+  const targetEntry = proposal?.trade_action?.target_price ?? null;
+  const stopLoss = proposal?.trade_action?.stop_loss_price ?? null;
+  const takeProfit = proposal?.trade_action?.take_profit_price ?? null;
+  const sizeUsd = proposal?.trade_action?.size_in_usd ?? null;
   const idempotencyKey = proposal?.idempotency_key;
-  const riskApproved = decisionRecord?.risk_approved ?? true;
+  // pending: 尚无推演 | idle: 本轮无提案 | approved: 提案通过硬风控 | rejected: 硬风控拦截
+  const riskState = !hasDecision
+    ? 'pending'
+    : decisionRecord.risk_review && decisionRecord.risk_review.approved === false
+    ? 'rejected'
+    : decisionRecord.proposal_generated
+    ? (decisionRecord.risk_approved ? 'approved' : 'rejected')
+    : 'idle';
+  const RISK_BADGE = {
+    pending: { text: '⏳ 等待推演', className: 'bg-[#F2EDE4] text-[#7A6F62] border-[#E2D9CC]' },
+    idle: { text: '— 本轮无提案', className: 'bg-[#F2EDE4] text-[#7A6F62] border-[#E2D9CC]' },
+    approved: { text: '✓ 硬风控审查通过', className: 'bg-[#EBF5EE] text-[#4D835C] border-[#CEE5D3]' },
+    rejected: { text: '✕ 硬风控触发拦截', className: 'bg-[#FDECEC] text-[#C24D4D] border-[#F7CDCD]' },
+  };
+  const riskBadge = RISK_BADGE[riskState];
 
   // 快捷获取各个角色对象
   const analyst = agents.find((a) => a.id === "analyst");
@@ -211,7 +232,7 @@ export default function DecisionArena({
                   </span>
                 </div>
                 <div className="text-[10px] text-[#7E7469] mt-0.5 bg-white/95 px-2.5 py-0.5 rounded-full border border-[#DFD6C7] shadow-xs max-w-[240px] truncate">
-                  🔍 {analyst.keyThesis ? analyst.keyThesis.slice(0, 36) : 'EMA20 支撑突破'}
+                  🔍 {analyst.keyThesis ? analyst.keyThesis.slice(0, 36) : '等待推演'}
                 </div>
               </div>
             )}
@@ -230,7 +251,7 @@ export default function DecisionArena({
                   </div>
                 </div>
                 <div className="text-[9.5px] text-[#4D835C] mt-0.5 font-bold bg-[#EBF5EE] px-2 py-0.5 rounded shadow-xs max-w-[180px] truncate">
-                  {sentiment.badge ? `情绪指标 ${sentiment.badge}` : '资金面正常'}
+                  {sentiment.badge ? `情绪指标 ${sentiment.badge}` : '情绪指标 --'}
                 </div>
               </div>
             )}
@@ -245,7 +266,7 @@ export default function DecisionArena({
                   <span className="text-lg">{riskOfficer.avatar}</span>
                   <div>
                     <div className="text-xs font-bold text-[#2E2823]">{riskOfficer.name}</div>
-                    <div className="text-[10px] text-[#4D835C] font-semibold">{riskOfficer.tag || '盈亏比审查放行'}</div>
+                    <div className="text-[10px] text-[#4D835C] font-semibold">{riskOfficer.tag || '等待推演'}</div>
                   </div>
                 </div>
               </div>
@@ -265,7 +286,7 @@ export default function DecisionArena({
                   </div>
                 </div>
                 <div className="w-44 text-center text-[10px] text-[#2E2823] mt-1.5 bg-white p-2 rounded-xl border border-[#D5E5D8] shadow-xs leading-snug line-clamp-2">
-                  “{bull.keyThesis ? bull.keyThesis.slice(0, 48) : '现货买盘真实，突破阻力暴拉赔率极高！'}”
+                  “{bull.keyThesis ? bull.keyThesis.slice(0, 48) : '等待首轮推演'}”
                 </div>
               </div>
             )}
@@ -284,7 +305,7 @@ export default function DecisionArena({
                   </div>
                 </div>
                 <div className="w-44 text-center text-[10px] text-[#2E2823] mt-1.5 bg-white p-2 rounded-xl border border-[#F2D4D4] shadow-xs leading-snug line-clamp-2">
-                  “{bear.keyThesis ? bear.keyThesis.slice(0, 48) : '上方解套抛压，必须在防守位设好止损。'}”
+                  “{bear.keyThesis ? bear.keyThesis.slice(0, 48) : '等待首轮推演'}”
                 </div>
               </div>
             )}
@@ -334,7 +355,7 @@ export default function DecisionArena({
                   <span className="text-lg">{hardGuard.avatar}</span>
                   <div>
                     <div className="text-xs font-bold text-[#2E2823]">{hardGuard.name}</div>
-                    <div className="text-[10px] text-[#4D835C] font-semibold">{hardGuard.tag || '7/7 铁律全票核准'}</div>
+                    <div className="text-[10px] text-[#4D835C] font-semibold">{hardGuard.tag || '等待推演'}</div>
                   </div>
                 </div>
               </div>
@@ -346,12 +367,14 @@ export default function DecisionArena({
             <div className="w-88 xl:w-96 bg-white rounded-2xl p-5 border-2 border-[#D8CEBE] shadow-xl flex flex-col justify-between z-0">
               <div className="flex items-center justify-between pb-3 border-b border-[#F0EAE1]">
                 <div className="flex items-center space-x-2">
-                  <span className={`w-2.5 h-2.5 rounded-full ${consensus === 'LONG' ? 'bg-[#4D835C]' : consensus === 'SHORT' ? 'bg-[#DE6438]' : 'bg-[#7A6F62]'} animate-pulse`}></span>
+                  <span className={`w-2.5 h-2.5 rounded-full ${consensus === 'LONG' ? 'bg-[#4D835C]' : consensus === 'SHORT' ? 'bg-[#DE6438]' : 'bg-[#7A6F62]'} ${consensus ? 'animate-pulse' : ''}`}></span>
                   <span className="font-mono font-bold text-base text-[#2E2823]">{symbol}-USDT 永续</span>
                 </div>
                 <div className="text-right">
-                  <span className="font-mono font-bold text-lg text-[#4D835C]">${Number(latestPrice).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
-                  <span className="block text-[10px] font-mono text-[#4D835C] font-semibold">多源互补 (Binance / HL)</span>
+                  <span className={`font-mono font-bold text-lg ${hasLatestPrice ? 'text-[#4D835C]' : 'text-[#9E917F]'}`}>{latestPriceText}</span>
+                  <span className={`block text-[10px] font-mono font-semibold ${hasLatestPrice ? 'text-[#4D835C]' : 'text-[#B9770E]'}`}>
+                    {hasLatestPrice ? '多源互补 (Binance / HL)' : '等待实时行情'}
+                  </span>
                 </div>
               </div>
 
@@ -365,26 +388,26 @@ export default function DecisionArena({
                       ? 'bg-[#FBEFEA] text-[#DE6438]' 
                       : 'bg-[#F2EDE4] text-[#7A6F62]'
                   }`}>
-                    {consensus === 'LONG' ? '🟢 开多 LONG' : consensus === 'SHORT' ? '🔴 沽空 SHORT' : '⚪ 空仓 NEUTRAL'} · {leverage.toFixed(1)}x
+                    {!consensus ? '⏳ 等待推演' : consensus === 'LONG' ? '🟢 开多 LONG' : consensus === 'SHORT' ? '🔴 沽空 SHORT' : '⚪ 空仓 NEUTRAL'}{consensus ? ` · ${leverage.toFixed(1)}x` : ''}
                   </span>
                 </div>
                 {proposal ? (
                   <>
                     <div className="flex justify-between font-mono">
                       <span className="text-[#8C8276]">限价入场委托:</span>
-                      <span className="font-semibold text-[#2E2823]">${Number(targetEntry).toFixed(2)}</span>
+                      <span className="font-semibold text-[#2E2823]">{fmtPx(targetEntry)}</span>
                     </div>
                     <div className="flex justify-between font-mono">
                       <span className="text-[#8C8276]">硬防守止损价:</span>
-                      <span className="text-[#C24D4D] font-semibold">${Number(stopLoss).toFixed(2)}</span>
+                      <span className="text-[#C24D4D] font-semibold">{fmtPx(stopLoss)}</span>
                     </div>
                     <div className="flex justify-between font-mono">
                       <span className="text-[#8C8276]">目标止盈点位:</span>
-                      <span className="text-[#4D835C] font-semibold">${Number(takeProfit).toFixed(2)}</span>
+                      <span className="text-[#4D835C] font-semibold">{fmtPx(takeProfit)}</span>
                     </div>
                     <div className="flex justify-between font-mono">
                       <span className="text-[#8C8276]">凯利头寸价值:</span>
-                      <span className="text-[#DE6438] font-bold">${Number(sizeUsd).toFixed(2)} USD</span>
+                      <span className="text-[#DE6438] font-bold">{fmtPx(sizeUsd)}{sizeUsd ? ' USD' : ''}</span>
                     </div>
                     {idempotencyKey && (
                       <div className="flex justify-between font-mono text-[10px] text-[#9E9486] pt-1 border-t border-[#F0EAE1]">
@@ -395,9 +418,13 @@ export default function DecisionArena({
                   </>
                 ) : (
                   <div className="py-2.5 px-3 bg-[#FAF7F2] rounded-xl border border-[#EDE5DA] text-center space-y-1 my-1">
-                    <p className="font-semibold text-[#7E7469] text-xs">保持空仓观望 (Cash is a position)</p>
+                    <p className="font-semibold text-[#7E7469] text-xs">{consensus ? '本轮无交易提案' : '等待首轮推演'}</p>
                     <p className="text-[11px] text-[#9E9486] leading-relaxed">
-                      {consensus === 'NEUTRAL' ? '多空对抗达成中立共识，策略层严禁盲目挂单，100% 现金防守' : '当前无有效挂单提案，维持零资金敞口暴露'}
+                      {!consensus
+                        ? '该机器人尚未产生推演结果，暂无多空结论与交易提案'
+                        : consensus === 'NEUTRAL'
+                        ? '多空对抗达成中立共识，策略层本轮未签发委托'
+                        : '当前无有效挂单提案'}
                     </p>
                   </div>
                 )}
@@ -409,12 +436,8 @@ export default function DecisionArena({
                   <span>🛡️</span>
                   <span>底层确定性硬风控</span>
                 </span>
-                <span className={`text-[10px] font-bold px-2 py-0.5 rounded font-mono border ${
-                  riskApproved 
-                    ? 'bg-[#EBF5EE] text-[#4D835C] border-[#CEE5D3]' 
-                    : 'bg-[#FDECEC] text-[#C24D4D] border-[#F7CDCD]'
-                }`}>
-                  {riskApproved ? '✓ 7/7 铁律全票核准' : '✕ 硬风控触发拦截'}
+                <span className={`text-[10px] font-bold px-2 py-0.5 rounded font-mono border ${riskBadge.className}`}>
+                  {riskBadge.text}
                 </span>
               </div>
             </div>
@@ -445,7 +468,7 @@ export default function DecisionArena({
                   <span>智能体对抗辩论结论</span>
                 </h4>
                 <span className="text-[10px] bg-[#DE6438] text-white px-2 py-0.5 rounded font-mono font-bold">
-                  {consensus === 'LONG' ? '做多优势' : consensus === 'SHORT' ? '沽空优势' : '空仓观望'}
+                  {!consensus ? '等待推演' : consensus === 'LONG' ? '做多优势' : consensus === 'SHORT' ? '沽空优势' : '空仓观望'}
                 </span>
               </div>
 
@@ -466,9 +489,15 @@ export default function DecisionArena({
               </div>
 
               <div className="bg-[#FAF7F2] p-3.5 rounded-xl border border-[#E2D9CC] text-xs space-y-1">
-                <div className="font-bold text-[#DE6438]">提案摘要: {symbol} 现价 ${Number(latestPrice).toFixed(2)}</div>
-                <div className="text-[11px] text-[#4A4237]">委托 ${Number(targetEntry).toFixed(2)} · 止损 ${Number(stopLoss).toFixed(2)} · 止盈 ${Number(takeProfit).toFixed(2)} · 杠杆 {leverage.toFixed(1)}x</div>
-                <div className="text-[10px] text-[#4D835C] font-semibold">✓ 七大铁律硬风控已全票核准</div>
+                <div className="font-bold text-[#DE6438]">提案摘要: {symbol} 现价 {latestPriceText}</div>
+                {proposal ? (
+                  <div className="text-[11px] text-[#4A4237]">委托 {fmtPx(targetEntry)} · 止损 {fmtPx(stopLoss)} · 止盈 {fmtPx(takeProfit)} · 杠杆 {leverage.toFixed(1)}x</div>
+                ) : (
+                  <div className="text-[11px] text-[#9E9486]">{consensus ? '本轮无交易提案' : '等待首轮推演'}</div>
+                )}
+                <div className={`text-[10px] font-semibold ${riskState === 'approved' ? 'text-[#4D835C]' : riskState === 'rejected' ? 'text-[#C24D4D]' : 'text-[#7A6F62]'}`}>
+                  {riskBadge.text}
+                </div>
               </div>
             </div>
           </div>
