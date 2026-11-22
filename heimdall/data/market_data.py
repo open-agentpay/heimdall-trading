@@ -695,6 +695,8 @@ class OfflineFallbackDataProvider(BaseMarketDataProvider):
                 "close": round(p + 1.0, 2),
                 "volume": round(150.0 + i, 2),
                 "close_time": t + step_ms - 1,
+                # M5：显式标记离线仿真来源，便于上层接口与前端识别“非真实行情”
+                "source": "offline_fallback",
             })
         return klines
 

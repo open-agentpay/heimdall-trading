@@ -129,7 +129,7 @@ class BotScheduler:
                 try:
                     if hasattr(bot, "reconcile_once"):
                         rep = await bot.reconcile_once()
-                        if rep and not rep.get("is_clean", True):
+                        if rep and (not rep.get("is_clean", True) or rep.get("protection_alert")):
                             logger.warning(
                                 "[Scheduler · Reconciler 差异同步] bot=%s | paused=%s | diffs=%s",
                                 bot_id,
@@ -236,18 +236,8 @@ class BotScheduler:
                             pass
                         break
 
-                    # 4. 持久化本轮决策思维链日志（避免重复写 trades 引发主键冲突）
-                    if record and "error" not in record:
-                        await trading_repo.record_decision(
-                            decision_id=f"dec_{cycle_start_time.strftime('%Y%m%d%H%M%S')}_{bot_id[:6]}",
-                            agent_id=bot_id,
-                            symbol=bot.symbol,
-                            timestamp=record.get("timestamp", cycle_start_time.isoformat()),
-                            market_regime=record.get("analyst_regime"),
-                            thinking_logs=record.get("thinking_logs", []),
-                            proposal=None,
-                            risk_review=None,
-                        )
+                    # 4. 决策审计（含提案与最终风控结论）、成交流水与净值快照统一由 bot.step() 落库，
+                    #    调度器只负责定时触发、广播与熔断退出，不再重复写库（M1，避免空提案记录与主键冲突）
 
                 except Exception as err:
                     logger.error(

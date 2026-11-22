@@ -202,7 +202,7 @@ def test_stage_a_oms_reconcile_and_live_readiness():
     assert st_resp.status_code == 200
     assert "dead_man_switch" in st_resp.json()
 
-    # 5. 查询实盘就绪 5 项预检清单
+    # 5. 查询实盘就绪 6 项预检清单（M4 新增 deployment_security）
     with patch.object(
         bot_manager.bifrost_client,
         "check_cross_exchange_guard",
@@ -214,7 +214,9 @@ def test_stage_a_oms_reconcile_and_live_readiness():
         )
         assert lr_resp.status_code == 200
         lr_data = lr_resp.json()
-        assert len(lr_data["checks"]) == 5
+        assert len(lr_data["checks"]) == 6
+        assert any(c["id"] == "deployment_security" for c in lr_data["checks"])
+        assert "deployment_security" in lr_data
         assert lr_data["exchange"] == "HYPERLIQUID"
 
     bot_manager.bots.pop(bot_id, None)

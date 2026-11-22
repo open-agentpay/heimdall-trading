@@ -80,7 +80,8 @@ def test_p1_2_place_paper_order_enforces_hard_risk_guard():
             with patch.object(
                 bot_manager.bifrost_client,
                 "check_cross_exchange_guard",
-                AsyncMock(return_value={"status": "HEALTHY", "spread_pct": 0.0002}),
+                # M2：手动下单价格须锚定实时中位价，Mock 需提供 LIVE 中位价
+                AsyncMock(return_value={"status": "HEALTHY", "spread_pct": 0.0002, "median_price": 3000.0, "provenance": "LIVE"}),
             ):
                 # 1. 20x 高杠杆违规下单必须被 HardRiskGuard (max_leverage=3.0) 拦截
                 bad_req = PaperOrderRequest(side="BUY", size_usd=1000.0, price=3000.0, leverage=20.0)

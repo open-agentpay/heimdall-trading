@@ -98,7 +98,8 @@ def test_multi_tenant_bot_ownership_and_isolation():
         with patch.object(
             bot_manager.bifrost_client,
             "check_cross_exchange_guard",
-            AsyncMock(return_value={"status": "HEALTHY", "spread_pct": 0.0002}),
+            # M2：手动下单价格须锚定实时中位价，Mock 需提供 LIVE 中位价
+            AsyncMock(return_value={"status": "HEALTHY", "spread_pct": 0.0002, "median_price": 90000.0, "provenance": "LIVE"}),
         ):
             assert (
                 client.post(
