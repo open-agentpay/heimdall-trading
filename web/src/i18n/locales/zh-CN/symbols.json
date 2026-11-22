@@ -1,0 +1,62 @@
+{
+  "btc": {
+    "name": "Bitcoin (比特币)",
+    "category": "Layer 1 / 大盘"
+  },
+  "eth": {
+    "name": "Ethereum (以太坊)",
+    "category": "Layer 1 / 智能合约"
+  },
+  "sol": {
+    "name": "Solana",
+    "category": "High-TPS L1"
+  },
+  "bnb": {
+    "name": "BNB (币安币)",
+    "category": "CEX / BNB Chain"
+  },
+  "doge": {
+    "name": "Dogecoin (狗狗币)",
+    "category": "Meme / 支付"
+  },
+  "xrp": {
+    "name": "Ripple (瑞波币)",
+    "category": "Cross-border Payment"
+  },
+  "ada": {
+    "name": "Cardano (艾达币)",
+    "category": "Layer 1 PoS"
+  },
+  "avax": {
+    "name": "Avalanche (雪崩)",
+    "category": "Layer 1 子网"
+  },
+  "sui": {
+    "name": "Sui Network",
+    "category": "Move 语言高并发 L1"
+  },
+  "link": {
+    "name": "Chainlink (预言机)",
+    "category": "DeFi 预言机基础设施"
+  },
+  "near": {
+    "name": "NEAR Protocol",
+    "category": "分片扩容 L1 / AI+Crypto"
+  },
+  "apt": {
+    "name": "Aptos",
+    "category": "Move 语言高并发 L1"
+  },
+  "arb": {
+    "name": "Arbitrum",
+    "category": "Ethereum Layer 2 Rollup"
+  },
+  "op": {
+    "name": "Optimism",
+    "category": "Ethereum Layer 2 Superchain"
+  },
+  "pepe": {
+    "name": "Pepe",
+    "category": "Top Meme Token"
+  }
+}

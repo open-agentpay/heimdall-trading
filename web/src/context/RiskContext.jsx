@@ -5,6 +5,7 @@
  */
 
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import i18n, { fmt } from '../i18n';
 import { getRiskRadarTelemetry, triggerEmergencyKill } from '../api/endpoints';
 
 const RiskContext = createContext(null);
@@ -40,8 +41,8 @@ export function RiskProvider({ children }) {
         {
           id: `kill_${Date.now()}`,
           rule: 'EMERGENCY_KILL',
-          message: res?.message || '已触发全屏紧急急停，撤销所有在途订单',
-          timestamp: new Date().toLocaleTimeString(),
+          message: res?.message || i18n.t('app:context.killFallback'),
+          timestamp: fmt.time(Date.now()),
           level: 'CRITICAL',
         },
         ...prev,
@@ -57,7 +58,7 @@ export function RiskProvider({ children }) {
     setRiskAlerts(prev => [
       {
         id: `alert_${Date.now()}`,
-        timestamp: new Date().toLocaleTimeString(),
+        timestamp: fmt.time(Date.now()),
         ...alert,
       },
       ...prev.slice(0, 49),
@@ -92,7 +93,7 @@ export function RiskProvider({ children }) {
 export function useRisk() {
   const context = useContext(RiskContext);
   if (!context) {
-    throw new Error('useRisk 必须在 RiskProvider 内部调用');
+    throw new Error(i18n.t('app:context.useRiskOutside'));
   }
   return context;
 }

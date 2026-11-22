@@ -1,0 +1,32 @@
+{
+  "header": {
+    "title": "Portfolio capital allocation",
+    "subtitle": "Adjust each bot's capital allocation; NAV shares are recalculated smoothly (NAV Continuous)"
+  },
+  "summary": {
+    "totalCapital": "Total portfolio capital",
+    "activeBots": "Active strategy instances",
+    "botCount": "{{count}} bots"
+  },
+  "empty": "No strategy bots deployed yet",
+  "bot": {
+    "share": "Share:",
+    "nav": "Current NAV: <strong>{{nav}}</strong>",
+    "equity": "Total equity: {{amount}}",
+    "saving": "Recalculating...",
+    "save": "Apply"
+  },
+  "alerts": {
+    "invalidAmount": "Enter an amount greater than 0.",
+    "invalidAmountTitle": "Invalid amount",
+    "updateFailedTitle": "Failed to adjust capital"
+  },
+  "toast": {
+    "updated": "✅ Bot [{{botId}}] capital set to {{amount}} USDT (shares recalculated)"
+  },
+  "notes": {
+    "title": "How capital adjustment and Binance paper trading work:",
+    "nav": "1. <strong>Continuous NAV curve</strong>: when capital is added or withdrawn, the system applies <code>ΔShares = ΔCapital / NAV</code> and immediately recalculates free cash and shares, so NAV per unit stays strictly continuous and no fake P&L jumps appear.",
+    "paper": "2. <strong>Binance paper trading</strong>: a high-fidelity order book simulator (Binance Paper Engine) is used by default with Binance standard fees (Maker 0.02% / Taker 0.04%); if a Binance API key is configured, orders go directly to the Binance Futures Testnet."
+  }
+}

@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { showAlert } from '../../utils/dialog';
 import { Key, Plus } from 'lucide-react';
 import { createVaultKey } from '../../api/endpoints';
@@ -19,18 +20,19 @@ export const EMPTY_NEW_KEY_FORM = {
 
 /** 登记新凭据弹窗：校验必填项、加密入库，成功后把后端返回的脱敏记录交给父组件 */
 export default function AddKeyModal({ walletState, isWalletConnected, onClose, onCreated }) {
+  const { t } = useTranslation('keyVault');
   const [newKeyForm, setNewKeyForm] = useState(EMPTY_NEW_KEY_FORM);
 
   // 提交新增凭证 (真实验密入库)
   const handleSaveNewKey = async (e) => {
     e.preventDefault();
     if (!isWalletConnected) {
-      showAlert('请先连接 Web3 钱包，再新增金库凭据。', { title: '未连接钱包', tone: 'warning' });
+      showAlert(t('add.alerts.walletRequired'), { title: t('add.alerts.walletRequiredTitle'), tone: 'warning' });
       return;
     }
 
     if (!newKeyForm.label) {
-      showAlert('请填写自定义别名备注。', { title: '请补全信息', tone: 'warning' });
+      showAlert(t('add.alerts.labelRequired'), { title: t('add.alerts.incompleteTitle'), tone: 'warning' });
       return;
     }
 
@@ -38,24 +40,24 @@ export default function AddKeyModal({ walletState, isWalletConnected, onClose, o
     if (newKeyForm.category === 'exchanges') {
       if (newKeyForm.provider === 'hyperliquid') {
         if (!newKeyForm.secretKey) {
-          showAlert('请填写 Hyperliquid Agent 派生私钥。', { title: '请补全信息', tone: 'warning' });
+          showAlert(t('add.alerts.hlKeyRequired'), { title: t('add.alerts.incompleteTitle'), tone: 'warning' });
           return;
         }
       } else {
         // Binance / OKX / Bybit
         if (!newKeyForm.apiKey || !newKeyForm.secretKey) {
-          showAlert(`请同时填写 ${newKeyForm.provider.toUpperCase()} 的 API Key（公钥）与 API Secret（密钥）。`, { title: '请补全信息', tone: 'warning' });
+          showAlert(t('add.alerts.apiPairRequired', { provider: newKeyForm.provider.toUpperCase() }), { title: t('add.alerts.incompleteTitle'), tone: 'warning' });
           return;
         }
         if (newKeyForm.provider === 'okx' && !newKeyForm.passphrase) {
-          showAlert('欧易 OKX 要求填写 Passphrase（API 密码口令）。', { title: '请补全信息', tone: 'warning' });
+          showAlert(t('add.alerts.okxPassphraseRequired'), { title: t('add.alerts.incompleteTitle'), tone: 'warning' });
           return;
         }
       }
     } else {
       // LLMs
       if (!newKeyForm.apiKey) {
-        showAlert('请填写大模型的 API 访问密钥（Key）。', { title: '请补全信息', tone: 'warning' });
+        showAlert(t('add.alerts.llmKeyRequired'), { title: t('add.alerts.incompleteTitle'), tone: 'warning' });
         return;
       }
     }
@@ -112,7 +114,7 @@ export default function AddKeyModal({ walletState, isWalletConnected, onClose, o
       }
     } catch (err) {
       console.warn("调用后端入库凭证失败:", err);
-      showAlert(err.message || '请确认后端服务正常、钱包登录有效。', { title: '保存凭据失败', tone: 'error' });
+      showAlert(err.message || t('add.alerts.saveFailed'), { title: t('add.alerts.saveFailedTitle'), tone: 'error' });
       return;
     }
 
@@ -134,9 +136,9 @@ export default function AddKeyModal({ walletState, isWalletConnected, onClose, o
       // 新保存的密钥尚未测试连通性
       status: 'UNTESTED',
       latency: null,
-      lastTested: '未测试',
-      permissions: ['全权限配置'],
-      badge: '新增已加密',
+      lastTested: t('status.untested'),
+      permissions: [t('card.fullPermissions')],
+      badge: t('badge.newEncrypted'),
       badgeColor: 'bg-success-soft text-success border-success-line',
       icon: newKeyForm.category === 'exchanges' ? '⚡' : '🧠',
     };
@@ -154,10 +156,11 @@ export default function AddKeyModal({ walletState, isWalletConnected, onClose, o
             <div className="flex items-center justify-between border-b border-line pb-3">
               <h3 className="text-sm font-bold text-ink flex items-center space-x-1.5">
                 <Plus className="w-4 h-4 text-brand" />
-                <span>登记新交易/大模型凭证</span>
+                <span>{t('add.title')}</span>
               </h3>
               <button 
                 onClick={onClose}
+                aria-label={t('add.close')}
                 className="w-6 h-6 rounded-lg hover:bg-muted text-ink-3 flex items-center justify-center text-xs"
               >
                 ✕
@@ -168,7 +171,7 @@ export default function AddKeyModal({ walletState, isWalletConnected, onClose, o
 
               {/* 分类选择 */}
               <div>
-                <label className="block text-xs font-semibold text-ink mb-1">凭证类型</label>
+                <label className="block text-xs font-semibold text-ink mb-1">{t('add.categoryLabel')}</label>
                 <div className="grid grid-cols-2 gap-2">
                   <button
                     type="button"
@@ -179,7 +182,7 @@ export default function AddKeyModal({ walletState, isWalletConnected, onClose, o
                         : "bg-surface/60 border-line text-ink-3"
                     }`}
                   >
-                    <span>⚡ 交易所 API / Agent 私钥</span>
+                    <span>{t('add.categoryExchange')}</span>
                   </button>
                   <button
                     type="button"
@@ -190,14 +193,14 @@ export default function AddKeyModal({ walletState, isWalletConnected, onClose, o
                         : "bg-surface/60 border-line text-ink-3"
                     }`}
                   >
-                    <span>🧠 AI 大模型推理 Key</span>
+                    <span>{t('add.categoryLlm')}</span>
                   </button>
                 </div>
               </div>
 
               {/* 服务商选择 */}
               <div>
-                <label className="block text-xs font-semibold text-ink mb-1">目标服务商</label>
+                <label className="block text-xs font-semibold text-ink mb-1">{t('add.providerLabel')}</label>
                 <select
                   value={newKeyForm.provider}
                   onChange={(e) => setNewKeyForm(f => ({ ...f, provider: e.target.value }))}
@@ -205,16 +208,16 @@ export default function AddKeyModal({ walletState, isWalletConnected, onClose, o
                 >
                   {newKeyForm.category === 'exchanges' ? (
                     <>
-                      <option value="hyperliquid">Hyperliquid L1 (Agent 代理私钥)</option>
-                      <option value="binance">Binance Futures (币安 U 本位合约 · 官方 SDK 支持实盘与测试网)</option>
-                      <option value="binance_demo">Binance Spot Demo (币安现货模拟 demo-api · 仅限现货多头)</option>
-                      <option value="okx">OKX (欧易 API Key)</option>
-                      <option value="bybit">Bybit 衍生品 API</option>
+                      <option value="hyperliquid">{t('add.options.hyperliquid')}</option>
+                      <option value="binance">{t('add.options.binance')}</option>
+                      <option value="binance_demo">{t('add.options.binanceDemo')}</option>
+                      <option value="okx">{t('add.options.okx')}</option>
+                      <option value="bybit">{t('add.options.bybit')}</option>
                     </>
                   ) : (
                     <>
-                      <option value="custom">Custom LLM (自定义大模型 · OpenAI 兼容端点)</option>
-                      <option value="deepseek">DeepSeek (V3 / R1 推理核心)</option>
+                      <option value="custom">{t('add.options.custom')}</option>
+                      <option value="deepseek">{t('add.options.deepseek')}</option>
                       <option value="openai">OpenAI (GPT-4o / o1)</option>
                       <option value="anthropic">Anthropic (Claude 3.5 Sonnet)</option>
                       <option value="gemini">Google Gemini 2.0</option>
@@ -225,10 +228,10 @@ export default function AddKeyModal({ walletState, isWalletConnected, onClose, o
 
               {/* 自定义名称 */}
               <div>
-                <label className="block text-xs font-semibold text-ink mb-1">自定义别名备注</label>
+                <label className="block text-xs font-semibold text-ink mb-1">{t('add.labelField')}</label>
                 <input
                   type="text"
-                  placeholder="如：币安主交易账户 / DeepSeek-V3 核心"
+                  placeholder={t('add.labelPlaceholder')}
                   value={newKeyForm.label}
                   onChange={(e) => setNewKeyForm(f => ({ ...f, label: e.target.value }))}
                   className="w-full p-2.5 rounded-xl bg-surface border border-line-strong text-xs text-ink focus:outline-hidden focus:ring-2 focus:ring-brand/20 font-medium"
@@ -243,11 +246,11 @@ export default function AddKeyModal({ walletState, isWalletConnected, onClose, o
                     <>
                       <div>
                         <label className="block text-xs font-semibold text-ink mb-1">
-                          Agent 派生私钥 (Private Key) <span className="text-brand">*</span>
+                          {t('add.hlPrivateKey')} <span className="text-brand">*</span>
                         </label>
                         <input
                           type="password"
-                          placeholder="0x... 派生私钥 Hex 字符"
+                          placeholder={t('add.hlPrivateKeyPlaceholder')}
                           value={newKeyForm.secretKey}
                           onChange={(e) => setNewKeyForm(f => ({ ...f, secretKey: e.target.value }))}
                           className="w-full p-2.5 rounded-xl bg-surface border border-line-strong text-xs text-ink font-mono focus:outline-hidden focus:ring-2 focus:ring-brand/20"
@@ -256,11 +259,11 @@ export default function AddKeyModal({ walletState, isWalletConnected, onClose, o
                       </div>
                       <div>
                         <label className="block text-xs font-semibold text-ink mb-1">
-                          主账户钱包公钥地址 (可选)
+                          {t('add.hlMainAddress')}
                         </label>
                         <input
                           type="text"
-                          placeholder="0x... EVM 钱包地址 (选填，留空则由私钥自动推导)"
+                          placeholder={t('add.hlMainAddressPlaceholder')}
                           value={newKeyForm.apiKey}
                           onChange={(e) => setNewKeyForm(f => ({ ...f, apiKey: e.target.value }))}
                           className="w-full p-2.5 rounded-xl bg-surface border border-line-strong text-xs text-ink font-mono focus:outline-hidden focus:ring-2 focus:ring-brand/20"
@@ -269,11 +272,11 @@ export default function AddKeyModal({ walletState, isWalletConnected, onClose, o
                       {newKeyForm.provider === 'hyperliquid' && (
                         <div className="flex items-center justify-between p-2.5 rounded-xl bg-surface border border-line-strong text-xs">
                           <div>
-                            <div className="font-semibold text-ink">密钥所属网络环境</div>
-                            <div className="text-xs text-ink-3">测试网走 api.hyperliquid-testnet.xyz，正式密钥走 api.hyperliquid.xyz（测试网与正式网的 Agent 私钥不通用）</div>
+                            <div className="font-semibold text-ink">{t('add.networkTitle')}</div>
+                            <div className="text-xs text-ink-3">{t('add.hlNetworkHint')}</div>
                           </div>
                           <div className="flex items-center space-x-2 shrink-0 ml-2">
-                            <span className={`text-xs font-semibold ${!newKeyForm.isTestnet ? 'text-brand' : 'text-ink-4'}`}>正式</span>
+                            <span className={`text-xs font-semibold ${!newKeyForm.isTestnet ? 'text-brand' : 'text-ink-4'}`}>{t('add.mainnet')}</span>
                             <button
                               type="button"
                               role="switch"
@@ -289,7 +292,7 @@ export default function AddKeyModal({ walletState, isWalletConnected, onClose, o
                                 }`}
                               />
                             </button>
-                            <span className={`text-xs font-semibold ${newKeyForm.isTestnet ? 'text-success' : 'text-ink-4'}`}>测试网</span>
+                            <span className={`text-xs font-semibold ${newKeyForm.isTestnet ? 'text-success' : 'text-ink-4'}`}>{t('add.testnet')}</span>
                           </div>
                         </div>
                       )}
@@ -299,11 +302,11 @@ export default function AddKeyModal({ walletState, isWalletConnected, onClose, o
                       {/* Binance / OKX / Bybit 均需要 API Key (公钥) 与 API Secret (私钥) */}
                       <div>
                         <label className="block text-xs font-semibold text-ink mb-1">
-                          API Key (访问公钥) <span className="text-brand">*</span>
+                          {t('add.apiKeyLabel')} <span className="text-brand">*</span>
                         </label>
                         <input
                           type="text"
-                          placeholder={`输入 ${newKeyForm.provider.toUpperCase()} 平台生成的 API Key`}
+                          placeholder={t('add.apiKeyPlaceholder', { provider: newKeyForm.provider.toUpperCase() })}
                           value={newKeyForm.apiKey}
                           onChange={(e) => setNewKeyForm(f => ({ ...f, apiKey: e.target.value }))}
                           className="w-full p-2.5 rounded-xl bg-surface border border-line-strong text-xs text-ink font-mono focus:outline-hidden focus:ring-2 focus:ring-brand/20"
@@ -312,11 +315,11 @@ export default function AddKeyModal({ walletState, isWalletConnected, onClose, o
                       </div>
                       <div>
                         <label className="block text-xs font-semibold text-ink mb-1">
-                          API Secret (密钥 / 私钥) <span className="text-brand">*</span>
+                          {t('add.apiSecretLabel')} <span className="text-brand">*</span>
                         </label>
                         <input
                           type="password"
-                          placeholder={`输入 ${newKeyForm.provider.toUpperCase()} 对应的 Secret Key`}
+                          placeholder={t('add.apiSecretPlaceholder', { provider: newKeyForm.provider.toUpperCase() })}
                           value={newKeyForm.secretKey}
                           onChange={(e) => setNewKeyForm(f => ({ ...f, secretKey: e.target.value }))}
                           className="w-full p-2.5 rounded-xl bg-surface border border-line-strong text-xs text-ink font-mono focus:outline-hidden focus:ring-2 focus:ring-brand/20"
@@ -326,11 +329,11 @@ export default function AddKeyModal({ walletState, isWalletConnected, onClose, o
                       {newKeyForm.provider === 'binance' && (
                         <div className="flex items-center justify-between p-2.5 rounded-xl bg-surface border border-line-strong text-xs">
                           <div>
-                            <div className="font-semibold text-ink">密钥所属网络环境</div>
-                            <div className="text-xs text-ink-3">测试网/模拟盘走 demo-api.binance.com，正式密钥走 api.binance.com</div>
+                            <div className="font-semibold text-ink">{t('add.networkTitle')}</div>
+                            <div className="text-xs text-ink-3">{t('add.binanceNetworkHint')}</div>
                           </div>
                           <div className="flex items-center space-x-2 shrink-0 ml-2">
-                            <span className={`text-xs font-semibold ${!newKeyForm.isTestnet ? 'text-brand' : 'text-ink-4'}`}>正式</span>
+                            <span className={`text-xs font-semibold ${!newKeyForm.isTestnet ? 'text-brand' : 'text-ink-4'}`}>{t('add.mainnet')}</span>
                             <button
                               type="button"
                               role="switch"
@@ -346,18 +349,18 @@ export default function AddKeyModal({ walletState, isWalletConnected, onClose, o
                                 }`}
                               />
                             </button>
-                            <span className={`text-xs font-semibold ${newKeyForm.isTestnet ? 'text-success' : 'text-ink-4'}`}>测试网</span>
+                            <span className={`text-xs font-semibold ${newKeyForm.isTestnet ? 'text-success' : 'text-ink-4'}`}>{t('add.testnet')}</span>
                           </div>
                         </div>
                       )}
                       {newKeyForm.provider === 'okx' && (
                         <div>
                           <label className="block text-xs font-semibold text-ink mb-1">
-                            Passphrase (API 密码口令) <span className="text-brand">*</span>
+                            {t('add.passphraseLabel')} <span className="text-brand">*</span>
                           </label>
                           <input
                             type="password"
-                            placeholder="OKX 独立创建 API 时的 Passphrase 口令"
+                            placeholder={t('add.passphrasePlaceholder')}
                             value={newKeyForm.passphrase}
                             onChange={(e) => setNewKeyForm(f => ({ ...f, passphrase: e.target.value }))}
                             className="w-full p-2.5 rounded-xl bg-surface border border-line-strong text-xs text-ink font-mono focus:outline-hidden focus:ring-2 focus:ring-brand/20"
@@ -375,17 +378,17 @@ export default function AddKeyModal({ walletState, isWalletConnected, onClose, o
                 <>
                   <div>
                     <label className="block text-xs font-semibold text-ink mb-1">
-                      模型名称 (Model) <span className="text-ink-3 font-normal">(自定义或输入模型代码)</span>
+                      {t('add.modelLabel')} <span className="text-ink-3 font-normal">{t('add.modelHint')}</span>
                     </label>
                     <input
                       type="text"
-                      placeholder="如：deepseek-chat、deepseek-reasoner、gpt-4o、qwen-plus、claude-3-5-sonnet"
+                      placeholder={t('add.modelPlaceholder')}
                       value={newKeyForm.model}
                       onChange={(e) => setNewKeyForm(f => ({ ...f, model: e.target.value }))}
                       className="w-full p-2.5 rounded-xl bg-surface border border-line-strong text-xs text-ink font-mono focus:outline-hidden focus:ring-2 focus:ring-brand/20 font-medium"
                     />
                     <div className="flex items-center space-x-1.5 mt-1 text-xs text-ink-3">
-                      <span>推荐快捷填入:</span>
+                      <span>{t('add.quickFill')}</span>
                       <button 
                         type="button" 
                         onClick={() => setNewKeyForm(f => ({ ...f, model: 'deepseek-chat' }))}
@@ -411,7 +414,7 @@ export default function AddKeyModal({ walletState, isWalletConnected, onClose, o
                   </div>
                   <div>
                     <label className="block text-xs font-semibold text-ink mb-1">
-                      API 访问密钥 (API Key) <span className="text-brand">*</span>
+                      {t('add.llmApiKeyLabel')} <span className="text-brand">*</span>
                     </label>
                     <input
                       type="password"
@@ -424,17 +427,17 @@ export default function AddKeyModal({ walletState, isWalletConnected, onClose, o
                   </div>
                   <div>
                     <label className="block text-xs font-semibold text-ink mb-1">
-                      API Base URL (自定义端点 / 中转代理 - 选填)
+                      {t('add.baseUrlLabel')}
                     </label>
                     <input
                       type="text"
-                      placeholder="如：https://openrouter.ai/api/v1、https://api.deepseek.com、http://localhost:11434/v1"
+                      placeholder={t('add.baseUrlPlaceholder')}
                       value={newKeyForm.baseUrl}
                       onChange={(e) => setNewKeyForm(f => ({ ...f, baseUrl: e.target.value }))}
                       className="w-full p-2.5 rounded-xl bg-surface border border-line-strong text-xs text-ink font-mono focus:outline-hidden focus:ring-2 focus:ring-brand/20"
                     />
                     <div className="flex items-center space-x-1.5 mt-1 text-xs text-ink-3 flex-wrap gap-1">
-                      <span>常用端点:</span>
+                      <span>{t('add.commonEndpoints')}</span>
                       <button 
                         type="button" 
                         onClick={() => setNewKeyForm(f => ({ ...f, baseUrl: 'https://openrouter.ai/api/v1' }))}
@@ -461,11 +464,11 @@ export default function AddKeyModal({ walletState, isWalletConnected, onClose, o
                         onClick={() => setNewKeyForm(f => ({ ...f, baseUrl: 'http://localhost:11434/v1' }))}
                         className="px-1.5 py-0.5 rounded bg-panel border border-line-strong hover:border-brand text-brand"
                       >
-                        Ollama (本地)
+                        {t('add.ollamaLocal')}
                       </button>
                     </div>
                     <p className="text-xs text-ink-3 mt-0.5">
-                      * 提示：标准 OpenAI 兼容端点末尾保留 /v1 即可（系统遵循 RFC 3986 自动规整末尾斜杠，完整保留路径段）
+                      {t('add.baseUrlTip')}
                     </p>
                   </div>
                   <div className="flex items-center space-x-2 p-2.5 bg-surface border border-line-strong rounded-xl">
@@ -477,7 +480,7 @@ export default function AddKeyModal({ walletState, isWalletConnected, onClose, o
                       className="w-4 h-4 rounded text-brand focus:ring-brand cursor-pointer"
                     />
                     <label htmlFor="setActiveKeyCheck" className="text-xs font-semibold text-ink cursor-pointer">
-                      保存后立即设为当前生效激活密钥 (推演时由多智能体优先调用)
+                      {t('add.setActive')}
                     </label>
                   </div>
                 </>
@@ -490,13 +493,13 @@ export default function AddKeyModal({ walletState, isWalletConnected, onClose, o
                   onClick={onClose}
                   className="w-1/2 py-2.5 rounded-xl border border-line-strong hover:bg-subtle text-xs font-semibold text-ink-3 transition"
                 >
-                  取消
+                  {t('add.cancel')}
                 </button>
                 <button
                   type="submit"
                   className="w-1/2 py-2.5 rounded-xl bg-brand hover:bg-brand-hover text-white text-xs font-bold transition shadow-xs"
                 >
-                  加密存入金库
+                  {t('add.submit')}
                 </button>
               </div>
 

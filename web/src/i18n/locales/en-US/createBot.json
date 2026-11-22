@@ -1,0 +1,56 @@
+{
+  "defaultName": "{{symbol}} Trend Breakout 02",
+  "prefillName": "{{symbol}} {{strategy}} (backtest pick)",
+  "header": {
+    "title": "New trading bot (StrategyRouter)",
+    "subtitle": "Exchange, market type and execution mode are modeled separately — no cross-market misrouting"
+  },
+  "form": {
+    "botId": "Unique bot ID",
+    "name": "Display name",
+    "symbol": "Symbol",
+    "symbolCount": "{{count}} major assets",
+    "exchange": "Exchange",
+    "market": "Market",
+    "mode": "Execution mode",
+    "strategy": "Strategy template",
+    "params": "Strategy parameters (passed to StrategyRouter)",
+    "capital": "Initial allocated capital (USD)",
+    "capitalPlaceholder": "Custom initial capital"
+  },
+  "options": {
+    "binance": "BINANCE",
+    "spot": "SPOT",
+    "usdmFutures": "USDM_FUTURES (USDT-margined futures)",
+    "localSim": "LOCAL_SIM (local simulation)",
+    "testnet": "TESTNET",
+    "mainnet": "MAINNET (live)"
+  },
+  "hints": {
+    "spot": "ℹ️ Spot market: <strong>no shorting</strong>, no leverage or reduce-only; you can only buy spot and sell existing holdings.",
+    "futures": "ℹ️ USDT-margined futures: long/short opening and closing with configurable leverage. The account's position mode (Hedge / One-way) is detected automatically, and native conditional stop-loss/take-profit orders are attached only for the actually filled quantity."
+  },
+  "strategies": {
+    "bullBearDebate": "⚔️ Bull vs. bear debate",
+    "trendFollow": "📈 Trend breakout",
+    "grid": "🔲 Dynamic range grid",
+    "fundingArb": "⚖️ Funding rate arbitrage",
+    "badgeLlm": "LLM Multi-Agent",
+    "badgeAlgo": "0 tokens · Pure algorithm",
+    "badgeFuturesOnly": "0 tokens · Futures only"
+  },
+  "readiness": {
+    "title": "Live readiness preflight",
+    "checking": "Checking...",
+    "error": "⚠️ Preflight check failed (sign in with your wallet first): {{message}}"
+  },
+  "errors": {
+    "createFailed": "Failed to create bot"
+  },
+  "actions": {
+    "cancel": "Cancel",
+    "blocked": "Live preflight not passed",
+    "creating": "Initializing...",
+    "submit": "Create and deploy now"
+  }
+}

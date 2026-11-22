@@ -11,6 +11,7 @@
  */
 
 import React, { useState, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import { showAlert } from '../utils/dialog';
 import AccountSummary from './nav/AccountSummary';
 import NavMetricCards from './nav/NavMetricCards';
@@ -21,6 +22,7 @@ import { TrendingUp, RefreshCw } from 'lucide-react';
 import { getBotNav, getBotTrades, listBotOmsOrders, recoverOmsOrder } from '../api/endpoints';
 
 export default function NavView({ activeBotId = "bot_eth_debate_01" }) {
+  const { t } = useTranslation('nav');
   const [timeRange, setTimeRange] = useState('1M'); // 1D | 1W | 1M | ALL
   const [navData, setNavData] = useState(null);
   const [trades, setTrades] = useState([]);
@@ -45,7 +47,7 @@ export default function NavView({ activeBotId = "bot_eth_debate_01" }) {
         setNavError(null);
       } else {
         setNavData(null);
-        setNavError(navRes.status === 'rejected' ? (navRes.reason?.message || '净值接口请求失败') : '净值接口未返回数据');
+        setNavError(navRes.status === 'rejected' ? (navRes.reason?.message || t('loadFailed')) : t('noData'));
       }
 
       if (tradesRes.status === 'fulfilled' && Array.isArray(tradesRes.value)) {
@@ -71,7 +73,7 @@ export default function NavView({ activeBotId = "bot_eth_debate_01" }) {
       await recoverOmsOrder(activeBotId, cid);
       await fetchData();
     } catch (err) {
-      showAlert(err.message || '未知错误', { title: '查单恢复失败', tone: 'error' });
+      showAlert(err.message || t('common:unknownError'), { title: t('recoverFailed'), tone: 'error' });
     } finally {
       setRecoveringCid(null);
     }
@@ -97,13 +99,13 @@ export default function NavView({ activeBotId = "bot_eth_debate_01" }) {
           </div>
           <div>
             <h1 className="text-sm font-bold text-ink flex items-center space-x-2">
-              <span>单位净值绩效与对账中心 (NAV & Ledger)</span>
+              <span>{t('title')}</span>
               <span className="text-xs font-mono bg-success-soft text-success border border-success-line px-2 py-0.5 rounded-full font-semibold">
-                公募基金级折算
+                {t('badge')}
               </span>
             </h1>
             <p className="text-xs text-ink-3">
-              消除实盘追加本金与提现干扰，真实核算夏普比率、最大回撤与累计超额 Alpha
+              {t('subtitle')}
             </p>
           </div>
         </div>
@@ -132,7 +134,7 @@ export default function NavView({ activeBotId = "bot_eth_debate_01" }) {
             className="p-1.5 bg-surface border border-line-strong hover:border-brand rounded-lg text-xs font-semibold text-ink-2 flex items-center space-x-1.5 shadow-xs transition"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
-            <span>刷新</span>
+            <span>{t('common:refresh')}</span>
           </button>
         </div>
       </div>
@@ -142,7 +144,7 @@ export default function NavView({ activeBotId = "bot_eth_debate_01" }) {
         
         {navError && (
           <div className="p-3 rounded-xl bg-warning-soft border border-warning-line text-xs font-semibold text-warning">
-            📡 净值与账户数据不可用：{navError}。以下指标显示为 “--”，请检查后端服务后点击刷新。
+            {t('dataUnavailable', { error: navError })}
           </div>
         )}
 

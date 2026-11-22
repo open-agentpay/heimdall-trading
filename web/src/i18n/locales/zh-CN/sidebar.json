@@ -1,0 +1,34 @@
+{
+  "bots": {
+    "title": "策略机器人",
+    "count": "{{n}} 个",
+    "capitalTitle": "查看与修改各机器人资金占比",
+    "capital": "配比",
+    "createTitle": "新建策略交易机器人",
+    "create": "新建",
+    "loading": "正在加载机器人列表...",
+    "running": "活跃运行",
+    "standby": "待命",
+    "tokensTitle": "真实累计 LLM Token 消耗",
+    "delete": "删除机器人 {{name}}"
+  },
+  "dataHub": {
+    "title": "底座信号源 (Data Hub)",
+    "zeroLookahead": "零前视接入",
+    "sealed": "已封盘",
+    "live": "实时",
+    "enabled": "启用",
+    "listening": "监听中"
+  },
+  "wallet": {
+    "manageTitle": "点击管理 Web3 钱包",
+    "offBadge": "未",
+    "connected": "已连接",
+    "disconnected": "未连接 Web3 钱包",
+    "bearerAuth": "{{network}} Bearer 认证",
+    "signIn": "点击签名登录",
+    "maxDrawdown": "最大回撤: {{value}}",
+    "breaker": "熔断线: {{value}}",
+    "keyVault": "🔑 凭证金库 (Hyperliquid / AI)"
+  }
+}

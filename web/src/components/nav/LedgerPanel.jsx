@@ -1,7 +1,10 @@
 import React, { useState } from 'react';
+import { useTranslation } from 'react-i18next';
+import { fmt } from '../../i18n';
 
 /** 成交流水簿与 OMS 订单状态机（含原生保护单、UNKNOWN 订单查单恢复） */
 export default function LedgerPanel({ trades, omsData, recoveringCid, onRecoverUnknown }) {
+  const { t } = useTranslation('nav');
   const [ledgerTab, setLedgerTab] = useState('trades'); // trades | oms
 
   return (
@@ -12,13 +15,13 @@ export default function LedgerPanel({ trades, omsData, recoveringCid, onRecoverU
             onClick={() => setLedgerTab('trades')}
             className={`px-3 py-1 rounded-lg text-xs font-bold transition ${ledgerTab === 'trades' ? 'bg-surface text-brand shadow-xs border border-line' : 'text-ink-3 hover:text-ink'}`}
           >
-            成交流水簿 ({trades.length})
+            {t('ledger.tradesTab', { count: trades.length })}
           </button>
           <button
             onClick={() => setLedgerTab('oms')}
             className={`px-3 py-1 rounded-lg text-xs font-bold transition flex items-center space-x-1.5 ${ledgerTab === 'oms' ? 'bg-surface text-brand shadow-xs border border-line' : 'text-ink-3 hover:text-ink'}`}
           >
-            <span>OMS 订单状态机 &amp; 原生保护单 ({omsData?.summary?.total || 0})</span>
+            <span>{t('ledger.omsTab', { count: omsData?.summary?.total || 0 })}</span>
             {(omsData?.summary?.unknown_count || 0) > 0 && (
               <span className="px-1.5 py-0.2 rounded-full bg-danger-solid text-white text-xs">
                 {omsData.summary.unknown_count} UNKNOWN
@@ -28,7 +31,22 @@ export default function LedgerPanel({ trades, omsData, recoveringCid, onRecoverU
         </div>
         {omsData?.instrument_spec && (
           <span className="text-xs font-mono text-ink-3 bg-surface px-2.5 py-1 rounded-lg border border-line">
-            精度规格 {omsData.instrument_spec.symbol}: tick={omsData.instrument_spec.tick_size} · step={omsData.instrument_spec.step_size} · min=${omsData.instrument_spec.min_notional_usd}
+            {t('ledger.spec', {
+                  symbol: omsData.instrument_spec.symbol,
+                  tick: omsData.instrument_spec.tick_size,
+                  step: omsData.instrument_spec.step_size,
+                  min: omsData.instrument_spec.min_notional_usd,
+                })}
+                {omsData.instrument_spec.source && (
+                  <span className={omsData.instrument_spec.source === 'default' ? 'text-danger' : ''}>
+                    {' · '}
+                    {{
+                      exchange: t('ledger.specSource.exchange'),
+                      builtin: t('ledger.specSource.builtin'),
+                      default: t('ledger.specSource.default'),
+                    }[omsData.instrument_spec.source] || omsData.instrument_spec.source}
+                  </span>
+                )}
           </span>
         )}
       </div>
@@ -37,38 +55,38 @@ export default function LedgerPanel({ trades, omsData, recoveringCid, onRecoverU
         <div className="overflow-x-auto">
           {trades.length === 0 ? (
             <div className="p-8 text-center text-xs text-ink-3">
-              当前机器人暂无真实成交流水（已禁用历史假盈利兜底）。
+              {t('ledger.noTrades')}
             </div>
           ) : (
             <table className="w-full text-left text-xs">
               <thead className="bg-panel text-ink-3 font-semibold border-b border-line-soft">
                 <tr>
-                  <th className="py-2.5 px-4">流水单号</th>
-                  <th className="py-2.5 px-4">成交时间</th>
-                  <th className="py-2.5 px-4">标的</th>
-                  <th className="py-2.5 px-4">方向</th>
-                  <th className="py-2.5 px-4">成交均价</th>
-                  <th className="py-2.5 px-4">名义价值</th>
-                  <th className="py-2.5 px-4">手续费</th>
-                  <th className="py-2.5 px-4 text-right">实现盈亏</th>
+                  <th className="py-2.5 px-4">{t('ledger.cols.tradeId')}</th>
+                  <th className="py-2.5 px-4">{t('ledger.cols.time')}</th>
+                  <th className="py-2.5 px-4">{t('ledger.cols.symbol')}</th>
+                  <th className="py-2.5 px-4">{t('ledger.cols.side')}</th>
+                  <th className="py-2.5 px-4">{t('ledger.cols.avgPrice')}</th>
+                  <th className="py-2.5 px-4">{t('ledger.cols.notional')}</th>
+                  <th className="py-2.5 px-4">{t('ledger.cols.fee')}</th>
+                  <th className="py-2.5 px-4 text-right">{t('ledger.cols.pnl')}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-line-soft font-mono text-xs">
-                {trades.map((t, idx) => (
+                {trades.map((tr, idx) => (
                   <tr key={idx} className="hover:bg-panel transition">
-                    <td className="py-2.5 px-4 text-ink-3">{t.tradeId || t.trade_id}</td>
-                    <td className="py-2.5 px-4 text-ink-2">{t.timestamp}</td>
-                    <td className="py-2.5 px-4 font-bold text-ink">{t.symbol}</td>
+                    <td className="py-2.5 px-4 text-ink-3">{tr.tradeId || tr.trade_id}</td>
+                    <td className="py-2.5 px-4 text-ink-2" title={tr.timestamp || ''}>{fmt.dateTime(tr.timestamp)}</td>
+                    <td className="py-2.5 px-4 font-bold text-ink">{tr.symbol}</td>
                     <td className="py-2.5 px-4">
-                      <span className={`px-2 py-0.5 rounded text-xs font-bold ${(t.side === 'BUY' || t.posSide === 'LONG') ? 'bg-success-soft text-success' : 'bg-brand-soft text-brand'}`}>
-                        {t.posSide || t.side}
+                      <span className={`px-2 py-0.5 rounded text-xs font-bold ${(tr.side === 'BUY' || tr.posSide === 'LONG') ? 'bg-success-soft text-success' : 'bg-brand-soft text-brand'}`}>
+                        {tr.posSide || tr.side}
                       </span>
                     </td>
-                    <td className="py-2.5 px-4">${Number(t.price || t.executed_price || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
-                    <td className="py-2.5 px-4">${Number(t.sizeUsd || t.size_usd || 0).toFixed(2)}</td>
-                    <td className="py-2.5 px-4 text-ink-3">${Number(t.feeUsd || t.fee_usd || 0).toFixed(4)}</td>
-                    <td className={`py-2.5 px-4 text-right font-bold ${t.pnlColor || 'text-success'}`}>
-                      {t.realizedPnl || t.realized_pnl || '$0.00'}
+                    <td className="py-2.5 px-4">{fmt.price(tr.price || tr.executed_price || 0)}</td>
+                    <td className="py-2.5 px-4">{fmt.usd(tr.sizeUsd || tr.size_usd || 0)}</td>
+                    <td className="py-2.5 px-4 text-ink-3">{fmt.usd(tr.feeUsd || tr.fee_usd || 0, 4)}</td>
+                    <td className={`py-2.5 px-4 text-right font-bold ${tr.pnlColor || 'text-success'}`}>
+                      {tr.realizedPnl || tr.realized_pnl || '$0.00'}
                     </td>
                   </tr>
                 ))}
@@ -80,19 +98,19 @@ export default function LedgerPanel({ trades, omsData, recoveringCid, onRecoverU
         <div className="overflow-x-auto">
           {(!omsData?.orders || omsData.orders.length === 0) ? (
             <div className="p-8 text-center text-xs text-ink-3">
-              暂无 OMS 托管订单与原生条件止损/止盈单记录。
+              {t('ledger.noOrders')}
             </div>
           ) : (
             <table className="w-full text-left text-xs">
               <thead className="bg-panel text-ink-3 font-semibold border-b border-line-soft">
                 <tr>
-                  <th className="py-2.5 px-4">幂等键 (clientOrderId)</th>
-                  <th className="py-2.5 px-4">类型 / 保护属性</th>
-                  <th className="py-2.5 px-4">方向</th>
-                  <th className="py-2.5 px-4">数量 (成交/委托)</th>
-                  <th className="py-2.5 px-4">委托 / 触发价</th>
-                  <th className="py-2.5 px-4">状态机</th>
-                  <th className="py-2.5 px-4 text-right">人工干预</th>
+                  <th className="py-2.5 px-4">{t('ledger.cols.clientOrderId')}</th>
+                  <th className="py-2.5 px-4">{t('ledger.cols.type')}</th>
+                  <th className="py-2.5 px-4">{t('ledger.cols.side')}</th>
+                  <th className="py-2.5 px-4">{t('ledger.cols.qty')}</th>
+                  <th className="py-2.5 px-4">{t('ledger.cols.price')}</th>
+                  <th className="py-2.5 px-4">{t('ledger.cols.state')}</th>
+                  <th className="py-2.5 px-4 text-right">{t('ledger.cols.action')}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-line-soft font-mono text-xs">
@@ -103,14 +121,14 @@ export default function LedgerPanel({ trades, omsData, recoveringCid, onRecoverU
                       <span className="font-bold text-ink">{o.order_type}</span>
                       {Boolean(o.reduce_only) && (
                         <span className="ml-1.5 px-1.5 py-0.2 rounded bg-success-soft text-success text-xs font-sans font-bold">
-                          reduceOnly 原生保护
+                          {t('ledger.reduceOnly')}
                         </span>
                       )}
                     </td>
                     <td className="py-2.5 px-4">{o.side} ({o.position_side})</td>
                     <td className="py-2.5 px-4">{o.filled_qty || '0'} / {o.requested_qty}</td>
                     <td className="py-2.5 px-4">
-                      {o.trigger_price ? `触发 $${o.trigger_price}` : (o.avg_fill_price ? `均价 $${o.avg_fill_price}` : (o.limit_price ? `限价 $${o.limit_price}` : '-'))}
+                      {o.trigger_price ? t('ledger.trigger', { price: o.trigger_price }) : (o.avg_fill_price ? t('ledger.avg', { price: o.avg_fill_price }) : (o.limit_price ? t('ledger.limit', { price: o.limit_price }) : '-'))}
                     </td>
                     <td className="py-2.5 px-4">
                       <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${
@@ -129,7 +147,7 @@ export default function LedgerPanel({ trades, omsData, recoveringCid, onRecoverU
                           disabled={recoveringCid === o.client_order_id}
                           className="px-2.5 py-1 rounded bg-brand hover:bg-brand-hover text-white text-xs font-sans font-bold"
                         >
-                          {recoveringCid === o.client_order_id ? '查单中...' : '立即查单恢复'}
+                          {recoveringCid === o.client_order_id ? t('ledger.recovering') : t('ledger.recover')}
                         </button>
                       ) : (
                         <span className="text-ink-4 text-xs">{o.exchange_order_id || '-'}</span>

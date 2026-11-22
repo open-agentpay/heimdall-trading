@@ -1,0 +1,60 @@
+{
+  "header": {
+    "title": "Swarm Orchestration & Cluster Control",
+    "subtitle": "Multi-strategy matrix · Allocated capital {{capital}} · Running {{running}}/{{total}}"
+  },
+  "actions": {
+    "startAll": "Start all",
+    "stopAll": "Pause all",
+    "capital": "Capital allocation",
+    "createBot": "New bot"
+  },
+  "stats": {
+    "activeStrategies": "Active strategies",
+    "totalCapital": "Total allocated capital",
+    "decisionInterval": "Decision interval",
+    "intervalMinutes": "Every {{minutes}} min",
+    "intervalSeconds": "Every {{seconds}}s",
+    "riskLevel": "Risk protection",
+    "riskLevelValue": "7-layer guard"
+  },
+  "grid": {
+    "title": "Bot fleet",
+    "count": "({{count}} bots)",
+    "refresh": "Refresh cluster status"
+  },
+  "card": {
+    "running": "● Running",
+    "idle": "○ Idle",
+    "strategy": "Strategy",
+    "capital": "Allocated capital",
+    "route": "Exchange · Market · Mode",
+    "macroBias": "Macro gate (MacroBias)",
+    "macroRelease": "Release",
+    "macroReduce": "Reduce",
+    "monitoring": "Monitoring",
+    "select": "Switch to this bot",
+    "stepTitle": "Run one step now",
+    "step": "Step",
+    "stop": "Pause",
+    "start": "Start",
+    "deleteTitle": "Delete bot {{name}}"
+  },
+  "macro": {
+    "manualReason": "0.5x defensive risk-reduction gate enabled manually from the swarm console"
+  },
+  "toast": {
+    "batchStarting": "🚀 Starting all idle bots...",
+    "batchStarted": "✅ All strategy bots are now running in the background!",
+    "batchStopping": "⏸️ Pausing all running bots...",
+    "batchStopped": "⏹️ All swarm strategy tasks paused safely",
+    "botStopped": "⏹️ Bot [{{name}}] paused",
+    "botStarted": "▶️ Bot [{{name}}] started",
+    "actionFailed": "Action failed: {{message}}",
+    "stepDone": "⚡ Bot [{{name}}] completed one multi-agent step",
+    "stepFailed": "Step failed: {{message}}",
+    "macroCleared": "✅ Macro gate cleared for [{{name}}]; normal position sizing restored",
+    "macroEnabled": "🛡️ MacroBias 0.5x risk-reduction gate enabled for [{{name}}] (60 min)",
+    "macroFailed": "Failed to set macro gate: {{message}}"
+  }
+}

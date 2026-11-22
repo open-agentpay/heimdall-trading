@@ -1,0 +1,92 @@
+{
+  "toolbar": {
+    "arena": "环形博弈对弈台",
+    "kline": "实时 K 线 (WS 行情)",
+    "split": "分屏协同对齐",
+    "decidedAt": "推演: {{time}}",
+    "autoRefreshTitle": "切换是否自动每 4 秒轮询最新推演决策",
+    "polling": "自动轮询中",
+    "pollingPaused": "轮询已暂停",
+    "refreshTitle": "拉取最新多源市场行情并重新推演一轮",
+    "refreshing": "推演中...",
+    "refresh": "推演刷新",
+    "seatHint": "💡 点击任一席位查看论据"
+  },
+  "seat": {
+    "pending": "等待推演",
+    "awaitFirst": "等待首轮推演",
+    "sentimentIndex": "情绪指标 {{value}}",
+    "bullTag": "多头进攻立论",
+    "bearTag": "空头风险质询",
+    "strategyTag": "提案生成",
+    "moderatorTag": "裁定立论",
+    "moderatorBadge": "终审裁决"
+  },
+  "consensus": {
+    "pending": "⏳ 等待推演",
+    "long": "🟢 开多 LONG",
+    "short": "🔴 沽空 SHORT",
+    "neutral": "⚪ 空仓 NEUTRAL"
+  },
+  "proposal": {
+    "perpetual": "{{symbol}}-USDT 永续",
+    "multiSource": "多源互补 (Binance / HL)",
+    "awaitingQuote": "等待实时行情",
+    "consensus": "多空决策结论:",
+    "entry": "限价入场委托:",
+    "stopLoss": "硬防守止损价:",
+    "takeProfit": "目标止盈点位:",
+    "size": "凯利头寸价值:",
+    "idempotency": "幂等防重放:",
+    "noProposal": "本轮无交易提案",
+    "noResultDesc": "该机器人尚未产生推演结果，暂无多空结论与交易提案",
+    "neutralDesc": "多空对抗达成中立共识，策略层本轮未签发委托",
+    "noActiveDesc": "当前无有效挂单提案"
+  },
+  "risk": {
+    "label": "底层确定性硬风控",
+    "pending": "⏳ 等待推演",
+    "idle": "— 本轮无提案",
+    "approved": "✓ 硬风控审查通过",
+    "rejected": "✕ 硬风控触发拦截"
+  },
+  "split": {
+    "title": "智能体对抗辩论结论",
+    "pending": "等待推演",
+    "long": "做多优势",
+    "short": "沽空优势",
+    "neutral": "空仓观望",
+    "summary": "提案摘要: {{symbol}} 现价 {{price}}",
+    "proposalLine": "委托 {{entry}} · 止损 {{stop}} · 止盈 {{target}} · 杠杆 {{leverage}}x"
+  },
+  "footer": {
+    "killSwitch": "紧急熔断拔网线 (Kill Switch)",
+    "pausePolling": "⏸️ 暂停自动轮询",
+    "resumePolling": "▶️ 恢复自动轮询",
+    "leverage": "策略执行杠杆:",
+    "executing": "正在下发沙盒撮合...",
+    "execute": "下发撮合成交订单"
+  },
+  "kline": {
+    "perpetual": "永续合约",
+    "bifrost": "🏛️ Bifrost 底座",
+    "ema": "EMA均线",
+    "tradeMarkers": "成交打点",
+    "status": {
+      "tvConnected": "TV · BINANCE WS 已连接",
+      "tvDisconnected": "TV · BINANCE WS 未连接",
+      "loading": "BIFROST · {{interval}} 加载中",
+      "simulated": "BIFROST · {{interval}} 离线仿真数据",
+      "unavailable": "BIFROST · {{interval}} 数据不可用"
+    },
+    "loading": "⏳ 正在加载 K 线数据…",
+    "empty": "📭 暂无 K 线数据",
+    "unavailable": "📡 K 线数据不可用：{{reason}}",
+    "networkFailed": "网络请求失败",
+    "simulatedBanner": "⚠️ 所有外部行情源不可用，当前为离线仿真 K 线，非真实行情",
+    "markPrice": "最新标记价: <strong>{{price}}</strong>",
+    "priceSource": "价格源:",
+    "wsLive": "Binance WS 实时",
+    "wsDisconnected": "Binance WS 未连接"
+  }
+}

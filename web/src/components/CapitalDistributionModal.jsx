@@ -5,11 +5,14 @@
  */
 
 import React, { useState, useEffect } from 'react';
+import { useTranslation, Trans } from 'react-i18next';
+import { fmt } from '../i18n';
 import { showAlert } from '../utils/dialog';
 import { X, PieChart, DollarSign, TrendingUp, RefreshCw, CheckCircle2, AlertCircle } from 'lucide-react';
 import { getPortfolioCapitalDistribution, updateBotCapital } from '../api/endpoints';
 
 export default function CapitalDistributionModal({ isOpen, onClose, onUpdated }) {
+  const { t } = useTranslation('capital');
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [editingCapital, setEditingCapital] = useState({});
@@ -48,18 +51,18 @@ export default function CapitalDistributionModal({ isOpen, onClose, onUpdated })
   const handleSaveCapital = async (botId) => {
     const newCap = Number(editingCapital[botId]);
     if (!newCap || newCap <= 0) {
-      showAlert('请输入大于 0 的资金数额。', { title: '资金数额无效', tone: 'warning' });
+      showAlert(t('alerts.invalidAmount'), { title: t('alerts.invalidAmountTitle'), tone: 'warning' });
       return;
     }
     setSavingBotId(botId);
     try {
       const res = await updateBotCapital(botId, newCap);
-      setToastMsg(`✅ 机器人 [${botId}] 资金成功调整为 $${newCap.toLocaleString()} USDT (份额平滑重算)`);
+      setToastMsg(t('toast.updated', { botId, amount: fmt.usd(newCap) }));
       setTimeout(() => setToastMsg(null), 3000);
       await fetchDistribution();
       onUpdated && onUpdated();
     } catch (err) {
-      showAlert(err.message || '未知错误', { title: '调整资金失败', tone: 'error' });
+      showAlert(err.message || t('common:unknownError'), { title: t('alerts.updateFailedTitle'), tone: 'error' });
     } finally {
       setSavingBotId(null);
     }
@@ -76,8 +79,8 @@ export default function CapitalDistributionModal({ isOpen, onClose, onUpdated })
               <PieChart className="w-5 h-5" />
             </div>
             <div>
-              <h3 className="text-sm font-bold text-ink">多策略组合资金配比看板</h3>
-              <p className="text-xs text-ink-3">动态调整每个机器人的头寸分配与平滑重算净值份额 (NAV Continuous)</p>
+              <h3 className="text-sm font-bold text-ink">{t('header.title')}</h3>
+              <p className="text-xs text-ink-3">{t('header.subtitle')}</p>
             </div>
           </div>
           <button 
@@ -91,21 +94,21 @@ export default function CapitalDistributionModal({ isOpen, onClose, onUpdated })
         {/* 组合总览卡片 */}
         <div className="p-4 bg-surface border-b border-line flex items-center justify-between">
           <div>
-            <div className="text-xs text-ink-3">组合总池资金池 (Total Capital)</div>
+            <div className="text-xs text-ink-3">{t('summary.totalCapital')}</div>
             <div className="text-xl font-bold font-mono text-ink">
-              ${(currentTotal || (data?.total_portfolio_capital || 0)).toLocaleString(undefined, { minimumFractionDigits: 2 })} <span className="text-xs text-ink-3">USDT</span>
+              {fmt.usd(currentTotal || (data?.total_portfolio_capital || 0))} <span className="text-xs text-ink-3">USDT</span>
             </div>
           </div>
           <div className="flex items-center space-x-3">
             <div className="text-right">
-              <div className="text-xs text-ink-3">活跃策略实例</div>
-              <div className="text-sm font-bold font-mono text-success">{data?.bot_count || 0} 个机器人</div>
+              <div className="text-xs text-ink-3">{t('summary.activeBots')}</div>
+              <div className="text-sm font-bold font-mono text-success">{t('summary.botCount', { count: data?.bot_count || 0 })}</div>
             </div>
             <button
               onClick={fetchDistribution}
               disabled={loading}
               className="p-2 rounded-xl bg-panel border border-line-strong hover:bg-muted text-ink-2 transition"
-              title="刷新数据"
+              title={t('common:refresh')}
             >
               <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
             </button>
@@ -124,7 +127,7 @@ export default function CapitalDistributionModal({ isOpen, onClose, onUpdated })
         <div className="p-4 overflow-y-auto space-y-3.5 flex-1">
           {(!data?.bots || data.bots.length === 0) ? (
             <div className="text-center py-8 text-ink-4 text-xs">
-              暂无已装载的策略机器人实例
+              {t('empty')}
             </div>
           ) : (
             data.bots.map((bot) => {
@@ -150,7 +153,7 @@ export default function CapitalDistributionModal({ isOpen, onClose, onUpdated })
                     </div>
 
                     <div className="flex items-center space-x-2">
-                      <span className="text-xs text-ink-3">占比:</span>
+                      <span className="text-xs text-ink-3">{t('bot.share')}</span>
                       <span className="font-mono text-xs font-bold text-brand">{pct}%</span>
                     </div>
                   </div>
@@ -166,8 +169,8 @@ export default function CapitalDistributionModal({ isOpen, onClose, onUpdated })
                   {/* 核心指标与输入编辑 */}
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 items-center text-xs">
                     <div className="text-xs text-ink-3">
-                      当前净值 (NAV): <strong className="font-mono text-success">{Number(bot.latest_nav || 1.0).toFixed(4)}</strong>
-                      <div className="text-xs text-ink-4">总净资产: ${(bot.current_equity || bot.allocated_capital).toFixed(2)}</div>
+                      <Trans t={t} i18nKey="bot.nav" values={{ nav: Number(bot.latest_nav || 1.0).toFixed(4) }} components={{ strong: <strong className="font-mono text-success" /> }} />
+                      <div className="text-xs text-ink-4">{t('bot.equity', { amount: fmt.usd(bot.current_equity || bot.allocated_capital) })}</div>
                     </div>
 
                     <div className="relative">
@@ -197,7 +200,7 @@ export default function CapitalDistributionModal({ isOpen, onClose, onUpdated })
                         disabled={savingBotId === bot.bot_id || !isModified}
                         className="px-3 py-1.5 rounded-lg bg-brand hover:bg-brand-hover text-white font-semibold text-xs transition disabled:opacity-40 disabled:hover:bg-brand shadow-xs"
                       >
-                        {savingBotId === bot.bot_id ? '重算中...' : '确认调资'}
+                        {savingBotId === bot.bot_id ? t('bot.saving') : t('bot.save')}
                       </button>
                     </div>
                   </div>
@@ -211,11 +214,11 @@ export default function CapitalDistributionModal({ isOpen, onClose, onUpdated })
         <div className="p-3.5 bg-subtle border-t border-line text-xs text-ink-3 space-y-1">
           <div className="font-semibold text-ink flex items-center space-x-1">
             <TrendingUp className="w-3.5 h-3.5 text-brand" />
-            <span>平滑动态调资与币安模拟对接说明:</span>
+            <span>{t('notes.title')}</span>
           </div>
           <p>
-            1. <strong>NAV 曲线平滑连续性</strong>: 追加或减少资金时，系统自动执行 <code>ΔShares = ΔCapital / NAV</code>，即刻重算可用现金与份额，NAV 单位净值保持数学严格连续，绝不产生虚假收益折线。<br/>
-            2. <strong>币安模拟交易</strong>: 默认启用高仿真盘口模拟撮合 (Binance Paper Engine)，严格遵守币安标准费率 (Maker 0.02% / Taker 0.04%)；若配置了币安 API Key，则直连币安期货合约沙盒 (Futures Testnet)。
+            <Trans t={t} i18nKey="notes.nav" components={{ strong: <strong />, code: <code /> }} /><br/>
+            <Trans t={t} i18nKey="notes.paper" components={{ strong: <strong /> }} />
           </p>
         </div>
 

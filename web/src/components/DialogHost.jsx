@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { AlertTriangle, Info, XCircle } from 'lucide-react';
 import { subscribeDialogs, resolveDialog } from '../utils/dialog';
 
@@ -10,6 +11,7 @@ const TONES = {
 
 /** 渲染 showAlert / showConfirm 排队中的第一个对话框 */
 export default function DialogHost() {
+  const { t } = useTranslation('dialog');
   const [queue, setQueue] = useState([]);
   const confirmRef = useRef(null);
   const cancelRef = useRef(null);
@@ -37,8 +39,8 @@ export default function DialogHost() {
   const isConfirm = current.kind === 'confirm';
   const tone = current.tone || (current.danger ? 'warning' : isConfirm ? 'warning' : 'info');
   const { Icon, cls } = TONES[tone] || TONES.info;
-  const title = current.title || (isConfirm ? '请确认' : '提示');
-  const confirmText = current.confirmText || (isConfirm ? '确定' : '知道了');
+  const title = current.title || (isConfirm ? t('titleConfirm') : t('titleAlert'));
+  const confirmText = current.confirmText || (isConfirm ? t('ok') : t('gotIt'));
   const close = (value) => resolveDialog(current.id, value);
 
   return (
@@ -74,7 +76,7 @@ export default function DialogHost() {
               onClick={() => close(false)}
               className="px-3.5 py-1.5 rounded-lg border border-line-strong bg-surface hover:bg-subtle text-xs font-semibold text-ink transition focus:outline-none focus:ring-2 focus:ring-brand/40"
             >
-              {current.cancelText || '取消'}
+              {current.cancelText || t('cancel')}
             </button>
           )}
           <button

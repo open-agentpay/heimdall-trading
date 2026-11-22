@@ -1,0 +1,83 @@
+{
+  "header": {
+    "title": "Zero-Lookahead Event-Driven Backtest Lab",
+    "badge": "Decide at t · Fill at t+1",
+    "subtitle": "Reuses the live FactorEngine, StrategyRouter, HardRiskGuard and NAVEngine 1:1 — no lookahead bias",
+    "applyToBot": "Create bot with these parameters",
+    "running": "Running backtest...",
+    "run": "Run zero-lookahead backtest"
+  },
+  "form": {
+    "mode": "Validation mode",
+    "modeSingle": "Single run",
+    "strategy": "Algorithmic strategy (StrategyRouter)",
+    "symbol": "Symbol",
+    "timeframe": "Timeframe",
+    "limitBars": "Bars",
+    "initialCapital": "Initial capital ($)",
+    "wfWindows": "Walk-forward windows",
+    "trainBars": "In-sample",
+    "testBars": "OOS test",
+    "stepBars": "Step",
+    "params": "Strategy parameters"
+  },
+  "strategies": {
+    "trendFollow": "📈 Trend breakout (TREND_FOLLOW)",
+    "grid": "🔲 Dynamic grid (GRID)",
+    "fundingArb": "⚖️ Funding rate arbitrage (FUNDING_ARB)"
+  },
+  "guard": {
+    "title": "Zero-lookahead guarantee",
+    "body": "No LLM is used in historical backtests. Each bar is evaluated only after it closes; fills and intrabar stop-losses are all settled on the next bar."
+  },
+  "empty": {
+    "title": "Pick a strategy and timeframe, then click \"Run zero-lookahead backtest\" at the top right",
+    "body": "The latest closed historical bars are fetched automatically (falling back to deterministic synthetic data when offline). When the run finishes you can deploy a live or paper trading bot with the same parameters in one click."
+  },
+  "report": {
+    "summary": "{{strategy}} · {{symbol}} ({{timeframe}}) · {{bars}} bars evaluated",
+    "dataSource": "Data source: {{source}}"
+  },
+  "metrics": {
+    "cumReturn": "Cumulative return",
+    "netPnl": "Net P&L (USD)",
+    "maxDrawdown": "Max drawdown (MDD)",
+    "sharpe": "Annualized Sharpe ratio",
+    "sortino": "Sortino ratio",
+    "calmar": "Calmar ratio",
+    "winRate": "Win rate (closed)",
+    "profitFactor": "Profit factor (PF)",
+    "expectancy": "Expectancy per trade",
+    "maxLosses": "Max consecutive losses",
+    "timesValue": "{{count}}",
+    "fees": "Total fees",
+    "fundingPnl": "Total funding P&L"
+  },
+  "chart": {
+    "nav": "NAV curve",
+    "drawdown": "Underwater drawdown (%)"
+  },
+  "wf": {
+    "windowsCount": "OOS windows",
+    "windowsValue": "{{count}}",
+    "avgReturn": "Avg OOS return",
+    "avgSharpe": "Avg OOS Sharpe",
+    "worstDrawdown": "Worst window drawdown",
+    "tableTitle": "Walk-forward OOS results by window",
+    "colWindow": "Window",
+    "colBars": "Bars evaluated",
+    "colReturn": "OOS return",
+    "colSharpe": "Sharpe ratio",
+    "colDrawdown": "Max drawdown",
+    "colTrades": "Trades / Win rate",
+    "windowLabel": "Window #{{index}}",
+    "barsValue": "{{count}} bars",
+    "tradesValue": "{{count}} trades / {{winRate}}"
+  },
+  "toast": {
+    "singleDone": "🧪 Zero-lookahead backtest complete ({{source}})",
+    "wfDone": "🧪 Walk-forward OOS validation complete ({{count}} windows)",
+    "runError": "Backtest failed",
+    "runFailed": "Backtest failed: {{message}}"
+  }
+}

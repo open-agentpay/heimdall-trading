@@ -9,6 +9,8 @@
  */
 
 import React, { useState } from 'react';
+import { useTranslation } from 'react-i18next';
+import { LANGUAGES } from '../i18n';
 import { Wallet, Key, ChevronDown, LogOut, Moon, Sun, Volume2, VolumeX, PanelLeft, PanelRight } from 'lucide-react';
 
 export default function Header({
@@ -28,16 +30,19 @@ export default function Header({
   onToggleMobileSidebar,
   onToggleMobileTerminal,
 }) {
+  const { t, i18n } = useTranslation('common');
+  const locale = i18n.resolvedLanguage || i18n.language;
+  const nextLocale = locale === 'zh-CN' ? 'en-US' : 'zh-CN';
   const [isWalletDropdownOpen, setIsWalletDropdownOpen] = useState(false);
 
   const tabs = [
-    { id: 'arena', label: '对弈大厅', icon: '⚔️' },
-    { id: 'swarm', label: '蜂群编排', icon: '🐝' },
-    { id: 'backtest', label: '回测', icon: '🧪' },
-    { id: 'sentiment', label: '情绪', icon: '📰' },
-    { id: 'nav', label: '净值', icon: '📈' },
-    { id: 'risk', label: '风控', icon: '🛡️' },
-    { id: 'audit', label: '审计', icon: '📜' },
+    { id: 'arena', label: t('tabs.arena'), icon: '⚔️' },
+    { id: 'swarm', label: t('tabs.swarm'), icon: '🐝' },
+    { id: 'backtest', label: t('tabs.backtest'), icon: '🧪' },
+    { id: 'sentiment', label: t('tabs.sentiment'), icon: '📰' },
+    { id: 'nav', label: t('tabs.nav'), icon: '📈' },
+    { id: 'risk', label: t('tabs.risk'), icon: '🛡️' },
+    { id: 'audit', label: t('tabs.audit'), icon: '📜' },
   ];
 
   return (
@@ -47,7 +52,7 @@ export default function Header({
         <button
           onClick={onToggleMobileSidebar}
           className="lg:hidden p-1.5 rounded-lg bg-muted text-ink-2 hover:text-brand shrink-0"
-          title="展开/收起左侧机器人栏"
+          title={t('header.toggleSidebar')}
         >
           <PanelLeft className="w-4 h-4" />
         </button>
@@ -88,15 +93,24 @@ export default function Header({
         <button
           onClick={onToggleTheme}
           className="p-1.5 rounded-lg bg-canvas hover:bg-muted border border-line-strong text-ink-2 hover:text-brand transition shrink-0 cursor-pointer"
-          title={theme === 'dark' ? '切换暖沙工匠主题' : '切换夜间暗黑量化主题'}
+          title={theme === 'dark' ? t('header.themeToLight') : t('header.themeToDark')}
         >
           {theme === 'dark' ? <Sun className="w-3.5 h-3.5" /> : <Moon className="w-3.5 h-3.5" />}
         </button>
 
         <button
+          onClick={() => i18n.changeLanguage(nextLocale)}
+          className="px-2 py-1 rounded-lg bg-canvas hover:bg-muted border border-line-strong text-ink-2 hover:text-brand transition shrink-0 cursor-pointer font-mono text-xs font-bold"
+          title={t('language.switchTo', { language: LANGUAGES[nextLocale].label })}
+          aria-label={t('language.switchTo', { language: LANGUAGES[nextLocale].label })}
+        >
+          {LANGUAGES[nextLocale].short}
+        </button>
+
+        <button
           onClick={onToggleSound}
           className="p-1.5 rounded-lg bg-canvas hover:bg-muted border border-line-strong text-ink-2 hover:text-brand transition shrink-0 cursor-pointer"
-          title={soundMuted ? '已静音（点击开启成交与风控提示音）' : '告警音效与桌面通知已开启（点击静音）'}
+          title={soundMuted ? t('header.soundOff') : t('header.soundOn')}
         >
           {soundMuted ? <VolumeX className="w-3.5 h-3.5 text-ink-4" /> : <Volume2 className="w-3.5 h-3.5 text-success" />}
         </button>
@@ -104,7 +118,7 @@ export default function Header({
         <button
           onClick={onToggleMobileTerminal}
           className="lg:hidden p-1.5 rounded-lg bg-canvas hover:bg-muted border border-line-strong text-ink-2 hover:text-brand shrink-0"
-          title="展开/收起右侧思维链终端"
+          title={t('header.toggleTerminal')}
         >
           <PanelRight className="w-3.5 h-3.5" />
         </button>
@@ -113,10 +127,10 @@ export default function Header({
         <button
           onClick={onOpenKeyVaultModal}
           className="flex items-center space-x-1 bg-canvas hover:bg-muted border border-line-strong px-2.5 py-1 rounded-lg text-ink font-medium transition shadow-xs whitespace-nowrap shrink-0 cursor-pointer"
-          title="打开 API Key 与私钥安全金库"
+          title={t('header.vaultTitle')}
         >
           <Key className="w-3.5 h-3.5 text-brand" />
-          <span className="hidden xl:inline">密钥金库</span>
+          <span className="hidden xl:inline">{t('header.vault')}</span>
         </button>
 
         {/* 2. Web3 钱包登录与状态徽标 */}
@@ -128,7 +142,7 @@ export default function Header({
             >
               <span className="w-2 h-2 rounded-full bg-success-solid shrink-0"></span>
               <span className="font-mono font-bold text-ink text-xs">
-                {walletState.shortAddress || '已连接'}
+                {walletState.shortAddress || t('header.connected')}
               </span>
               <ChevronDown className="w-3 h-3 text-ink-3 shrink-0" />
             </button>
@@ -139,7 +153,7 @@ export default function Header({
                 onClick={() => setIsWalletDropdownOpen(false)}
               >
                 <div className="p-2 bg-surface rounded-lg border border-line-soft space-y-1">
-                  <div className="text-xs text-ink-3">已绑定地址 ({walletState.network || 'Arbitrum'})</div>
+                  <div className="text-xs text-ink-3">{t('header.boundAddress', { network: walletState.network || 'Arbitrum' })}</div>
                   <div className="font-mono text-xs font-bold text-ink break-all">
                     {walletState.address}
                   </div>
@@ -149,7 +163,7 @@ export default function Header({
                   onClick={onOpenWalletModal}
                   className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-muted text-ink flex items-center justify-between"
                 >
-                  <span>钱包设置与网络切换</span>
+                  <span>{t('header.walletSettings')}</span>
                   <Wallet className="w-3.5 h-3.5 text-brand" />
                 </button>
 
@@ -157,7 +171,7 @@ export default function Header({
                   onClick={onOpenKeyVaultModal}
                   className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-muted text-ink flex items-center justify-between"
                 >
-                  <span>管理交易与大模型密钥</span>
+                  <span>{t('header.manageKeys')}</span>
                   <Key className="w-3.5 h-3.5 text-brand" />
                 </button>
 
@@ -171,7 +185,7 @@ export default function Header({
                   }}
                   className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-brand-soft text-brand font-semibold flex items-center justify-between cursor-pointer"
                 >
-                  <span>断开钱包连接</span>
+                  <span>{t('header.disconnect')}</span>
                   <LogOut className="w-3.5 h-3.5 text-brand" />
                 </button>
               </div>
@@ -183,7 +197,7 @@ export default function Header({
             className="flex items-center space-x-1.5 bg-brand hover:bg-brand-hover text-white px-3 py-1 rounded-lg font-bold shadow-xs transition whitespace-nowrap shrink-0 cursor-pointer"
           >
             <Wallet className="w-3.5 h-3.5" />
-            <span>连接钱包</span>
+            <span>{t('header.connect')}</span>
           </button>
         )}
 

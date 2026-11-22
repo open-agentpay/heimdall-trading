@@ -1,0 +1,93 @@
+{
+  "header": {
+    "title": "七大极端行情避险雷达 & 对账守卫",
+    "subtitle": "代码确定性毫秒级拦截守卫 · 交易所持仓对账与外部死信心跳实时监控",
+    "probe": "实时探测"
+  },
+  "radar": {
+    "requestFailed": "雷达接口请求失败",
+    "noRules": "雷达接口未返回规则数据"
+  },
+  "kill": {
+    "button": "一键全局紧急急停",
+    "killing": "正在拔网线急停...",
+    "confirmTitle": "全局紧急熔断",
+    "confirmMessage": "确定要触发全局紧急熔断急停吗？\n这将立即向所有交易所广播全撤单指令，并强制关停所有策略后台协程。",
+    "confirmButton": "确认急停",
+    "success": "紧急急停成功触发！所有挂单已撤销。",
+    "failedTitle": "急停失败"
+  },
+  "overall": {
+    "triggered": "极端行情硬风控已触发拦截",
+    "warning": "防线处于警戒状态（请留意波动）",
+    "unavailable": "风控雷达遥测不可用",
+    "loading": "正在获取风控雷达遥测…",
+    "healthy": "全部规则正常",
+    "rulesClear": "{{clear}}/{{total}} 规则未触发",
+    "awaiting": "等待遥测",
+    "symbolError": "标的对象: {{symbol}} · {{error}}",
+    "symbolDesc": "标的对象: {{symbol}} · 任何分钟级剧烈插针、跨所基差隔离或宏观静默窗口，系统将在毫秒内硬驳回开仓提案",
+    "lastProbe": "最近探测时间",
+    "blockState": "当前拦截状态",
+    "blocking": "{{n}} 项拦截中",
+    "warnings": "{{n}} 项告警",
+    "noneTriggered": "0 触发 (放行中)"
+  },
+  "reconcile": {
+    "title": "交易所持仓对账引擎 (ExchangeReconciler) & 外部死信心跳",
+    "running": "对账中...",
+    "runNow": "🔍 立即执行对账",
+    "resume": "✅ 核查无误并恢复运行",
+    "consistency": "对账一致性状态",
+    "cleanStatus": "CLEAN (账实完全一致)",
+    "diffStatus": "⚠️ 存在差异 ({{n}} 项)",
+    "notRun": "尚未执行对账（点击右侧按钮即时核对）",
+    "botStatus": "机器人状态 & 持仓数",
+    "openPositions": "活动持仓 {{n}} 笔",
+    "deadManSwitch": "外部死信心跳 (DeadManSwitch)",
+    "dmsOnline": "● 在线 ({{n}} 次心跳)",
+    "dmsOff": "○ 未启用 (开发模式)",
+    "resumed": "对账一致，机器人已从暂停/熔断状态恢复运行！",
+    "clean": "交易所与本地持仓对账完全一致，无幽灵持仓偏差。",
+    "foundCount": "对账发现 {{n}} 项偏差",
+    "found": "对账发现偏差",
+    "autoPaused": "，系统已自动暂停机器人保护本金！",
+    "failed": "对账失败: {{message}}"
+  },
+  "rules": {
+    "unavailable": "风控雷达遥测不可用：{{error}}",
+    "connecting": "正在连接后端 /api/v1/market/radar 获取风控遥测数据…",
+    "ruleNo": "规则 {{id}}",
+    "liveTelemetry": "当前实时遥测",
+    "items": {
+      "r1": {
+        "name": "宏观重大事件倒计时锁仓 (Macro Event Window)",
+        "desc": "重大宏观事件前后的静默窗口内禁止开仓（事件日历见 config/macro_events.yaml）。"
+      },
+      "r2": {
+        "name": "分钟级暴涨暴跌插针监测仪 (Price Spike Guard)",
+        "desc": "最新 K 线振幅超过极端插针熔断阈值时驳回开仓。"
+      },
+      "r3": {
+        "name": "超长上下影线天地针清洗指示器 (Pin Bar Liquidation)",
+        "desc": "按最新 K 线影线/实体比率识别超长上下影线。"
+      },
+      "r4": {
+        "name": "盘口流动性黑洞与买卖点差监视仪 (Spread Bps Guard)",
+        "desc": "监控跨所实时基差（bps），流动性恶化时隔离行情。"
+      },
+      "r5": {
+        "name": "异常资金费率与拥挤挤压预警 (Funding Squeeze)",
+        "desc": "年化资金费率低于 -20% 或高于 +40% 时提示持仓拥挤。"
+      },
+      "r6": {
+        "name": "全局组合敞口与反向对敲守卫 (Portfolio Exposure Guard)",
+        "desc": "限制组合已登记总敞口，并拦截机器人之间的反向对敲。"
+      },
+      "r7": {
+        "name": "底层网关 RPC 延迟与心跳健康度 (Gateway Heartbeat)",
+        "desc": "实测数据底座 RPC 延迟与外部死信心跳，网关异常时隔离。"
+      }
+    }
+  }
+}

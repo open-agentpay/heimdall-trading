@@ -1,3 +1,5 @@
+import i18n, { fmt } from '../../i18n';
+
 /** 把后端返回的脱敏凭据记录转换成密钥金库列表里的展示对象（只用后端给出的脱敏值，不接触密钥原文） */
 export function toVaultKeyView(k) {
   const actualId = k.key_id || k.id;
@@ -20,9 +22,10 @@ export function toVaultKeyView(k) {
     status: k.last_test_status || 'UNTESTED',
     lastMessage: '',
     latency: Number.isFinite(Number(k.last_test_latency_ms)) && k.last_test_latency_ms !== null ? Math.round(Number(k.last_test_latency_ms)) : null,
-    lastTested: k.last_tested_at ? new Date(k.last_tested_at).toLocaleString('zh-CN', { hour12: false }) : '未测试',
-    permissions: ['全权限配置'],
-    badge: 'AES-256-GCM 加密',
+    // 文字字段在转换时按当前语言翻译
+    lastTested: k.last_tested_at ? fmt.dateTime(k.last_tested_at) : i18n.t('keyVault:status.untested'),
+    permissions: [i18n.t('keyVault:card.fullPermissions')],
+    badge: i18n.t('keyVault:badge.encrypted'),
     badgeColor: 'bg-success-soft text-success border-success-line',
     icon: k.category === 'exchanges' ? '⚡' : '🧠',
   };

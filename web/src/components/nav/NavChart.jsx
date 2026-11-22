@@ -1,9 +1,11 @@
 import React from 'react';
+import { useTranslation } from 'react-i18next';
 import { Activity } from 'lucide-react';
 import { numOrNull } from '../../data/agentRoles';
 
 /** 单位净值走势图：只画后端真实快照，不足两个点时显示空状态 */
 export default function NavChart({ navData, navError }) {
+  const { t } = useTranslation('nav');
   // 净值曲线只画后端真实快照；不足两个点时显示空状态，不再补“初始 1.0000”这类虚拟点
   const series = (navData && Array.isArray(navData.nav_series))
     ? navData.nav_series.filter((p) => numOrNull(p.nav) !== null)
@@ -27,16 +29,16 @@ export default function NavChart({ navData, navError }) {
       <div className="flex items-center justify-between">
         <div className="flex items-center space-x-2">
           <Activity className="w-4 h-4 text-brand" />
-          <h3 className="text-xs font-bold text-ink">单位净值历史走势曲线 (NAV Curve)</h3>
+          <h3 className="text-xs font-bold text-ink">{t('chart.title')}</h3>
         </div>
         <div className="flex items-center space-x-3 text-xs text-ink-3">
           <span className="flex items-center space-x-1.5">
             <span className="w-2.5 h-2.5 rounded-full bg-brand"></span>
-            <span className="font-semibold text-ink">Heimdall Alpha 策略</span>
+            <span className="font-semibold text-ink">{t('chart.strategy')}</span>
           </span>
           <span className="flex items-center space-x-1.5">
             <span className="w-2.5 h-2.5 rounded-full bg-muted-strong"></span>
-            <span>基准基线 (1.0000)</span>
+            <span>{t('chart.baseline')}</span>
           </span>
         </div>
       </div>
@@ -44,7 +46,7 @@ export default function NavChart({ navData, navError }) {
       {/* SVG 矢量走势图 */}
       {!hasCurve ? (
         <div className="w-full h-48 bg-panel rounded-xl border border-dashed border-line flex items-center justify-center text-xs text-ink-4">
-          {navError ? `净值数据不可用：${navError}` : '净值快照不足两个，暂无走势曲线'}
+          {navError ? t('chart.unavailable', { error: navError }) : t('chart.notEnough')}
         </div>
       ) : (
       <div className="w-full h-48 bg-panel rounded-xl border border-line-soft p-3 relative flex flex-col justify-between">

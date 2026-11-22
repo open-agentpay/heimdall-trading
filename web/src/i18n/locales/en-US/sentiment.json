@@ -1,0 +1,45 @@
+{
+  "header": {
+    "title": "{{symbol}} Sentiment & On-chain Intelligence (Provenance)",
+    "source": "Source: {{provenance}}",
+    "subtitle": "Zero-fabrication policy: only sentiment metrics and sourced intelligence actually collected by the backend; neutral fallback when no external source is available"
+  },
+  "summary": {
+    "awaiting": "No sentiment report received yet. Trigger a run in the Arena or wait for the background sweep.",
+    "live": "Live feed connected",
+    "awaitingFirst": "Awaiting first run"
+  },
+  "score": {
+    "title": "Composite sentiment score",
+    "bullish": "Bullish",
+    "bearish": "Bearish",
+    "neutral": "Neutral",
+    "hint": "Computed by the backend SentimentCollector from live funding rates and news sentiment"
+  },
+  "fearGreed": {
+    "title": "Fear & Greed Index",
+    "live": "From live Fear & Greed data source",
+    "missing": "Index not returned (neutral fallback)"
+  },
+  "whale": {
+    "title": "{{symbol}} whale activity",
+    "accumulation": "Accumulation (net outflow)",
+    "distribution": "Distribution (net inflow)",
+    "neutral": "Neutral / wait-and-see",
+    "hint": "Returns NEUTRAL when no on-chain whale API key is configured — never fabricates outflows"
+  },
+  "crowding": {
+    "title": "{{symbol}} derivatives crowding",
+    "hint": "Detects extreme funding-rate crowding and long/short squeeze risk"
+  },
+  "news": {
+    "title": "{{symbol}} live news feed",
+    "count": "{{n}} real records",
+    "empty": "No breaking news collected (static fake bullish fallback disabled to keep decisions hallucination-free)."
+  },
+  "transfers": {
+    "title": "{{symbol}} on-chain large transfers (Whale Tracker)",
+    "count": "{{n}} records",
+    "empty": "No paid on-chain large-transfer source configured — no live deposit/withdrawal flow."
+  }
+}

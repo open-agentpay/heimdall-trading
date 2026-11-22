@@ -13,8 +13,11 @@
  */
 
 import React from 'react';
+import { useTranslation } from 'react-i18next';
+import { fmt } from '../i18n';
 
 export default function AgentModal({ agent, onClose }) {
+  const { t } = useTranslation('agents');
   if (!agent) return null;
 
   return (
@@ -61,7 +64,7 @@ export default function AgentModal({ agent, onClose }) {
           {/* M5：机器人尚未产生推演结果时明确提示，不展示任何编造的结论 */}
           {agent.pending && (
             <div className="bg-warning-soft p-3 rounded-xl border border-warning-line text-warning text-xs font-semibold">
-              ⏳ 该机器人尚未产生推演结果，以下仅为角色说明；首轮决策周期完成后将展示真实论据与数据。
+              {t('modal.pendingNotice')}
             </div>
           )}
 
@@ -74,7 +77,7 @@ export default function AgentModal({ agent, onClose }) {
           <div className="bg-surface p-3.5 rounded-xl border border-line space-y-2 shadow-xs">
             <div className="flex items-center justify-between">
               <span className="font-semibold text-ink-3 uppercase tracking-wide text-xs">
-                当前决策观点 (Decision Stance)
+                {t('modal.stance')}
               </span>
               <span 
                 className="font-mono font-bold text-xs px-2.5 py-0.5 rounded-md"
@@ -90,9 +93,9 @@ export default function AgentModal({ agent, onClose }) {
             {/* 置信度进度槽 */}
             <div className="space-y-1 pt-1">
               <div className="flex justify-between text-xs text-ink-3 font-mono">
-                <span>模型确定性置信度 (Confidence Score):</span>
+                <span>{t('modal.confidence')}</span>
                 <span className="font-bold text-ink">
-                  {Number.isFinite(agent.confidence) ? `${Math.round(agent.confidence * 100)}%` : '--'}
+                  {Number.isFinite(agent.confidence) ? fmt.pct(agent.confidence, 0) : '--'}
                 </span>
               </div>
               <div className="w-full h-2 bg-muted rounded-full overflow-hidden">
@@ -111,7 +114,7 @@ export default function AgentModal({ agent, onClose }) {
           <div className="bg-surface p-3.5 rounded-xl border border-line space-y-1.5 shadow-xs">
             <div className="font-bold text-xs text-ink flex items-center space-x-1.5">
               <span>🎯</span>
-              <span>核心决策论据 (Key Thesis)</span>
+              <span>{t('modal.keyThesis')}</span>
             </div>
             <p className="text-ink-2 leading-relaxed text-xs bg-panel p-2.5 rounded-lg border border-line-soft">
               {agent.keyThesis || '--'}
@@ -122,11 +125,11 @@ export default function AgentModal({ agent, onClose }) {
           <div className="bg-surface p-3.5 rounded-xl border border-line space-y-2 shadow-xs">
             <div className="font-bold text-xs text-ink flex items-center space-x-1.5">
               <span>🔍</span>
-              <span>数据证据与指标支撑 (Evidence Checklist)</span>
+              <span>{t('modal.evidence')}</span>
             </div>
             <div className="space-y-1.5">
               {(!agent.evidence || agent.evidence.length === 0) && (
-                <div className="text-xs text-ink-4">暂无数据证据</div>
+                <div className="text-xs text-ink-4">{t('modal.noEvidence')}</div>
               )}
               {(agent.evidence || []).map((item, idx) => (
                 <div key={idx} className="flex items-start space-x-2 text-xs text-ink-2">
@@ -141,7 +144,7 @@ export default function AgentModal({ agent, onClose }) {
           <div className="bg-brand-soft p-3 rounded-xl border border-brand-line space-y-1">
             <div className="font-bold text-xs text-danger flex items-center space-x-1">
               <span>🛡️</span>
-              <span>立论失效与防守点位 (Invalidation Rule)</span>
+              <span>{t('modal.invalidation')}</span>
             </div>
             <p className="text-danger-strong text-xs leading-relaxed">
               {agent.invalidation || '--'}
@@ -155,7 +158,7 @@ export default function AgentModal({ agent, onClose }) {
               <span>Latency: {agent.latency || '--'}</span>
             </div>
             <p className="leading-relaxed pt-1 text-[#D2C8BC]">
-              {agent.thinkingMonologue || '暂无推演记录'}
+              {agent.thinkingMonologue || t('modal.noMonologue')}
             </p>
           </div>
 
@@ -164,13 +167,13 @@ export default function AgentModal({ agent, onClose }) {
         {/* 弹窗底栏操作 */}
         <div className="p-3 bg-surface border-t border-line flex items-center justify-between">
           <span className="text-xs text-ink-4">
-            审计追踪 ID: <code className="bg-muted px-1 rounded">{agent.traceId || '--'}</code>
+            {t('modal.traceId')} <code className="bg-muted px-1 rounded">{agent.traceId || '--'}</code>
           </span>
           <button 
             onClick={onClose}
             className="px-4 py-1.5 rounded-xl bg-brand hover:bg-brand-hover text-white text-xs font-semibold shadow-xs transition"
           >
-            已阅知 (Dismiss)
+            {t('modal.dismiss')}
           </button>
         </div>
 

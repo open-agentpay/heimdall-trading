@@ -3,7 +3,10 @@
  * 纯函数：不读写组件状态，只返回新的席位数组；只展示后端真实返回的字段，缺失数值一律显示 “--”
  * （不用写死的默认值替代，如默认情绪得分、默认巨鲸吸筹、写死的置信度与盈亏比、风控默认放行、伪造的耗时等）。
  */
+import i18n from '../i18n';
 import { numOrNull, fmtNum, fmtUsd, fmtPct } from './agentRoles';
+
+// 前端拼出来的文字按调用时的语言翻译（语言包 agents:*）；后端返回的摘要、论点、证据原样显示
 
 export function applyDecisionToAgents(prevAgents, record) {
   if (!record || record.error) return prevAgents;
@@ -28,27 +31,27 @@ export function applyDecisionToAgents(prevAgents, record) {
       const resistance = numOrNull(b.resistance ?? b.key_resistance);
       const regime = b.regime || 'UNKNOWN';
       const stance = regime === 'TREND_UP' ? 'LONG' : regime === 'TREND_DOWN' ? 'SHORT' : 'NEUTRAL';
-      const summary = b.summary || b.trend_summary || '本轮未返回技术面摘要';
-      const rsiLabel = rsi === null ? '' : rsi > 52 ? ' (多头动能运行)' : rsi < 48 ? ' (空头弱势运行)' : ' (中性震荡整理)';
+      const summary = b.summary || b.trend_summary || i18n.t('agents:analyst.noSummary');
+      const rsiLabel = rsi === null ? '' : rsi > 52 ? i18n.t('agents:analyst.rsiBull') : rsi < 48 ? i18n.t('agents:analyst.rsiBear') : i18n.t('agents:analyst.rsiNeutral');
 
       return {
         ...ag,
         pending: false,
         stance,
-        tag: `${regime} · 阻力 ${fmtUsd(resistance)}`,
+        tag: i18n.t('agents:analyst.tag', { regime, resistance: fmtUsd(resistance) }),
         badge: `RSI ${fmtNum(rsi, 1)}`,
         confidence: numOrNull(b.confidence),
         keyThesis: summary,
         evidence: [
-          `EMA 动态均线: EMA20=${fmtUsd(inds.ema20)} · EMA50=${fmtUsd(inds.ema50)}`,
-          `RSI-14 动力学指标: ${fmtNum(rsi, 1)}${rsiLabel}`,
-          `结构通道: 支撑位 ${fmtUsd(support)} · 阻力位 ${fmtUsd(resistance)}`,
-          `资金与价差: 年化资金费率 ${fmtPct(inds.annualized_funding, 2)} · Bifrost 价差 ${fmtPct(inds.spread_pct, 3)}`,
+          i18n.t('agents:analyst.evidenceEma', { ema20: fmtUsd(inds.ema20), ema50: fmtUsd(inds.ema50) }),
+          i18n.t('agents:analyst.evidenceRsi', { rsi: fmtNum(rsi, 1), label: rsiLabel }),
+          i18n.t('agents:analyst.evidenceLevels', { support: fmtUsd(support), resistance: fmtUsd(resistance) }),
+          i18n.t('agents:analyst.evidenceFunding', { funding: fmtPct(inds.annualized_funding, 2), spread: fmtPct(inds.spread_pct, 3) }),
         ],
         invalidation: (support !== null || resistance !== null)
-          ? `若 15m 收盘价跌破支撑位 (${fmtUsd(support)}) 或向上有效突破阻力位 (${fmtUsd(resistance)})，则当前 [${regime}] 状态定性失效并需重新校准。`
-          : '本轮未返回支撑 / 阻力位',
-        thinkingMonologue: `[技术面量化] ${summary}`,
+          ? i18n.t('agents:analyst.invalidation', { support: fmtUsd(support), resistance: fmtUsd(resistance), regime })
+          : i18n.t('agents:analyst.noLevels'),
+        thinkingMonologue: i18n.t('agents:analyst.monologue', { summary }),
         latency: traceLatency(findTrace('analyst')),
         traceId: record.execution_id || record.idempotency_key || `trc_analyst_${ts}`,
       };
@@ -62,29 +65,29 @@ export function applyDecisionToAgents(prevAgents, record) {
       const fgi = numOrNull(s.fear_greed_score);
       const stance = score === null ? 'NEUTRAL' : score >= 0.1 ? 'LONG' : score <= -0.1 ? 'SHORT' : 'NEUTRAL';
       const scoreTxt = score === null ? '--' : `${score > 0 ? '+' : ''}${score.toFixed(2)}`;
-      const whaleShort = whale === 'ACCUMULATION' ? '吸筹' : whale === 'DISTRIBUTION' ? '抛售' : whale ? '观望' : '--';
+      const whaleShort = whale === 'ACCUMULATION' ? i18n.t('agents:sentiment.whaleShortAccumulation') : whale === 'DISTRIBUTION' ? i18n.t('agents:sentiment.whaleShortDistribution') : whale ? i18n.t('agents:sentiment.whaleShortNeutral') : '--';
       const whaleLong = whale === 'ACCUMULATION'
-        ? '链上大额提现锁仓 (吸筹)'
+        ? i18n.t('agents:sentiment.whaleLongAccumulation')
         : whale === 'DISTRIBUTION'
-        ? '交易所持续集中充值 (抛售隐患)'
-        : whale ? '资金面相对平衡 (观望)' : '未返回';
+        ? i18n.t('agents:sentiment.whaleLongDistribution')
+        : whale ? i18n.t('agents:sentiment.whaleLongNeutral') : i18n.t('agents:sentiment.whaleLongMissing');
 
       return {
         ...ag,
         pending: false,
         stance,
-        tag: `情绪 ${score === null ? '--' : score >= 0 ? '偏多' : '偏空'} · 巨鲸 ${whaleShort}`,
-        badge: `得分 ${scoreTxt}`,
+        tag: i18n.t('agents:sentiment.tag', { bias: score === null ? '--' : score >= 0 ? i18n.t('agents:sentiment.biasBull') : i18n.t('agents:sentiment.biasBear'), whale: whaleShort }),
+        badge: i18n.t('agents:sentiment.badge', { score: scoreTxt }),
         confidence: score === null ? null : Math.min(1.0, 0.6 + Math.abs(score) * 0.4),
-        keyThesis: s.summary || (score === null ? '本轮未返回情绪得分' : `综合情绪打分 ${scoreTxt}，巨鲸链上状态 ${whale || '未知'}。`),
+        keyThesis: s.summary || (score === null ? i18n.t('agents:sentiment.noScore') : i18n.t('agents:sentiment.thesis', { score: scoreTxt, whale: whale || i18n.t('agents:sentiment.unknown') })),
         evidence: [
-          `巨鲸行为定性: ${whaleLong}`,
-          `情绪综合得分: ${scoreTxt} (恐慌贪婪指数: ${fgi === null ? '--' : fgi})`,
-          `持仓拥挤度: ${s.crowding_risk || '--'}`,
+          i18n.t('agents:sentiment.evidenceWhale', { value: whaleLong }),
+          i18n.t('agents:sentiment.evidenceScore', { score: scoreTxt, fgi: fgi === null ? '--' : fgi }),
+          i18n.t('agents:sentiment.evidenceCrowding', { value: s.crowding_risk || '--' }),
         ],
-        invalidation: '若链上出现异动转向相反方向（例如巨鲸集中向交易所大额充币），则情绪定性推翻。',
-        thinkingMonologue: `[情绪与巨鲸监控] ${s.summary || '本轮未返回情绪摘要'}`,
-        latency: traceLatency(findTrace('sentiment', '情绪')),
+        invalidation: i18n.t('agents:sentiment.invalidation'),
+        thinkingMonologue: i18n.t('agents:sentiment.monologue', { summary: s.summary || i18n.t('agents:sentiment.noSummary') }),
+        latency: traceLatency(findTrace('sentiment', '情绪')), // i18n-ignore 匹配后端步骤名（中文）
         traceId: record.execution_id || `trc_sentiment_${ts}`,
       };
     }
@@ -96,28 +99,28 @@ export function applyDecisionToAgents(prevAgents, record) {
       const conf = numOrNull(th.confidence);
       const target = numOrNull(th.target_price);
       const inval = numOrNull(th.invalidation_price);
-      const thesis = th.key_thesis || (isBull ? '本轮未返回多头论点' : '本轮未返回空头论点');
+      const thesis = th.key_thesis || (isBull ? i18n.t('agents:debate.noBullThesis') : i18n.t('agents:debate.noBearThesis'));
 
       return {
         ...ag,
         pending: false,
         stance: isBull ? 'LONG' : 'SHORT',
-        tag: isBull ? `目标 ${fmtUsd(target)} · 防守 ${fmtUsd(inval)}` : `防守 ${fmtUsd(target)} · 失效 ${fmtUsd(inval)}`,
-        badge: `置信 ${fmtPct(conf, 0)}`,
+        tag: i18n.t(isBull ? 'agents:debate.tagBull' : 'agents:debate.tagBear', { target: fmtUsd(target), inval: fmtUsd(inval) }),
+        badge: i18n.t('agents:common.confidenceBadge', { value: fmtPct(conf, 0) }),
         confidence: conf,
         keyThesis: thesis,
         evidence: Array.isArray(th.evidence) && th.evidence.length > 0 ? th.evidence : [
-          isBull ? `做多目标止盈价格: ${fmtUsd(target)}` : `做空下行回踩目标: ${fmtUsd(target)}`,
-          isBull ? `立论失效防守止损位: ${fmtUsd(inval)}` : `阻力突破失效点位: ${fmtUsd(inval)}`,
-          `${isBull ? '多头' : '空头'}置信度评分: ${fmtPct(conf, 0)}`,
+          i18n.t(isBull ? 'agents:debate.bullTarget' : 'agents:debate.bearTarget', { value: fmtUsd(target) }),
+          i18n.t(isBull ? 'agents:debate.bullInval' : 'agents:debate.bearInval', { value: fmtUsd(inval) }),
+          i18n.t(isBull ? 'agents:debate.bullConfidence' : 'agents:debate.bearConfidence', { value: fmtPct(conf, 0) }),
         ],
         invalidation: inval === null
-          ? '本轮未返回失效价位'
-          : isBull ? `价格跌破 ${fmtUsd(inval)} 时立论失效并触发止损` : `价格突破 ${fmtUsd(inval)} 时空头立论失效`,
+          ? i18n.t('agents:debate.noInvalidation')
+          : i18n.t(isBull ? 'agents:debate.invalidationBull' : 'agents:debate.invalidationBear', { value: fmtUsd(inval) }),
         thinkingMonologue: isBull
-          ? `[多头真实辩护] ${thesis}${target !== null ? ` (目标: ${fmtUsd(target)})` : ''}`
-          : `[空头真实质询] ${thesis}`,
-        latency: traceLatency(isBull ? findTrace('bull', '多头', 'debate') : findTrace('bear', '空头', 'debate')),
+          ? i18n.t('agents:debate.monologueBull', { thesis, target: target !== null ? i18n.t('agents:debate.targetSuffix', { value: fmtUsd(target) }) : '' })
+          : i18n.t('agents:debate.monologueBear', { thesis }),
+        latency: traceLatency(isBull ? findTrace('bull', '多头', 'debate') : findTrace('bear', '空头', 'debate')), // i18n-ignore 匹配后端步骤名（中文）
         traceId: record.execution_id || `trc_${ag.id}_${ts}`,
       };
     }
@@ -127,26 +130,26 @@ export function applyDecisionToAgents(prevAgents, record) {
       const mo = record.debate_synthesis;
       const action = mo.consensus_action || 'UNKNOWN';
       const conf = numOrNull(mo.final_confidence);
-      const verdict = mo.verdict || '本轮未返回裁决说明';
+      const verdict = mo.verdict || i18n.t('agents:moderator.noVerdict');
       const authorized = action === 'LONG' || action === 'SHORT';
 
       return {
         ...ag,
         pending: false,
         stance: action,
-        tag: `裁决: ${action}`,
-        badge: `置信 ${fmtPct(conf, 0)}`,
+        tag: i18n.t('agents:moderator.tag', { action }),
+        badge: i18n.t('agents:common.confidenceBadge', { value: fmtPct(conf, 0) }),
         confidence: conf,
         keyThesis: verdict,
         evidence: [
-          `多空对抗裁定方向: ${action}`,
-          `投资总监终审置信度: ${fmtPct(conf, 0)}`,
-          ...(mo.risk_warning ? [`风险预警提示: ${mo.risk_warning}`] : []),
-          `执行授权状态: ${authorized ? '准许策略层签发交易提案' : '中立观望，不签发交易提案'}`,
+          i18n.t('agents:moderator.evidenceDirection', { action }),
+          i18n.t('agents:moderator.evidenceConfidence', { value: fmtPct(conf, 0) }),
+          ...(mo.risk_warning ? [i18n.t('agents:moderator.evidenceRiskWarning', { value: mo.risk_warning })] : []),
+          i18n.t('agents:moderator.evidenceAuthorization', { status: authorized ? i18n.t('agents:moderator.authorized') : i18n.t('agents:moderator.notAuthorized') }),
         ],
-        invalidation: '若市场在发单前出现结构性反向跳水，裁判即刻撤回本轮裁决授权。',
-        thinkingMonologue: `[裁判终审结论] ${verdict}`,
-        latency: traceLatency(findTrace('moderator', '裁判')),
+        invalidation: i18n.t('agents:moderator.invalidation'),
+        thinkingMonologue: i18n.t('agents:moderator.monologue', { verdict }),
+        latency: traceLatency(findTrace('moderator', '裁判')), // i18n-ignore 匹配后端步骤名（中文）
         traceId: record.execution_id || `trc_moderator_${ts}`,
       };
     }
@@ -171,19 +174,19 @@ export function applyDecisionToAgents(prevAgents, record) {
           ...ag,
           pending: false,
           stance,
-          tag: `${act.order_type || '委托'} ${fmtUsd(entry)} · 止损 ${fmtUsd(sl)}`,
-          badge: `仓位 ${fmtUsd(act.size_in_usd)}`,
+          tag: i18n.t('agents:strategy.tag', { orderType: act.order_type || i18n.t('agents:strategy.orderTypeFallback'), entry: fmtUsd(entry), sl: fmtUsd(sl) }),
+          badge: i18n.t('agents:strategy.badge', { value: fmtUsd(act.size_in_usd) }),
           confidence: null,
-          keyThesis: '基于多空对决裁决签发确定性交易提案（含幂等键）',
+          keyThesis: i18n.t('agents:strategy.thesis'),
           evidence: [
-            `委托类型: ${act.order_type || '--'} | 方向: ${act.order_side || '--'} (${stance})`,
-            `委托价格: ${fmtUsd(entry)}`,
-            `确定性止损防线: ${fmtUsd(sl)} · 止盈目标: ${fmtUsd(tp)}`,
-            `配置资金敞口: ${fmtUsd(act.size_in_usd)} · 杠杆倍数: ${lev === null ? '--' : `${lev}x`}`,
-            `幂等键: ${p.idempotency_key ? `${p.idempotency_key.slice(0, 22)}...` : '--'}`,
+            i18n.t('agents:strategy.evidenceOrder', { type: act.order_type || '--', side: act.order_side || '--', stance }),
+            i18n.t('agents:strategy.evidencePrice', { value: fmtUsd(entry) }),
+            i18n.t('agents:strategy.evidenceStops', { sl: fmtUsd(sl), tp: fmtUsd(tp) }),
+            i18n.t('agents:strategy.evidenceSize', { size: fmtUsd(act.size_in_usd), leverage: lev === null ? '--' : `${lev}x` }),
+            i18n.t('agents:strategy.evidenceIdempotency', { value: p.idempotency_key ? `${p.idempotency_key.slice(0, 22)}...` : '--' }),
           ],
-          invalidation: '若挂单超时未撮合成交，或发单前价格已穿透止损线，该委托提案即刻作废。',
-          thinkingMonologue: `[策略师提案] 方向: ${act.order_side || '--'}，委托价格: ${fmtUsd(entry)}，盈亏比: ${rr === null ? '--' : `${rr.toFixed(2)}:1`}`,
+          invalidation: i18n.t('agents:strategy.invalidation'),
+          thinkingMonologue: i18n.t('agents:strategy.monologue', { side: act.order_side || '--', entry: fmtUsd(entry), rr: rr === null ? '--' : `${fmtNum(rr, 2)}:1` }),
           latency,
           traceId: p.idempotency_key || `trc_strategy_${ts}`,
         };
@@ -194,16 +197,16 @@ export function applyDecisionToAgents(prevAgents, record) {
         ...ag,
         pending: false,
         stance: action === 'NEUTRAL' ? 'NEUTRAL' : 'WAIT',
-        tag: action === 'NEUTRAL' ? '空仓防守 · 暂无挂单' : '等待信号 · 暂无提案',
-        badge: action === 'NEUTRAL' ? '防守观望' : '待命',
+        tag: action === 'NEUTRAL' ? i18n.t('agents:strategy.tagNeutral') : i18n.t('agents:strategy.tagWait'),
+        badge: action === 'NEUTRAL' ? i18n.t('agents:strategy.badgeNeutral') : i18n.t('agents:strategy.badgeWait'),
         confidence: null,
-        keyThesis: `裁判终审定性为 ${action}，本轮策略层未签发任何买卖委托单。`,
+        keyThesis: i18n.t('agents:strategy.thesisNoProposal', { action }),
         evidence: [
-          `终审裁决: ${action}`,
-          '本轮未签发交易提案',
+          i18n.t('agents:strategy.evidenceVerdict', { action }),
+          i18n.t('agents:strategy.evidenceNoProposal'),
         ],
-        invalidation: '下一轮若多空博弈形成高置信度突破并获裁判授权，策略师将立即计算入场价与止损。',
-        thinkingMonologue: `[策略精算师] 裁判裁决为 ${action}，本轮不签发委托。`,
+        invalidation: i18n.t('agents:strategy.invalidationNoProposal'),
+        thinkingMonologue: i18n.t('agents:strategy.monologueNoProposal', { action }),
         latency,
         traceId: `trc_strategy_neutral_${ts}`,
       };
@@ -222,19 +225,19 @@ export function applyDecisionToAgents(prevAgents, record) {
         ...ag,
         pending: false,
         stance: !decided ? 'UNKNOWN' : passed ? 'LONG' : 'NEUTRAL',
-        tag: !decided ? '风控结果未知' : passed ? '风控通过 ✓' : '风控驳回 ✗',
-        badge: !decided ? '--' : passed ? '已放行' : '已阻断',
+        tag: !decided ? i18n.t('agents:risk.tagUnknown') : passed ? i18n.t('agents:risk.tagPassed') : i18n.t('agents:risk.tagRejected'),
+        badge: !decided ? '--' : passed ? i18n.t('agents:risk.badgePassed') : i18n.t('agents:risk.badgeBlocked'),
         confidence: !decided ? null : passed ? 1.0 : 0.0,
         keyThesis: !decided
-          ? '本轮未返回风控结论'
+          ? i18n.t('agents:risk.thesisUnknown')
           : passed
-          ? '本轮硬风控规则全部通过，准许向执行层下发'
-          : `硬风控拦截: ${reason || '触发风控红线'}`,
+          ? i18n.t('agents:risk.thesisPassed')
+          : i18n.t('agents:risk.thesisRejected', { reason: reason || i18n.t('agents:risk.reasonFallback') }),
         evidence: Object.keys(ruleDetails).length > 0
-          ? Object.entries(ruleDetails).map(([k, v]) => `规则 [${k}]: ${v ? '通过 (PASS)' : '违规 (FAIL)'}`)
-          : ['本轮未返回逐条规则明细'],
-        invalidation: '任何单项硬指标只要超出安全阈值，立即触发一票否决，绝对无条件阻断下单。',
-        thinkingMonologue: `[风控官审查] 审核结果: ${!decided ? 'UNKNOWN' : passed ? 'PASSED' : 'REJECTED'}${reason ? ` | 触发规则: ${reason}` : ''}`,
+          ? Object.entries(ruleDetails).map(([k, v]) => i18n.t('agents:risk.evidenceRule', { rule: k, result: v ? i18n.t('agents:risk.rulePass') : i18n.t('agents:risk.ruleFail') }))
+          : [i18n.t('agents:risk.noRules')],
+        invalidation: i18n.t('agents:risk.invalidation'),
+        thinkingMonologue: i18n.t('agents:risk.monologue', { result: !decided ? 'UNKNOWN' : passed ? 'PASSED' : 'REJECTED', rule: reason ? i18n.t('agents:risk.ruleSuffix', { reason }) : '' }),
         latency: traceLatency(findTrace('risk', 'guard')),
         traceId: `guard_audit_${ts}`,
       };

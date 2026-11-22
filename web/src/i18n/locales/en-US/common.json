@@ -1,0 +1,35 @@
+{
+  "refresh": "Refresh",
+  "unknownError": "Unknown error",
+  "loading": "Loading…",
+  "unavailable": "Unavailable",
+  "dismiss": "Dismiss",
+  "tabs": {
+    "arena": "Arena",
+    "swarm": "Swarm",
+    "backtest": "Backtest",
+    "sentiment": "Sentiment",
+    "nav": "NAV",
+    "risk": "Risk",
+    "audit": "Audit"
+  },
+  "header": {
+    "toggleSidebar": "Show / hide the bot sidebar",
+    "themeToLight": "Switch to light theme",
+    "themeToDark": "Switch to dark theme",
+    "soundOff": "Muted (click to enable fill and risk sounds)",
+    "soundOn": "Alert sounds and desktop notifications on (click to mute)",
+    "toggleTerminal": "Show / hide the reasoning terminal",
+    "vaultTitle": "Open the API key and private key vault",
+    "vault": "Key vault",
+    "connected": "Connected",
+    "boundAddress": "Bound address ({{network}})",
+    "walletSettings": "Wallet settings & network",
+    "manageKeys": "Manage exchange and LLM keys",
+    "disconnect": "Disconnect wallet",
+    "connect": "Connect wallet"
+  },
+  "language": {
+    "switchTo": "Switch to {{language}}"
+  }
+}

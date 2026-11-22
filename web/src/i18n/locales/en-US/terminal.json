@@ -1,0 +1,70 @@
+{
+  "tabs": {
+    "stream": "🧠 Reasoning",
+    "console": "💻 Console"
+  },
+  "filter": {
+    "label": "Filter:",
+    "all": "All",
+    "analyst": "Analyst",
+    "sentiment": "Sentiment",
+    "debate": "Debate",
+    "risk": "Risk"
+  },
+  "stream": {
+    "empty": "No decisions yet. Once the bot completes its first round, the real reasoning chain returned by the backend appears here."
+  },
+  "console": {
+    "ready": "Console ready. Type 'help' for available commands",
+    "shellHint": "Type 'help' for all commands.",
+    "none": "none",
+    "wsConnected": "WebSocket connected",
+    "wsPolling": "WebSocket disconnected (polling)",
+    "status": "[Status] Bot: {{botId}} | Last decision: {{time}} | Consensus: {{consensus}} | Stream: {{stream}}",
+    "riskNoRecord": "[Risk] No decision record yet, so no risk result is available. Click [▶ Run] first.",
+    "verdict": {
+      "none": "No risk verdict this round",
+      "passed": "passed",
+      "blocked": "blocked ({{reason}})",
+      "noProposal": "No proposal this round"
+    },
+    "reasonMissing": "reason not returned",
+    "rulesPassed": "{{passed}}/{{total}} passed",
+    "rulesMissing": "details not returned",
+    "risk": "[Risk] {{time}} | Daily drawdown {{daily}} | Max drawdown {{total}} | Leverage {{leverage}} | Rules {{rules}} | Verdict: {{verdict}}",
+    "navNoRecord": "[NAV] No NAV snapshot yet. Click [▶ Run] first, or open the NAV page.",
+    "nav": "[NAV] {{time}} snapshot | NAV per unit {{nav}} | Cumulative {{cum}} | Account equity {{equity}}",
+    "cotHeader": "=== [LLM multi-agent decision] {{symbol}} ({{nodes}} nodes) ===",
+    "decision": "[DECISION] Consensus: {{consensus}} | Symbol: {{symbol}}",
+    "proposal": "[PROPOSAL] Limit price: ${{price}} | Stop-loss: ${{stop}} | Size: ${{size}}",
+    "idempotency": "[IDEMPOTENCY] Proposal idempotency key: {{id}}",
+    "riskAudit": "[RISK_AUDIT] Hard risk verdict: {{verdict}}",
+    "execution": "[EXECUTION] Submitted for execution this round | Execution ID: {{id}}",
+    "help": "Commands: status (bot status), step (run one step), logs (show LLM decision logs), risk (risk check), nav (NAV snapshot), kill (emergency stop), clear (clear screen)",
+    "logsHeader": "=== Latest LLM decision logs ({{n}} entries) ===",
+    "noLogs": "No LLM decision logs yet. Click [▶ Run] or wait for auto-polling.",
+    "dispatch": "[Dispatch] Sending single-step trigger to bot [{{botId}}]...",
+    "emergency": "[Emergency] Global kill switch triggered: cancelling all open orders and locking positions!",
+    "unknown": "Unknown command: '{{cmd}}'. Type 'help' for all available commands.",
+    "logsSnapshot": "=== Latest LLM decision log snapshot ({{n}} entries) ===",
+    "noLogsQuick": "No LLM decision logs yet. Click [▶ Run] to trigger a decision first."
+  },
+  "quick": {
+    "stepTitle": "Trigger one multi-agent decision step",
+    "step": "▶ Run",
+    "logsTitle": "Print the current decision logs to the console",
+    "logs": "📝 Logs",
+    "risk": "🛡️ Risk",
+    "nav": "📊 NAV",
+    "kill": "🚨 Kill"
+  },
+  "input": {
+    "placeholder": "Enter command (step, risk, nav)...",
+    "run": "Run"
+  },
+  "footer": {
+    "wsConnected": "Stream connected",
+    "wsPolling": "Stream disconnected (polling)",
+    "lastDecision": "Last decision {{time}}"
+  }
+}

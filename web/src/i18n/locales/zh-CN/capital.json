@@ -1,0 +1,32 @@
+{
+  "header": {
+    "title": "多策略组合资金配比看板",
+    "subtitle": "动态调整每个机器人的头寸分配与平滑重算净值份额 (NAV Continuous)"
+  },
+  "summary": {
+    "totalCapital": "组合总池资金池 (Total Capital)",
+    "activeBots": "活跃策略实例",
+    "botCount": "{{count}} 个机器人"
+  },
+  "empty": "暂无已装载的策略机器人实例",
+  "bot": {
+    "share": "占比:",
+    "nav": "当前净值 (NAV): <strong>{{nav}}</strong>",
+    "equity": "总净资产: {{amount}}",
+    "saving": "重算中...",
+    "save": "确认调资"
+  },
+  "alerts": {
+    "invalidAmount": "请输入大于 0 的资金数额。",
+    "invalidAmountTitle": "资金数额无效",
+    "updateFailedTitle": "调整资金失败"
+  },
+  "toast": {
+    "updated": "✅ 机器人 [{{botId}}] 资金成功调整为 {{amount}} USDT (份额平滑重算)"
+  },
+  "notes": {
+    "title": "平滑动态调资与币安模拟对接说明:",
+    "nav": "1. <strong>NAV 曲线平滑连续性</strong>: 追加或减少资金时，系统自动执行 <code>ΔShares = ΔCapital / NAV</code>，即刻重算可用现金与份额，NAV 单位净值保持数学严格连续，绝不产生虚假收益折线。",
+    "paper": "2. <strong>币安模拟交易</strong>: 默认启用高仿真盘口模拟撮合 (Binance Paper Engine)，严格遵守币安标准费率 (Maker 0.02% / Taker 0.04%)；若配置了币安 API Key，则直连币安期货合约沙盒 (Futures Testnet)。"
+  }
+}

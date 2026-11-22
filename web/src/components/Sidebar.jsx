@@ -9,7 +9,9 @@
  */
 
 import React from 'react';
+import { useTranslation } from 'react-i18next';
 import { Key, Plus, PieChart, Trash2 } from 'lucide-react';
+import { fmt } from '../i18n';
 
 export default function Sidebar({
   activeBotId,
@@ -22,14 +24,15 @@ export default function Sidebar({
   onOpenCapitalModal,
   botsList = [],
 }) {
+  const { t } = useTranslation('sidebar');
   const bots = botsList.map((b) => ({
     id: b.bot_id || b.id,
     name: b.name,
-    tag: b.status === 'RUNNING' ? '活跃运行' : (b.status || '待命'),
+    tag: b.status === 'RUNNING' ? t('bots.running') : (b.status || t('bots.standby')),
     symbol: b.symbol,
     timeframe: b.timeframe || '15m',
     nav: Number(b.latest_nav || b.nav || 1.0),
-    runtime: b.runtime || b.status || '待命',
+    runtime: b.runtime || b.status || t('bots.standby'),
     tokens: b.tokens !== undefined && b.tokens !== null ? String(b.tokens) : '0',
     exchange: b.exchange || 'BINANCE',
     marketType: b.market_type || 'USDM_FUTURES',
@@ -49,27 +52,27 @@ export default function Sidebar({
       <div className="p-3 border-b border-line">
         <div className="flex items-center justify-between text-xs font-semibold text-ink-3 uppercase tracking-wider mb-2">
           <div className="flex items-center space-x-1.5">
-            <span>策略机器人</span>
+            <span>{t('bots.title')}</span>
             <span className="text-xs bg-muted px-1.5 py-0.5 rounded text-ink-2 font-mono">
-              {bots.length} 个
+              {t('bots.count', { n: bots.length })}
             </span>
           </div>
           <div className="flex items-center space-x-1">
             <button
               onClick={onOpenCapitalModal}
-              title="查看与修改各机器人资金占比"
+              title={t('bots.capitalTitle')}
               className="px-1.5 py-0.5 rounded bg-panel hover:bg-surface border border-line-strong text-ink-2 hover:text-brand transition text-xs font-medium flex items-center space-x-0.5"
             >
               <PieChart className="w-2.5 h-2.5 text-brand" />
-              <span>配比</span>
+              <span>{t('bots.capital')}</span>
             </button>
             <button
               onClick={onOpenCreateBotModal}
-              title="新建策略交易机器人"
+              title={t('bots.createTitle')}
               className="px-1.5 py-0.5 rounded bg-brand hover:bg-brand-hover text-white transition text-xs font-bold flex items-center space-x-0.5 shadow-xs"
             >
               <Plus className="w-2.5 h-2.5" />
-              <span>新建</span>
+              <span>{t('bots.create')}</span>
             </button>
           </div>
         </div>
@@ -77,7 +80,7 @@ export default function Sidebar({
         <div className="space-y-1.5 max-h-[340px] overflow-y-auto">
           {bots.length === 0 ? (
             <div className="p-3 text-center text-xs text-ink-3 bg-surface rounded-xl border border-line">
-              正在加载机器人列表...
+              {t('bots.loading')}
             </div>
           ) : (
             bots.map((bot) => (
@@ -104,7 +107,7 @@ export default function Sidebar({
                 </div>
                 <div className="flex items-center justify-between text-xs text-ink-3">
                   <span>{bot.symbol} · {bot.exchange}</span>
-                  <span className="font-mono text-success font-semibold">NAV {bot.nav.toFixed(3)}</span>
+                  <span className="font-mono text-success font-semibold">NAV {fmt.number(bot.nav, 3)}</span>
                 </div>
                 <div className="mt-1.5 pt-1.5 border-t border-line-soft flex items-center justify-between text-xs text-ink-4">
                   <div className="flex items-center space-x-1.5">
@@ -114,7 +117,7 @@ export default function Sidebar({
                     )}
                   </div>
                   <div className="flex items-center space-x-1.5">
-                    <span title="真实累计 LLM Token 消耗">🔥 {bot.tokens}</span>
+                    <span title={t('bots.tokensTitle')}>🔥 {bot.tokens}</span>
                     {onDeleteBot && (
                       <button
                         type="button"
@@ -122,7 +125,7 @@ export default function Sidebar({
                           e.stopPropagation();
                           onDeleteBot(bot);
                         }}
-                        title={`删除机器人 ${bot.name}`}
+                        title={t('bots.delete', { name: bot.name })}
                         className="p-1 rounded text-ink-4 hover:text-danger hover:bg-danger-solid/10 transition cursor-pointer"
                       >
                         <Trash2 className="w-3 h-3" />
@@ -139,30 +142,30 @@ export default function Sidebar({
       {/* 分组 2: 数据底座与信号感知源状态树 */}
       <div className="flex-1 min-h-[160px] overflow-y-auto p-3">
         <div className="flex items-center justify-between text-xs font-semibold text-ink-3 uppercase tracking-wider mb-2">
-          <span>底座信号源 (Data Hub)</span>
-          <span className="text-xs text-ink-4">零前视接入</span>
+          <span>{t('dataHub.title')}</span>
+          <span className="text-xs text-ink-4">{t('dataHub.zeroLookahead')}</span>
         </div>
 
         <div className="space-y-1 text-xs text-ink-2">
           <div className="flex items-center space-x-2 p-1.5 rounded-lg hover:bg-muted">
             <span className="text-brand">📁</span>
             <span className="font-medium">multi_source.klines</span>
-            <span className="ml-auto text-xs text-success font-mono">已封盘</span>
+            <span className="ml-auto text-xs text-success font-mono">{t('dataHub.sealed')}</span>
           </div>
           <div className="flex items-center space-x-2 p-1.5 rounded-lg hover:bg-muted">
             <span className="text-info">⚡</span>
             <span>funding_rate_hub</span>
-            <span className="ml-auto text-xs text-ink-3 font-mono">实时</span>
+            <span className="ml-auto text-xs text-ink-3 font-mono">{t('dataHub.live')}</span>
           </div>
           <div className="flex items-center space-x-2 p-1.5 rounded-lg hover:bg-muted">
             <span className="text-success">🛡️</span>
             <span>oms_native_sl_tp</span>
-            <span className="ml-auto text-xs text-success font-mono">启用</span>
+            <span className="ml-auto text-xs text-success font-mono">{t('dataHub.enabled')}</span>
           </div>
           <div className="flex items-center space-x-2 p-1.5 rounded-lg hover:bg-muted">
             <span className="text-plum">📅</span>
             <span>macro_fomc_guard</span>
-            <span className="ml-auto text-xs text-ink-3 font-mono">监听中</span>
+            <span className="ml-auto text-xs text-ink-3 font-mono">{t('dataHub.listening')}</span>
           </div>
         </div>
       </div>
@@ -172,7 +175,7 @@ export default function Sidebar({
         <div
           onClick={onOpenWalletModal}
           className="flex items-center justify-between p-1.5 rounded-xl hover:bg-muted cursor-pointer transition"
-          title="点击管理 Web3 钱包"
+          title={t('wallet.manageTitle')}
         >
           <div className="flex items-center space-x-2">
             <div
@@ -180,20 +183,20 @@ export default function Sidebar({
                 walletState?.isConnected ? 'bg-brand text-white' : 'bg-muted-strong text-ink-2'
               }`}
             >
-              {walletState?.isConnected ? '⚡' : '未'}
+              {walletState?.isConnected ? '⚡' : t('wallet.offBadge')}
             </div>
             <div>
               <div className="text-xs font-bold text-ink flex items-center space-x-1">
-                <span>{walletState?.isConnected ? (walletState.shortAddress || '已连接') : '未连接 Web3 钱包'}</span>
+                <span>{walletState?.isConnected ? (walletState.shortAddress || t('wallet.connected')) : t('wallet.disconnected')}</span>
               </div>
               <div className="text-xs text-ink-3">
-                {walletState?.isConnected ? `${walletState.network || 'Arbitrum'} Bearer 认证` : '点击签名登录'}
+                {walletState?.isConnected ? t('wallet.bearerAuth', { network: walletState.network || 'Arbitrum' }) : t('wallet.signIn')}
               </div>
             </div>
           </div>
           <div className="text-right">
             <div className="text-xs font-mono font-bold text-ink">
-              ${currentBot ? currentBot.currentEquity.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '0.00'}
+              {fmt.usd(currentBot ? currentBot.currentEquity : 0)}
             </div>
             <div
               className={`text-xs font-mono font-semibold ${
@@ -201,7 +204,7 @@ export default function Sidebar({
               }`}
             >
               {(currentBot?.cumulativeReturnPct || 0) >= 0 ? '+' : ''}
-              {(currentBot?.cumulativeReturnPct || 0).toFixed(2)}%
+              {fmt.pct((currentBot?.cumulativeReturnPct || 0) / 100)}
             </div>
           </div>
         </div>
@@ -210,8 +213,8 @@ export default function Sidebar({
           <div className="bg-success-solid h-full rounded-full transition-all" style={{ width: `${ddPct}%` }} />
         </div>
         <div className="flex justify-between text-xs text-ink-3 font-mono">
-          <span>最大回撤: {(currentBot?.maxDrawdownPct || 0).toFixed(2)}%</span>
-          <span>熔断线: 5.00%</span>
+          <span>{t('wallet.maxDrawdown', { value: fmt.pct((currentBot?.maxDrawdownPct || 0) / 100) })}</span>
+          <span>{t('wallet.breaker', { value: fmt.pct(0.05) })}</span>
         </div>
 
         <button
@@ -219,7 +222,7 @@ export default function Sidebar({
           className="w-full py-1.5 px-2 rounded-lg bg-panel hover:bg-surface border border-line-strong text-xs font-bold text-ink flex items-center justify-center space-x-1.5 transition shadow-xs"
         >
           <Key className="w-3.5 h-3.5 text-brand" />
-          <span>🔑 凭证金库 (Hyperliquid / AI)</span>
+          <span>{t('wallet.keyVault')}</span>
         </button>
       </div>
     </aside>

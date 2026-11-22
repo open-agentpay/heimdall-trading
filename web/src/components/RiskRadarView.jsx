@@ -10,6 +10,8 @@
  */
 
 import React, { useState, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
+import { fmt } from '../i18n';
 import { showAlert, showConfirm } from '../utils/dialog';
 import {
   ShieldAlert, ShieldCheck, AlertTriangle, Power, RefreshCw, AlertOctagon, Radio, CheckCircle2
@@ -26,6 +28,8 @@ export default function RiskRadarView({
   symbol = 'ETH',
   activeBotId = 'bot_eth_debate_01',
 }) {
+  const { t, i18n } = useTranslation('risk');
+  const isZh = String(i18n.resolvedLanguage || i18n.language || '').startsWith('zh');
   const [isKilling, setIsKilling] = useState(false);
   const [killSuccessMessage, setKillSuccessMessage] = useState(null);
   const [radarData, setRadarData] = useState(null);
@@ -48,7 +52,7 @@ export default function RiskRadarView({
       } else {
         // 遥测失败时清空旧数据，避免继续展示过期的“健康”结论
         setRadarData(null);
-        setRadarError(radarRes.status === 'rejected' ? (radarRes.reason?.message || '雷达接口请求失败') : '雷达接口未返回规则数据');
+        setRadarError(radarRes.status === 'rejected' ? (radarRes.reason?.message || t('radar.requestFailed')) : t('radar.noRules'));
       }
       if (reconRes.status === 'fulfilled' && reconRes.value) {
         setReconcileData(reconRes.value);
@@ -84,30 +88,31 @@ export default function RiskRadarView({
       setReconcileMsg({
         ok: Boolean(isClean),
         text: isClean
-          ? (res.resumed ? '对账一致，机器人已从暂停/熔断状态恢复运行！' : '交易所与本地持仓对账完全一致，无幽灵持仓偏差。')
-          : `对账发现${Array.isArray(res?.report?.discrepancies) ? ` ${res.report.discrepancies.length} 项` : ''}偏差${res?.report?.bot_paused ? '，系统已自动暂停机器人保护本金！' : ''}`,
+          ? (res.resumed ? t('reconcile.resumed') : t('reconcile.clean'))
+          : `${Array.isArray(res?.report?.discrepancies) ? t('reconcile.foundCount', { n: res.report.discrepancies.length }) : t('reconcile.found')}${res?.report?.bot_paused ? t('reconcile.autoPaused') : ''}`,
       });
       await fetchRadarAndReconcile();
     } catch (err) {
-      setReconcileMsg({ ok: false, text: `对账失败: ${err.message}` });
+      setReconcileMsg({ ok: false, text: t('reconcile.failed', { message: err.message }) });
     } finally {
       setIsReconciling(false);
     }
   };
 
   const handleKillTrigger = async () => {
-    if (!(await showConfirm('确定要触发全局紧急熔断急停吗？\n这将立即向所有交易所广播全撤单指令，并强制关停所有策略后台协程。', { title: '全局紧急熔断', confirmText: '确认急停', danger: true }))) {
+    if (!(await showConfirm(t('kill.confirmMessage'), { title: t('kill.confirmTitle'), confirmText: t('kill.confirmButton'), danger: true }))) {
       return;
     }
 
     setIsKilling(true);
     try {
       const res = await triggerEmergencyKill();
-      setKillSuccessMessage(res.message || '紧急急停成功触发！所有挂单已撤销。');
+      // 后端提示目前只有中文；其他语言用前端文案
+      setKillSuccessMessage((isZh && res.message) || t('kill.success'));
       if (onEmergencyKill) onEmergencyKill();
       fetchRadarAndReconcile();
     } catch (err) {
-      showAlert(err.message || '未知错误', { title: '急停失败', tone: 'error' });
+      showAlert(err.message || t('common:unknownError'), { title: t('kill.failedTitle'), tone: 'error' });
     } finally {
       setIsKilling(false);
     }
@@ -126,9 +131,9 @@ export default function RiskRadarView({
             <ShieldAlert className="w-4 h-4" />
           </div>
           <div>
-            <h1 className="text-sm font-semibold text-ink tracking-tight">七大极端行情避险雷达 &amp; 对账守卫</h1>
+            <h1 className="text-sm font-semibold text-ink tracking-tight">{t('header.title')}</h1>
             <p className="text-xs text-ink-3">
-              代码确定性毫秒级拦截守卫 · 交易所持仓对账与外部死信心跳实时监控
+              {t('header.subtitle')}
             </p>
           </div>
         </div>
@@ -140,7 +145,7 @@ export default function RiskRadarView({
             className="flex items-center space-x-1.5 px-3 py-1.5 text-xs text-ink-2 hover:text-ink bg-surface border border-line-strong rounded shadow-xs hover:border-ink transition-all cursor-pointer"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
-            <span>实时探测</span>
+            <span>{t('header.probe')}</span>
           </button>
 
           <button
@@ -149,7 +154,7 @@ export default function RiskRadarView({
             className="flex items-center space-x-2 px-4 py-1.5 bg-brand hover:bg-brand-hover text-white text-xs font-semibold rounded shadow-sm hover:shadow transition-all cursor-pointer active:scale-95"
           >
             <Power className="w-3.5 h-3.5" />
-            <span>{isKilling ? '正在拔网线急停...' : '一键全局紧急急停'}</span>
+            <span>{isKilling ? t('kill.killing') : t('kill.button')}</span>
           </button>
         </div>
       </div>
@@ -165,7 +170,7 @@ export default function RiskRadarView({
             onClick={() => setKillSuccessMessage(null)}
             className="text-brand font-bold hover:underline cursor-pointer"
           >
-            关闭提示
+            {t('common:dismiss')}
           </button>
         </div>
       )}
@@ -208,12 +213,12 @@ export default function RiskRadarView({
               <div className="flex items-center space-x-2">
                 <span className="text-base font-semibold text-ink">
                   {overallStatus === 'TRIGGERED'
-                    ? '极端行情硬风控已触发拦截'
+                    ? t('overall.triggered')
                     : overallStatus === 'WARNING'
-                    ? '防线处于警戒状态（请留意波动）'
+                    ? t('overall.warning')
                     : isUnknown
-                    ? (radarError ? '风控雷达遥测不可用' : '正在获取风控雷达遥测…')
-                    : '全部规则正常'}
+                    ? (radarError ? t('overall.unavailable') : t('overall.loading'))
+                    : t('overall.healthy')}
                 </span>
                 <span
                   className={`text-xs px-2 py-0.5 rounded-full font-medium border ${
@@ -226,26 +231,26 @@ export default function RiskRadarView({
                       : 'bg-success-solid/15 text-success border-success/20'
                   }`}
                 >
-                  {rules.length > 0 ? `${rules.length - triggeredCount}/${rules.length} 规则未触发` : '等待遥测'}
+                  {rules.length > 0 ? t('overall.rulesClear', { clear: rules.length - triggeredCount, total: rules.length }) : t('overall.awaiting')}
                 </span>
               </div>
               <p className="text-xs text-ink-3 mt-0.5">
                 {isUnknown && radarError
-                  ? `标的对象: ${symbol} · ${radarError}`
-                  : `标的对象: ${symbol} · 任何分钟级剧烈插针、跨所基差隔离或宏观静默窗口，系统将在毫秒内硬驳回开仓提案`}
+                  ? t('overall.symbolError', { symbol, error: radarError })
+                  : t('overall.symbolDesc', { symbol })}
               </p>
             </div>
           </div>
 
           <div className="flex items-center space-x-6 text-right">
             <div>
-              <div className="text-xs text-ink-3 uppercase tracking-wider">最近探测时间</div>
+              <div className="text-xs text-ink-3 uppercase tracking-wider">{t('overall.lastProbe')}</div>
               <div className="text-xs font-mono font-medium text-ink mt-0.5">
-                {radarData?.timestamp ? new Date(radarData.timestamp).toLocaleTimeString() : '--:--:--'}
+                {radarData?.timestamp ? fmt.dateTime(radarData.timestamp) : '--:--:--'}
               </div>
             </div>
             <div>
-              <div className="text-xs text-ink-3 uppercase tracking-wider">当前拦截状态</div>
+              <div className="text-xs text-ink-3 uppercase tracking-wider">{t('overall.blockState')}</div>
               <div
                 className={`text-xs font-bold mt-0.5 ${
                   isUnknown ? 'text-ink-4' : triggeredCount > 0 ? 'text-danger' : warningCount > 0 ? 'text-warning' : 'text-success'
@@ -254,10 +259,10 @@ export default function RiskRadarView({
                 {isUnknown
                   ? '--'
                   : triggeredCount > 0
-                  ? `${triggeredCount} 项拦截中`
+                  ? t('overall.blocking', { n: triggeredCount })
                   : warningCount > 0
-                  ? `${warningCount} 项告警`
-                  : '0 触发 (放行中)'}
+                  ? t('overall.warnings', { n: warningCount })
+                  : t('overall.noneTriggered')}
               </div>
             </div>
           </div>
@@ -269,7 +274,7 @@ export default function RiskRadarView({
             <div className="flex items-center space-x-2.5">
               <Radio className="w-4 h-4 text-brand" />
               <h2 className="text-xs font-bold text-ink">
-                交易所持仓对账引擎 (ExchangeReconciler) &amp; 外部死信心跳
+                {t('reconcile.title')}
               </h2>
               <span className="text-xs font-mono px-2 py-0.5 rounded-full bg-muted text-ink-2">
                 Bot: {activeBotId} ({reconcileData?.market_type || '--'} · {reconcileData?.execution_mode || '--'})
@@ -282,7 +287,7 @@ export default function RiskRadarView({
                 disabled={isReconciling}
                 className="px-3 py-1.5 rounded-lg bg-panel hover:bg-muted border border-line-strong text-xs font-semibold text-ink transition cursor-pointer"
               >
-                {isReconciling ? '对账中...' : '🔍 立即执行对账'}
+                {isReconciling ? t('reconcile.running') : t('reconcile.runNow')}
               </button>
               {botPausedByRecon && (
                 <button
@@ -290,7 +295,7 @@ export default function RiskRadarView({
                   disabled={isReconciling}
                   className="px-3 py-1.5 rounded-lg bg-success-solid hover:bg-success-solid-hover text-white text-xs font-semibold transition cursor-pointer"
                 >
-                  ✅ 核查无误并恢复运行
+                  {t('reconcile.resume')}
                 </button>
               )}
             </div>
@@ -298,39 +303,39 @@ export default function RiskRadarView({
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
             <div className="p-3 rounded-lg bg-panel border border-line-soft">
-              <div className="text-xs text-ink-3">对账一致性状态</div>
+              <div className="text-xs text-ink-3">{t('reconcile.consistency')}</div>
               <div className="mt-1 font-bold flex items-center space-x-1.5">
                 {lastRecon ? (
                   lastRecon.is_clean ? (
                     <span className="text-success flex items-center space-x-1">
                       <CheckCircle2 className="w-3.5 h-3.5" />
-                      <span>CLEAN (账实完全一致)</span>
+                      <span>{t('reconcile.cleanStatus')}</span>
                     </span>
                   ) : (
                     <span className="text-danger">
-                      ⚠️ 存在差异 ({lastRecon.discrepancies?.length || 0} 项)
+                      {t('reconcile.diffStatus', { n: lastRecon.discrepancies?.length || 0 })}
                     </span>
                   )
                 ) : (
-                  <span className="text-ink-3">尚未执行对账（点击右侧按钮即时核对）</span>
+                  <span className="text-ink-3">{t('reconcile.notRun')}</span>
                 )}
               </div>
             </div>
 
             <div className="p-3 rounded-lg bg-panel border border-line-soft">
-              <div className="text-xs text-ink-3">机器人状态 &amp; 持仓数</div>
+              <div className="text-xs text-ink-3">{t('reconcile.botStatus')}</div>
               <div className="mt-1 font-mono font-bold text-ink">
-                {reconcileData?.bot_status || 'UNKNOWN'} · 活动持仓 {reconcileData?.open_positions_count ?? 0} 笔
+                {reconcileData?.bot_status || 'UNKNOWN'} · {t('reconcile.openPositions', { n: reconcileData?.open_positions_count ?? 0 })}
               </div>
             </div>
 
             <div className="p-3 rounded-lg bg-panel border border-line-soft">
-              <div className="text-xs text-ink-3">外部死信心跳 (DeadManSwitch)</div>
+              <div className="text-xs text-ink-3">{t('reconcile.deadManSwitch')}</div>
               <div className="mt-1 font-mono font-bold">
                 {dms.running ? (
-                  <span className="text-success">● 在线 ({dms.ping_count || 0} 次心跳)</span>
+                  <span className="text-success">{t('reconcile.dmsOnline', { n: dms.ping_count || 0 })}</span>
                 ) : (
-                  <span className="text-warning">○ 未启用 (开发模式)</span>
+                  <span className="text-warning">{t('reconcile.dmsOff')}</span>
                 )}
               </div>
             </div>
@@ -354,8 +359,8 @@ export default function RiskRadarView({
           {rules.length === 0 ? (
             <div className="col-span-full p-8 text-center text-xs text-ink-3 bg-surface rounded-xl border border-line-strong">
               {radarError
-                ? `风控雷达遥测不可用：${radarError}`
-                : '正在连接后端 /api/v1/market/radar 获取风控遥测数据…'}
+                ? t('rules.unavailable', { error: radarError })
+                : t('rules.connecting')}
             </div>
           ) : (
             rules.map((rule) => {
@@ -375,7 +380,7 @@ export default function RiskRadarView({
                       <div className="flex items-center space-x-2">
                         <span className="text-lg">{rule.icon}</span>
                         <span className="text-xs font-bold text-ink line-clamp-1">
-                          规则 {rule.id}
+                          {t('rules.ruleNo', { id: rule.id })}
                         </span>
                       </div>
                       <span
@@ -392,15 +397,15 @@ export default function RiskRadarView({
                     </div>
 
                     <h3 className="text-xs font-semibold text-ink mt-2 mb-1">
-                      {rule.name}
+                      {(isZh && rule.name) || t(`rules.items.r${rule.id}.name`, { defaultValue: rule.name })}
                     </h3>
                     <p className="text-xs text-ink-3 leading-relaxed">
-                      {rule.desc}
+                      {(isZh && rule.desc) || t(`rules.items.r${rule.id}.desc`, { defaultValue: rule.desc })}
                     </p>
                   </div>
 
                   <div className="mt-4 pt-3 border-t border-line-soft flex items-center justify-between text-xs">
-                    <span className="text-xs text-ink-3">当前实时遥测</span>
+                    <span className="text-xs text-ink-3">{t('rules.liveTelemetry')}</span>
                     <span className={`font-mono font-semibold ${rule.valueColor || 'text-ink-3'}`}>
                       {rule.value}
                     </span>

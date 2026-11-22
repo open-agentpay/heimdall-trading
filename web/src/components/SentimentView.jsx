@@ -10,6 +10,7 @@
  */
 
 import React from 'react';
+import { useTranslation } from 'react-i18next';
 import {
   Compass, Newspaper, TrendingUp, Activity, ShieldCheck
 } from 'lucide-react';
@@ -18,6 +19,7 @@ export default function SentimentView({
   symbol = 'ETH',
   sentimentReport = null,
 }) {
+  const { t } = useTranslation('sentiment');
   const sym = (symbol || 'ETH').toUpperCase();
   const report = sentimentReport || {};
 
@@ -28,11 +30,11 @@ export default function SentimentView({
   const whaleActivity = report.whale_activity || null;
   const crowdingRisk = report.crowding_risk || null;
   const provenance = report.provenance || report.data_source || (hasLiveReport ? 'live_collector' : 'awaiting_step');
-  const summaryText = report.summary || '尚未收到最新一轮情绪感知报告，请在「对弈大厅」触发推演或等待后台巡检。';
+  const summaryText = report.summary || t('summary.awaiting');
   const newsItems = Array.isArray(report.news_items) ? report.news_items : (Array.isArray(report.headlines) ? report.headlines : []);
   const whaleTransfers = Array.isArray(report.whale_transfers) ? report.whale_transfers : [];
 
-  const scoreLabel = sentimentScore === null ? '--' : sentimentScore >= 0.15 ? '偏多' : sentimentScore <= -0.15 ? '偏空' : '中性';
+  const scoreLabel = sentimentScore === null ? '--' : sentimentScore >= 0.15 ? t('score.bullish') : sentimentScore <= -0.15 ? t('score.bearish') : t('score.neutral');
   const scoreColor = sentimentScore === null ? 'text-ink-4' : sentimentScore >= 0.15 ? 'text-success' : sentimentScore <= -0.15 ? 'text-danger' : 'text-ink-2';
 
   return (
@@ -45,13 +47,13 @@ export default function SentimentView({
           </div>
           <div>
             <h1 className="text-sm font-bold text-ink flex items-center space-x-2">
-              <span>{sym} 真实情绪与链上情报雷达 (Sentiment &amp; Provenance)</span>
+              <span>{t('header.title', { symbol: sym })}</span>
               <span className="text-xs font-mono bg-brand-soft text-brand border border-brand-line px-2 py-0.5 rounded-full font-semibold">
-                来源: {provenance}
+                {t('header.source', { provenance })}
               </span>
             </h1>
             <p className="text-xs text-ink-3">
-              严格零编造原则：仅呈现后端真实采集的情绪指标与溯源情报，无外部数据源时保持中性兜底
+              {t('header.subtitle')}
             </p>
           </div>
         </div>
@@ -66,7 +68,7 @@ export default function SentimentView({
             <div className="text-xs text-ink-2 leading-relaxed">{summaryText}</div>
           </div>
           <span className="text-xs font-mono px-2 py-1 rounded bg-panel border border-line text-ink-3 shrink-0 ml-4">
-            {hasLiveReport ? '已接入实时感知' : '等待首次推演'}
+            {hasLiveReport ? t('summary.live') : t('summary.awaitingFirst')}
           </span>
         </div>
 
@@ -74,7 +76,7 @@ export default function SentimentView({
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
           <div className="bg-surface p-4 rounded-xl border border-line shadow-xs space-y-2">
             <div className="flex items-center justify-between text-xs font-bold text-ink-3">
-              <span>综合情绪打分</span>
+              <span>{t('score.title')}</span>
               <span className="text-xs bg-panel px-2 py-0.5 rounded font-mono">{scoreLabel}</span>
             </div>
             <div className="flex items-baseline space-x-2">
@@ -84,13 +86,13 @@ export default function SentimentView({
               <span className="text-xs text-ink-3">[-1.0 ~ +1.0]</span>
             </div>
             <p className="text-xs text-ink-3">
-              由后端 SentimentCollector 结合真实费率/舆情计算
+              {t('score.hint')}
             </p>
           </div>
 
           <div className="bg-surface p-4 rounded-xl border border-line shadow-xs space-y-2">
             <div className="flex items-center justify-between text-xs font-bold text-ink-3">
-              <span>全网恐慌贪婪指数</span>
+              <span>{t('fearGreed.title')}</span>
               <span className="text-xs bg-panel px-2 py-0.5 rounded font-mono">FNG</span>
             </div>
             <div className="flex items-baseline space-x-2">
@@ -101,39 +103,39 @@ export default function SentimentView({
             </div>
             <div className="text-xs text-ink-3 flex items-center space-x-1">
               <TrendingUp className="w-3.5 h-3.5 shrink-0 text-success" />
-              <span>{fearGreed !== null ? '来自实时恐慌贪婪数据源' : '未返回恐慌指数（已做中性降级）'}</span>
+              <span>{fearGreed !== null ? t('fearGreed.live') : t('fearGreed.missing')}</span>
             </div>
           </div>
 
           <div className="bg-surface p-4 rounded-xl border border-line shadow-xs space-y-2">
             <div className="flex items-center justify-between text-xs font-bold text-ink-3">
-              <span>{sym} 巨鲸动向定性</span>
+              <span>{t('whale.title', { symbol: sym })}</span>
               <span className="text-xs bg-panel px-2 py-0.5 rounded font-mono">{whaleActivity || '--'}</span>
             </div>
             <div className="text-xl font-extrabold font-mono text-ink pt-1">
               {whaleActivity === 'ACCUMULATION'
-                ? '吸筹净流出'
+                ? t('whale.accumulation')
                 : whaleActivity === 'DISTRIBUTION'
-                ? '派发净流入'
+                ? t('whale.distribution')
                 : whaleActivity
-                ? '中性观望'
+                ? t('whale.neutral')
                 : '--'}
             </div>
             <p className="text-xs text-ink-3">
-              无链上巨鲸 API 密钥时严格返回 NEUTRAL，绝不伪造净流出
+              {t('whale.hint')}
             </p>
           </div>
 
           <div className="bg-surface p-4 rounded-xl border border-line shadow-xs space-y-2">
             <div className="flex items-center justify-between text-xs font-bold text-ink-3">
-              <span>{sym} 衍生品拥挤度</span>
+              <span>{t('crowding.title', { symbol: sym })}</span>
               <span className="text-xs bg-panel px-2 py-0.5 rounded font-mono">{crowdingRisk || '--'}</span>
             </div>
             <div className="text-xl font-extrabold font-mono text-ink pt-1">
               {crowdingRisk || '--'}
             </div>
             <p className="text-xs text-ink-3">
-              用于识别资金费率极端拥挤与多空踩踏风险
+              {t('crowding.hint')}
             </p>
           </div>
         </div>
@@ -144,14 +146,14 @@ export default function SentimentView({
             <div className="flex items-center justify-between pb-2 border-b border-line-soft">
               <h3 className="text-xs font-bold text-ink flex items-center space-x-2">
                 <Newspaper className="w-4 h-4 text-brand" />
-                <span>{sym} 实时采集资讯快讯</span>
+                <span>{t('news.title', { symbol: sym })}</span>
               </h3>
-              <span className="text-xs text-ink-3">共 {newsItems.length} 条真实记录</span>
+              <span className="text-xs text-ink-3">{t('news.count', { n: newsItems.length })}</span>
             </div>
 
             {newsItems.length === 0 ? (
               <div className="p-6 text-center text-xs text-ink-3 bg-panel rounded-lg border border-dashed border-line-strong">
-                当前未采集到外部突发快讯（系统已禁用静态假利好兜底，保证零幻觉决策）。
+                {t('news.empty')}
               </div>
             ) : (
               <div className="space-y-2.5">
@@ -174,14 +176,14 @@ export default function SentimentView({
             <div className="flex items-center justify-between pb-2 border-b border-line-soft">
               <h3 className="text-xs font-bold text-ink flex items-center space-x-2">
                 <Activity className="w-4 h-4 text-success" />
-                <span>{sym} 链上大额异动监测 (Whale Tracker)</span>
+                <span>{t('transfers.title', { symbol: sym })}</span>
               </h3>
-              <span className="text-xs font-mono text-ink-3">共 {whaleTransfers.length} 条记录</span>
+              <span className="text-xs font-mono text-ink-3">{t('transfers.count', { n: whaleTransfers.length })}</span>
             </div>
 
             {whaleTransfers.length === 0 ? (
               <div className="p-6 text-center text-xs text-ink-3 bg-panel rounded-lg border border-dashed border-line-strong">
-                当前未配置付费链上大额监控源，暂无实时大额充提流水。
+                {t('transfers.empty')}
               </div>
             ) : (
               <div className="space-y-2.5 font-mono">

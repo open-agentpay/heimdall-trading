@@ -1,0 +1,45 @@
+{
+  "header": {
+    "title": "{{symbol}} 真实情绪与链上情报雷达 (Sentiment & Provenance)",
+    "source": "来源: {{provenance}}",
+    "subtitle": "严格零编造原则：仅呈现后端真实采集的情绪指标与溯源情报，无外部数据源时保持中性兜底"
+  },
+  "summary": {
+    "awaiting": "尚未收到最新一轮情绪感知报告，请在「对弈大厅」触发推演或等待后台巡检。",
+    "live": "已接入实时感知",
+    "awaitingFirst": "等待首次推演"
+  },
+  "score": {
+    "title": "综合情绪打分",
+    "bullish": "偏多",
+    "bearish": "偏空",
+    "neutral": "中性",
+    "hint": "由后端 SentimentCollector 结合真实费率/舆情计算"
+  },
+  "fearGreed": {
+    "title": "全网恐慌贪婪指数",
+    "live": "来自实时恐慌贪婪数据源",
+    "missing": "未返回恐慌指数（已做中性降级）"
+  },
+  "whale": {
+    "title": "{{symbol}} 巨鲸动向定性",
+    "accumulation": "吸筹净流出",
+    "distribution": "派发净流入",
+    "neutral": "中性观望",
+    "hint": "无链上巨鲸 API 密钥时严格返回 NEUTRAL，绝不伪造净流出"
+  },
+  "crowding": {
+    "title": "{{symbol}} 衍生品拥挤度",
+    "hint": "用于识别资金费率极端拥挤与多空踩踏风险"
+  },
+  "news": {
+    "title": "{{symbol}} 实时采集资讯快讯",
+    "count": "共 {{n}} 条真实记录",
+    "empty": "当前未采集到外部突发快讯（系统已禁用静态假利好兜底，保证零幻觉决策）。"
+  },
+  "transfers": {
+    "title": "{{symbol}} 链上大额异动监测 (Whale Tracker)",
+    "count": "共 {{n}} 条记录",
+    "empty": "当前未配置付费链上大额监控源，暂无实时大额充提流水。"
+  }
+}

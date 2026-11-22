@@ -11,6 +11,8 @@
  */
 
 import React, { useState } from 'react';
+import { useTranslation } from 'react-i18next';
+import { fmt } from '../i18n';
 import { 
   Cpu, Play, Square, RefreshCw, Plus, PieChart, ShieldCheck, 
   ExternalLink, Layers, ArrowUpRight, Activity, TrendingUp, AlertCircle, Trash2
@@ -27,11 +29,12 @@ export default function SwarmView({
   onOpenCapitalModal,
   onShowToast,
 }) {
+  const { t } = useTranslation('swarm');
   const [loadingActions, setLoadingActions] = useState({});
 
   // 1. 批量全部启动
   const handleBatchStart = async () => {
-    onShowToast?.("🚀 正在批量启动所有待命中机器人...", "info");
+    onShowToast?.(t('toast.batchStarting'), "info");
     for (const b of bots) {
       if (b.status !== "RUNNING") {
         try {
@@ -42,12 +45,12 @@ export default function SwarmView({
       }
     }
     await onRefreshBots?.();
-    onShowToast?.("✅ 所有策略机器人已全部投入后台盯盘！", "success");
+    onShowToast?.(t('toast.batchStarted'), "success");
   };
 
   // 2. 批量全部挂起
   const handleBatchStop = async () => {
-    onShowToast?.("⏸️ 正在批量挂起所有运行中机器人...", "info");
+    onShowToast?.(t('toast.batchStopping'), "info");
     for (const b of bots) {
       if (b.status === "RUNNING") {
         try {
@@ -58,7 +61,7 @@ export default function SwarmView({
       }
     }
     await onRefreshBots?.();
-    onShowToast?.("⏹️ 蜂群策略协程已全量安全挂起", "info");
+    onShowToast?.(t('toast.batchStopped'), "info");
   };
 
   // 3. 单个机器人启停切换
@@ -68,14 +71,14 @@ export default function SwarmView({
     try {
       if (b.status === "RUNNING") {
         await stopBot(id);
-        onShowToast?.(`⏹️ 机器人 [${b.name || id}] 已挂起`, "info");
+        onShowToast?.(t('toast.botStopped', { name: b.name || id }), "info");
       } else {
         await startBot(id, BOT_DECISION_INTERVAL_SECONDS);
-        onShowToast?.(`▶️ 机器人 [${b.name || id}] 已启动盯盘`, "success");
+        onShowToast?.(t('toast.botStarted', { name: b.name || id }), "success");
       }
       await onRefreshBots?.();
     } catch (err) {
-      onShowToast?.(`操作失败: ${err.message}`, "critical");
+      onShowToast?.(t('toast.actionFailed', { message: err.message }), "critical");
     } finally {
       setLoadingActions(prev => ({ ...prev, [id]: false }));
     }
@@ -87,10 +90,10 @@ export default function SwarmView({
     setLoadingActions(prev => ({ ...prev, [`step_${id}`]: true }));
     try {
       await stepBot(id);
-      onShowToast?.(`⚡ 机器人 [${b.name || id}] 完成单步多智能体推演`, "success");
+      onShowToast?.(t('toast.stepDone', { name: b.name || id }), "success");
       await onRefreshBots?.();
     } catch (err) {
-      onShowToast?.(`推演失败: ${err.message}`, "critical");
+      onShowToast?.(t('toast.stepFailed', { message: err.message }), "critical");
     } finally {
       setLoadingActions(prev => ({ ...prev, [`step_${id}`]: false }));
     }
@@ -103,20 +106,20 @@ export default function SwarmView({
     try {
       if (isActive) {
         await setBotMacroBias(id, { action: 'NORMAL', risk_scale: 1.0, blocked_directions: [] });
-        onShowToast?.(`✅ 已清除 [${b.name || id}] 宏观门控，恢复正常仓位`, 'success');
+        onShowToast?.(t('toast.macroCleared', { name: b.name || id }), 'success');
       } else {
         await setBotMacroBias(id, {
           action: 'REDUCE_RISK',
           risk_scale: 0.5,
           blocked_directions: [],
-          reason: '蜂群控制台手动启用 0.5x 防守降仓门控',
+          reason: t('macro.manualReason'),
           ttl_minutes: 60,
         });
-        onShowToast?.(`🛡️ 已为 [${b.name || id}] 启用 MacroBias 0.5x 降仓门控 (60分钟)`, 'info');
+        onShowToast?.(t('toast.macroEnabled', { name: b.name || id }), 'info');
       }
       await onRefreshBots?.();
     } catch (err) {
-      onShowToast?.(`宏观门控设置失败: ${err.message}`, 'critical');
+      onShowToast?.(t('toast.macroFailed', { message: err.message }), 'critical');
     }
   };
 
@@ -135,9 +138,9 @@ export default function SwarmView({
             <Cpu className="w-4 h-4" />
           </div>
           <div>
-            <h1 className="text-sm font-semibold text-ink tracking-tight">蜂群编排与集群管控 (Swarm)</h1>
+            <h1 className="text-sm font-semibold text-ink tracking-tight">{t('header.title')}</h1>
             <p className="text-xs text-ink-3">
-              多策略并行矩阵 · 划拨本金 ${totalCapital.toLocaleString()} · 运行状态 {runningBots}/{totalBots}
+              {t('header.subtitle', { capital: fmt.usd(totalCapital), running: runningBots, total: totalBots })}
             </p>
           </div>
         </div>
@@ -149,7 +152,7 @@ export default function SwarmView({
             className="flex items-center space-x-1.5 px-3 py-1.5 text-xs font-medium text-success bg-success-solid/10 hover:bg-success-solid/20 border border-success/30 rounded shadow-2xs transition-all cursor-pointer"
           >
             <Play className="w-3.5 h-3.5 fill-current" />
-            <span>全量启动</span>
+            <span>{t('actions.startAll')}</span>
           </button>
 
           <button
@@ -157,7 +160,7 @@ export default function SwarmView({
             className="flex items-center space-x-1.5 px-3 py-1.5 text-xs font-medium text-ink-3 bg-surface hover:bg-muted border border-line-strong rounded shadow-2xs transition-all cursor-pointer"
           >
             <Square className="w-3.5 h-3.5 fill-current" />
-            <span>全量挂起</span>
+            <span>{t('actions.stopAll')}</span>
           </button>
 
           <button
@@ -165,7 +168,7 @@ export default function SwarmView({
             className="flex items-center space-x-1.5 px-3 py-1.5 text-xs font-medium text-ink bg-surface hover:bg-muted border border-line-strong rounded shadow-2xs transition-all cursor-pointer"
           >
             <PieChart className="w-3.5 h-3.5" />
-            <span>资金配比</span>
+            <span>{t('actions.capital')}</span>
           </button>
 
           <button
@@ -173,7 +176,7 @@ export default function SwarmView({
             className="flex items-center space-x-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-brand hover:bg-brand-hover rounded shadow-xs transition-all cursor-pointer"
           >
             <Plus className="w-3.5 h-3.5" />
-            <span>新建机器人</span>
+            <span>{t('actions.createBot')}</span>
           </button>
         </div>
       </div>
@@ -185,7 +188,7 @@ export default function SwarmView({
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           <div className="p-4 rounded-xl border border-line-strong bg-panel shadow-2xs flex items-center justify-between">
             <div>
-              <div className="text-xs text-ink-3 uppercase tracking-wider">活跃策略数</div>
+              <div className="text-xs text-ink-3 uppercase tracking-wider">{t('stats.activeStrategies')}</div>
               <div className="text-xl font-bold text-ink mt-0.5">{runningBots} / {totalBots}</div>
             </div>
             <div className="w-10 h-10 rounded-lg bg-success-solid/10 flex items-center justify-center text-success">
@@ -195,8 +198,8 @@ export default function SwarmView({
 
           <div className="p-4 rounded-xl border border-line-strong bg-panel shadow-2xs flex items-center justify-between">
             <div>
-              <div className="text-xs text-ink-3 uppercase tracking-wider">划拨总本金</div>
-              <div className="text-xl font-bold font-mono text-ink mt-0.5">${totalCapital.toLocaleString()}</div>
+              <div className="text-xs text-ink-3 uppercase tracking-wider">{t('stats.totalCapital')}</div>
+              <div className="text-xl font-bold font-mono text-ink mt-0.5">{fmt.usd(totalCapital)}</div>
             </div>
             <div className="w-10 h-10 rounded-lg bg-brand/10 flex items-center justify-center text-brand">
               <Layers className="w-5 h-5" />
@@ -205,9 +208,11 @@ export default function SwarmView({
 
           <div className="p-4 rounded-xl border border-line-strong bg-panel shadow-2xs flex items-center justify-between">
             <div>
-              <div className="text-xs text-ink-3 uppercase tracking-wider">启动决策周期</div>
+              <div className="text-xs text-ink-3 uppercase tracking-wider">{t('stats.decisionInterval')}</div>
               <div className="text-xl font-bold font-mono text-ink mt-0.5">
-                {BOT_DECISION_INTERVAL_SECONDS % 60 === 0 ? `${BOT_DECISION_INTERVAL_SECONDS / 60} 分钟` : `${BOT_DECISION_INTERVAL_SECONDS}s`} 盯盘
+                {BOT_DECISION_INTERVAL_SECONDS % 60 === 0
+                  ? t('stats.intervalMinutes', { minutes: BOT_DECISION_INTERVAL_SECONDS / 60 })
+                  : t('stats.intervalSeconds', { seconds: BOT_DECISION_INTERVAL_SECONDS })}
               </div>
             </div>
             <div className="w-10 h-10 rounded-lg bg-info-solid/10 flex items-center justify-center text-info">
@@ -217,8 +222,8 @@ export default function SwarmView({
 
           <div className="p-4 rounded-xl border border-line-strong bg-panel shadow-2xs flex items-center justify-between">
             <div>
-              <div className="text-xs text-ink-3 uppercase tracking-wider">风控防御等级</div>
-              <div className="text-xl font-bold text-success mt-0.5">7重全防护</div>
+              <div className="text-xs text-ink-3 uppercase tracking-wider">{t('stats.riskLevel')}</div>
+              <div className="text-xl font-bold text-success mt-0.5">{t('stats.riskLevelValue')}</div>
             </div>
             <div className="w-10 h-10 rounded-lg bg-success-solid/10 flex items-center justify-center text-success">
               <ShieldCheck className="w-5 h-5" />
@@ -230,15 +235,15 @@ export default function SwarmView({
         <div>
           <div className="flex items-center justify-between mb-3">
             <h2 className="text-xs font-bold text-ink uppercase tracking-wider flex items-center space-x-1.5">
-              <span>机器人编队矩阵</span>
-              <span className="text-xs text-ink-3 font-normal">({bots.length} 台在编)</span>
+              <span>{t('grid.title')}</span>
+              <span className="text-xs text-ink-3 font-normal">{t('grid.count', { count: bots.length })}</span>
             </h2>
             <button 
               onClick={onRefreshBots}
               className="text-xs text-ink-3 hover:text-ink flex items-center space-x-1 cursor-pointer"
             >
               <RefreshCw className="w-3 h-3" />
-              <span>刷新集群状态</span>
+              <span>{t('grid.refresh')}</span>
             </button>
           </div>
 
@@ -277,32 +282,32 @@ export default function SwarmView({
                             : "bg-ink-3/10 text-ink-3 border-ink-3/20"
                         }`}
                       >
-                        {isRunning ? "● 运行中" : "○ 待命中"}
+                        {isRunning ? t('card.running') : t('card.idle')}
                       </span>
                     </div>
 
                     {/* 策略详情参数 */}
                     <div className="mt-4 grid grid-cols-2 gap-2 text-xs bg-muted/40 p-3 rounded-lg border border-line">
                       <div>
-                        <span className="text-xs text-ink-3">策略模型</span>
+                        <span className="text-xs text-ink-3">{t('card.strategy')}</span>
                         <div className="font-semibold text-ink mt-0.5 text-xs font-mono">
                           {bot.strategy || bot.strategy_type || 'TREND_FOLLOW'}
                         </div>
                       </div>
                       <div>
-                        <span className="text-xs text-ink-3">划拨本金</span>
+                        <span className="text-xs text-ink-3">{t('card.capital')}</span>
                         <div className="font-bold font-mono text-ink mt-0.5 text-xs">
-                          ${Number(bot.allocated_capital || 10000).toLocaleString()}
+                          {fmt.usd(Number(bot.allocated_capital || 10000))}
                         </div>
                       </div>
                       <div>
-                        <span className="text-xs text-ink-3">交易所 · 市场 · 模式</span>
+                        <span className="text-xs text-ink-3">{t('card.route')}</span>
                         <div className="font-semibold text-ink mt-0.5 text-xs font-mono">
                           {bot.exchange || 'BINANCE'} · {bot.market_type || 'USDM_FUTURES'} · {bot.execution_mode || 'LOCAL_SIM'}
                         </div>
                       </div>
                       <div>
-                        <span className="text-xs text-ink-3">宏观门控 (MacroBias)</span>
+                        <span className="text-xs text-ink-3">{t('card.macroBias')}</span>
                         <div className="mt-0.5 flex items-center justify-between">
                           <span className={`text-xs font-mono font-bold ${bot.macro_bias ? 'text-warning' : 'text-success'}`}>
                             {bot.macro_bias ? `${bot.macro_bias.action} (${bot.macro_bias.risk_scale}x)` : 'NORMAL'}
@@ -311,7 +316,7 @@ export default function SwarmView({
                             onClick={() => handleToggleMacroBias(bot)}
                             className="text-xs underline text-brand cursor-pointer"
                           >
-                            {bot.macro_bias ? '解除' : '降仓'}
+                            {bot.macro_bias ? t('card.macroRelease') : t('card.macroReduce')}
                           </button>
                         </div>
                       </div>
@@ -326,7 +331,7 @@ export default function SwarmView({
                         isSelected ? "text-brand" : "text-ink-3 hover:text-ink"
                       }`}
                     >
-                      <span>{isSelected ? "当前监控中" : "切换席位"}</span>
+                      <span>{isSelected ? t('card.monitoring') : t('card.select')}</span>
                       <ArrowUpRight className="w-3.5 h-3.5" />
                     </button>
 
@@ -334,11 +339,11 @@ export default function SwarmView({
                       <button
                         onClick={() => handleSingleStep(bot)}
                         disabled={isStepping}
-                        title="立即单步推演"
+                        title={t('card.stepTitle')}
                         className="px-2.5 py-1 text-xs text-ink-2 hover:text-ink bg-surface border border-line-strong rounded hover:border-ink transition cursor-pointer flex items-center space-x-1"
                       >
                         <RefreshCw className={`w-3 h-3 ${isStepping ? 'animate-spin' : ''}`} />
-                        <span>推演</span>
+                        <span>{t('card.step')}</span>
                       </button>
 
                       <button
@@ -351,14 +356,14 @@ export default function SwarmView({
                         }`}
                       >
                         {isRunning ? <Square className="w-3 h-3 fill-current" /> : <Play className="w-3 h-3 fill-current" />}
-                        <span>{isRunning ? "挂起" : "启动"}</span>
+                        <span>{isRunning ? t('card.stop') : t('card.start')}</span>
                       </button>
 
                       {onDeleteBot && (
                         <button
                           type="button"
                           onClick={() => onDeleteBot(bot)}
-                          title={`删除机器人 ${bot.name || id}`}
+                          title={t('card.deleteTitle', { name: bot.name || id })}
                           className="p-1.5 text-xs text-ink-3 hover:text-danger bg-surface hover:bg-danger-solid/10 border border-line-strong hover:border-danger/40 rounded transition cursor-pointer"
                         >
                           <Trash2 className="w-3.5 h-3.5" />

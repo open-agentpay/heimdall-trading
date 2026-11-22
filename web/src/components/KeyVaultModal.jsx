@@ -15,6 +15,7 @@
  */
 
 import React, { useState, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import { showAlert, showConfirm } from '../utils/dialog';
 import AddKeyModal from './keyVault/AddKeyModal';
 import KeyCard from './keyVault/KeyCard';
@@ -24,6 +25,7 @@ import { Key, ShieldCheck, Lock, Plus, Sparkles, Cpu, Building2, HelpCircle, Act
 import { listVaultKeys, testVaultKey, deleteVaultKey, updateVaultKeyNetwork, activateVaultKey, updateVaultKey } from '../api/endpoints';
 
 function KeyVaultPanel({ isOpen, onClose, walletState, onConnectWallet }) {
+  const { t } = useTranslation('keyVault');
 
   const isWalletConnected = Boolean(walletState?.isConnected && walletState?.address);
 
@@ -102,14 +104,14 @@ function KeyVaultPanel({ isOpen, onClose, walletState, onConnectWallet }) {
             ...k,
             status: resStatus,
             latency: actualLatency,
-            lastTested: '刚刚',
+            lastTested: t('status.justNow'),
             lastMessage: resMsg,
           };
         }
         return k;
       }));
     } catch (e) {
-      setKeysList(prev => prev.map(k => (k.id === id || k.key_id === id) ? { ...k, status: 'FAILED', lastMessage: e.message || '探针请求异常', lastTested: '刚刚' } : k));
+      setKeysList(prev => prev.map(k => (k.id === id || k.key_id === id) ? { ...k, status: 'FAILED', lastMessage: e.message || t('messages.probeError'), lastTested: t('status.justNow') } : k));
     } finally {
       setTestingKeyId(null);
     }
@@ -124,10 +126,10 @@ function KeyVaultPanel({ isOpen, onClose, walletState, onConnectWallet }) {
       setKeysList(prev => prev.map(k => (k.id === keyObj.id || k.key_id === keyObj.id) ? {
         ...k,
         isTestnet: Boolean(res?.is_testnet ?? nextIsTestnet),
-        lastMessage: res?.message || (nextIsTestnet ? '已切换为测试网/模拟盘密钥' : '已切换为正式网密钥'),
+        lastMessage: res?.message || (nextIsTestnet ? t('messages.switchedTestnet') : t('messages.switchedMainnet')),
       } : k));
     } catch (e) {
-      showAlert(e.message || '未知错误', { title: '切换网络环境失败', tone: 'error' });
+      showAlert(e.message || t('errors.unknown'), { title: t('alerts.toggleNetworkFailed'), tone: 'error' });
     } finally {
       setTogglingKeyId(null);
     }
@@ -144,13 +146,13 @@ function KeyVaultPanel({ isOpen, onClose, walletState, onConnectWallet }) {
           return {
             ...k,
             isActive: isTarget,
-            lastMessage: isTarget ? '🟢 已切换为当前默认活跃大模型' : '',
+            lastMessage: isTarget ? t('messages.activated') : '',
           };
         }
         return k;
       }));
     } catch (e) {
-      showAlert(e.message || '未知错误', { title: '切换激活密钥失败', tone: 'error' });
+      showAlert(e.message || t('errors.unknown'), { title: t('alerts.activateFailed'), tone: 'error' });
     } finally {
       setActivatingKeyId(null);
     }
@@ -206,9 +208,9 @@ function KeyVaultPanel({ isOpen, onClose, walletState, onConnectWallet }) {
             model: res.model !== undefined ? res.model : editForm.model,
             baseUrl: res.base_url !== undefined ? res.base_url : effectiveBaseUrl,
             mask: res.key_mask || k.mask,
-            lastMessage: '配置已更新并实时生效',
+            lastMessage: t('messages.configUpdated'),
             // 更换了密钥就需要重新测试连通性，不再直接标记为 OK
-            ...(payload.api_key ? { status: 'UNTESTED', latency: null, lastTested: '未测试' } : {}),
+            ...(payload.api_key ? { status: 'UNTESTED', latency: null, lastTested: t('status.untested') } : {}),
           };
         }
         return k;
@@ -216,7 +218,7 @@ function KeyVaultPanel({ isOpen, onClose, walletState, onConnectWallet }) {
       setEditingKeyId(null);
       setEditForm({ label: '', model: '', baseUrl: '', apiKey: '' });
     } catch (err) {
-      showAlert(err.message || '网络或鉴权异常', { title: '保存配置失败', tone: 'error' });
+      showAlert(err.message || t('errors.networkOrAuth'), { title: t('alerts.saveConfigFailed'), tone: 'error' });
     } finally {
       setIsSavingEdit(false);
     }
@@ -224,7 +226,7 @@ function KeyVaultPanel({ isOpen, onClose, walletState, onConnectWallet }) {
 
   // 物理销毁凭据
   const handleDeleteKey = async (id, label) => {
-    if (!(await showConfirm(`确定要销毁凭据【${label}】吗？\n删除后，正在使用它的机器人可能会停止运行。`, { title: '销毁凭据', confirmText: '销毁', danger: true }))) {
+    if (!(await showConfirm(t('alerts.deleteConfirm', { label }), { title: t('alerts.deleteTitle'), confirmText: t('alerts.deleteConfirmText'), danger: true }))) {
       return;
     }
 
@@ -232,7 +234,7 @@ function KeyVaultPanel({ isOpen, onClose, walletState, onConnectWallet }) {
       await deleteVaultKey(id, walletState?.address);
     } catch (err) {
       // 后端没有删掉就不从列表移除：凭据仍在数据库中，不能显示成"已销毁"
-      showAlert(err.message || '网络或鉴权异常', { title: '销毁凭据失败', tone: 'error' });
+      showAlert(err.message || t('errors.networkOrAuth'), { title: t('alerts.deleteFailed'), tone: 'error' });
       return;
     }
     setKeysList(prev => prev.filter(k => (k.id !== id && k.key_id !== id)));
@@ -242,27 +244,27 @@ function KeyVaultPanel({ isOpen, onClose, walletState, onConnectWallet }) {
   const handleRevokeAll = async () => {
     const targets = keysList.map(k => ({ id: k.key_id || k.id, label: k.label || k.key_id || k.id }));
     if (targets.length === 0) {
-      showAlert('当前钱包下没有已保存的凭据。', { title: '没有可吊销的凭据' });
+      showAlert(t('alerts.revokeNone'), { title: t('alerts.revokeNoneTitle') });
       return;
     }
     const ok = await showConfirm(
-      `将从数据库删除当前钱包下的全部 ${targets.length} 个凭据（交易所与大模型），正在使用它们的机器人可能会停止运行。此操作不可恢复。`,
-      { title: '紧急吊销全部凭据', confirmText: `删除全部 ${targets.length} 个`, danger: true }
+      t('alerts.revokeConfirm', { n: targets.length }),
+      { title: t('alerts.revokeTitle'), confirmText: t('alerts.revokeConfirmText', { n: targets.length }), danger: true }
     );
     if (!ok) return;
     const failed = [];
-    for (const t of targets) {
+    for (const target of targets) {
       try {
-        await deleteVaultKey(t.id, walletState?.address);
+        await deleteVaultKey(target.id, walletState?.address);
       } catch (err) {
-        failed.push(`${t.label}：${err.message || '未知错误'}`);
+        failed.push(t('alerts.itemFailed', { label: target.label, message: err.message || t('errors.unknown') }));
       }
     }
     await loadVaultKeys();
     if (failed.length === 0) {
-      showAlert(`已删除全部 ${targets.length} 个凭据。\n如果怀疑泄露，还需要到交易所和大模型服务商后台作废对应的 API Key。`, { title: '吊销完成' });
+      showAlert(t('alerts.revokeDone', { n: targets.length }), { title: t('alerts.revokeDoneTitle') });
     } else {
-      showAlert(`已删除 ${targets.length - failed.length} 个，${failed.length} 个删除失败：\n${failed.join('\n')}`, { title: '部分凭据删除失败', tone: 'error' });
+      showAlert(t('alerts.revokePartial', { deleted: targets.length - failed.length, failed: failed.length, details: failed.join('\n') }), { title: t('alerts.revokePartialTitle'), tone: 'error' });
     }
   };
 
@@ -294,14 +296,14 @@ function KeyVaultPanel({ isOpen, onClose, walletState, onConnectWallet }) {
             </div>
             <div>
               <div className="flex items-center space-x-2">
-                <h2 className="text-sm font-bold text-ink">密钥管理安全金库 (API Key Vault)</h2>
+                <h2 className="text-sm font-bold text-ink">{t('header.title')}</h2>
                 <span className="text-xs bg-success-soft text-success border border-success-line px-2 py-0.5 rounded-full font-semibold flex items-center space-x-1">
                   <ShieldCheck className="w-3 h-3" />
-                  <span>AES-256-GCM 加密</span>
+                  <span>{t('header.encrypted')}</span>
                 </span>
               </div>
               <p className="text-xs text-ink-3 mt-0.5">
-                安全托管 Hyperliquid 交易凭据与 AI 大模型推理密钥，明文绝不外泄
+                {t('header.subtitle')}
               </p>
             </div>
           </div>
@@ -313,16 +315,17 @@ function KeyVaultPanel({ isOpen, onClose, walletState, onConnectWallet }) {
                 className="px-3 py-1.5 rounded-xl bg-brand hover:bg-brand-hover text-white text-xs font-bold shadow-xs transition flex items-center space-x-1.5"
               >
                 <Plus className="w-3.5 h-3.5" />
-                <span>新增凭据</span>
+                <span>{t('header.addKey')}</span>
               </button>
             ) : (
               <span className="px-2.5 py-1 rounded-xl bg-brand-soft border border-brand-line text-brand text-xs font-bold flex items-center space-x-1.5">
                 <Lock className="w-3 h-3" />
-                <span>金库已锁定</span>
+                <span>{t('header.locked')}</span>
               </span>
             )}
             <button 
               onClick={onClose}
+              aria-label={t('header.close')}
               className="w-7 h-7 rounded-lg hover:bg-muted-strong text-ink-3 hover:text-ink flex items-center justify-center text-xs transition"
             >
               ✕
@@ -338,13 +341,13 @@ function KeyVaultPanel({ isOpen, onClose, walletState, onConnectWallet }) {
             </div>
             <div className="space-y-1.5 max-w-md">
               <h3 className="text-base font-bold text-ink">
-                个人加密凭证金库已锁定
+                {t('locked.title')}
               </h3>
               <p className="text-xs text-ink-3 leading-relaxed">
-                当前处于未登录状态。根据 Heimdall 安全架构规范，所有交易所私钥（Hyperliquid / Binance / OKX）与大模型 API Key 均采用 AES-256-GCM 硬件级认证加密，并与用户的 Web3 钱包公钥地址一对一隔离。
+                {t('locked.desc1')}
               </p>
               <p className="text-xs text-ink-4">
-                系统严格禁止未授权跨租户检索或展示凭证。请先连接 Web3 钱包并完成身份签名，以解锁属于您的私有金库。
+                {t('locked.desc2')}
               </p>
             </div>
             <div className="pt-2">
@@ -355,7 +358,7 @@ function KeyVaultPanel({ isOpen, onClose, walletState, onConnectWallet }) {
                 className="px-5 py-2.5 rounded-xl bg-brand hover:bg-brand-hover text-white text-xs font-bold shadow-sm transition flex items-center space-x-2"
               >
                 <ShieldCheck className="w-4 h-4" />
-                <span>立即连接钱包解锁金库</span>
+                <span>{t('locked.connect')}</span>
               </button>
             </div>
           </div>
@@ -373,7 +376,7 @@ function KeyVaultPanel({ isOpen, onClose, walletState, onConnectWallet }) {
               }`}
             >
               <Building2 className="w-3.5 h-3.5" />
-              <span>交易所凭证 ({keysList.filter(k => k.category === 'exchanges').length})</span>
+              <span>{t('tabs.exchanges', { n: keysList.filter(k => k.category === 'exchanges').length })}</span>
             </button>
 
             <button
@@ -385,7 +388,7 @@ function KeyVaultPanel({ isOpen, onClose, walletState, onConnectWallet }) {
               }`}
             >
               <Cpu className="w-3.5 h-3.5" />
-              <span>AI 大模型推理 Key ({keysList.filter(k => k.category === 'llms').length})</span>
+              <span>{t('tabs.llms', { n: keysList.filter(k => k.category === 'llms').length })}</span>
             </button>
 
             <button
@@ -397,13 +400,13 @@ function KeyVaultPanel({ isOpen, onClose, walletState, onConnectWallet }) {
               }`}
             >
               <Lock className="w-3.5 h-3.5" />
-              <span>本地安全锁状态</span>
+              <span>{t('tabs.security')}</span>
             </button>
           </div>
 
           <div className="text-xs text-ink-3 flex items-center space-x-1">
             <Activity className="w-3.5 h-3.5 text-success" />
-            <span>自检探针待命: 4 项连通正常</span>
+            <span>{t('tabs.probeStatus')}</span>
           </div>
         </div>
 
@@ -415,9 +418,9 @@ function KeyVaultPanel({ isOpen, onClose, walletState, onConnectWallet }) {
             <div className="p-3.5 rounded-xl bg-brand-soft border border-brand-line flex items-start space-x-3 text-xs text-brand-strong">
               <HelpCircle className="w-4 h-4 shrink-0 mt-0.5 text-brand" />
               <div className="leading-relaxed">
-                <span className="font-bold">Hyperliquid 安全最佳实践：</span>
+                <span className="font-bold">{t('banner.hlTitle')}</span>
                 <p className="text-xs text-brand-strong/90 mt-0.5">
-                  切勿在系统内填入存有主资产的主钱包助记词或私钥！推荐在 Hyperliquid 官网通过「API Agents」派生仅具有开平仓权限的独立专用代理私钥，主资产与交易环境完全物理隔离。
+                  {t('banner.hlBody')}
                 </p>
               </div>
             </div>
@@ -427,9 +430,9 @@ function KeyVaultPanel({ isOpen, onClose, walletState, onConnectWallet }) {
             <div className="p-3.5 rounded-xl bg-success-soft border border-success-line flex items-start space-x-3 text-xs text-success-strong">
               <Sparkles className="w-4 h-4 shrink-0 mt-0.5 text-success" />
               <div className="leading-relaxed">
-                <span className="font-bold">多模型智能协同调度：</span>
+                <span className="font-bold">{t('banner.llmTitle')}</span>
                 <p className="text-xs text-success-strong/90 mt-0.5">
-                  Claude 3.5 Sonnet 负责核心多空激辩与胜率评估，DeepSeek V3 / R1 负责极速扫描全网快讯与链上异动，两者协作兼具极高智商与毫秒级反应速度。
+                  {t('banner.llmBody')}
                 </p>
               </div>
             </div>
@@ -467,8 +470,8 @@ function KeyVaultPanel({ isOpen, onClose, walletState, onConnectWallet }) {
               {currentFilteredKeys.length === 0 && (
                 <div className="text-center py-10 bg-surface rounded-xl border border-dashed border-line-strong space-y-2">
                   <div className="text-2xl">📭</div>
-                  <div className="text-xs font-bold text-ink">暂未配置该分类的凭证</div>
-                  <p className="text-xs text-ink-3">点击右上角「新增凭据」一键登记并加密存储</p>
+                  <div className="text-xs font-bold text-ink">{t('empty.title')}</div>
+                  <p className="text-xs text-ink-3">{t('empty.hint')}</p>
                 </div>
               )}
             </div>
@@ -482,7 +485,7 @@ function KeyVaultPanel({ isOpen, onClose, walletState, onConnectWallet }) {
         <div className="px-6 py-3.5 bg-subtle border-t border-line flex items-center justify-between text-xs text-ink-3">
           <span className="flex items-center space-x-1.5">
             <ShieldCheck className="w-3.5 h-3.5 text-success" />
-            <span>所有私钥与凭据仅保存在当前物理节点，绝不向第三方服务器明文同步</span>
+            <span>{t('footer.note')}</span>
           </span>
           <span className="font-mono">Vault Status: SECURE</span>
         </div>

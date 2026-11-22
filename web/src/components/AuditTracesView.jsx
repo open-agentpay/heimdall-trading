@@ -16,10 +16,13 @@ import {
   Clock, ArrowUpRight, ArrowDownRight, Minus, ChevronDown, ChevronUp,
   Cpu, Activity, RefreshCw, FileText, Sparkles, Terminal
 } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
+import { fmt } from '../i18n';
 import { getBotDecisions } from '../api/endpoints';
 import { numOrNull } from '../data/agentRoles';
 
 export default function AuditTracesView({ activeBotId = "bot_eth_debate_01" }) {
+  const { t } = useTranslation('audit');
   const [decisions, setDecisions] = useState([]);
   const [loading, setLoading] = useState(false);
   const [filterStance, setFilterStance] = useState('ALL'); // ALL | LONG | SHORT | NEUTRAL
@@ -44,9 +47,9 @@ export default function AuditTracesView({ activeBotId = "bot_eth_debate_01" }) {
     const action = item.debate_consensus || synthesis.consensus_action || null;
     const confidence = numOrNull(synthesis.final_confidence);
     const regime = item.analyst_regime || item.market_regime || analyst.regime || null;
-    const verdict = synthesis.verdict || findLog('Moderator', 'Verdict', '裁判') || null;
-    const bullThesis = bull.key_thesis || findLog('Bull', '多头') || null;
-    const bearThesis = bear.key_thesis || findLog('Bear', '空头') || null;
+    const verdict = synthesis.verdict || findLog('Moderator', 'Verdict', '裁判') || null; // i18n-ignore 匹配后端中文思维链日志
+    const bullThesis = bull.key_thesis || findLog('Bull', '多头') || null; // i18n-ignore 匹配后端中文思维链日志
+    const bearThesis = bear.key_thesis || findLog('Bear', '空头') || null; // i18n-ignore 匹配后端中文思维链日志
     const checkedRules = risk.checked_rules && typeof risk.checked_rules === 'object' ? risk.checked_rules : {};
     const hasProposal = Boolean(item.proposal_generated || item.trade_proposal || item.proposal);
 
@@ -114,6 +117,7 @@ export default function AuditTracesView({ activeBotId = "bot_eth_debate_01" }) {
       idempotencyKey: proposal.idempotency_key || null,
       rejectionReason: risk.rejection_reason || risk.rejection_rule || item.rejection_reason || null,
       timestamp: item.timestamp ? String(item.timestamp).replace('T', ' ').slice(0, 19) : '--',
+      timestampRaw: item.timestamp ?? null,
     };
   };
 
@@ -154,13 +158,13 @@ export default function AuditTracesView({ activeBotId = "bot_eth_debate_01" }) {
           </div>
           <div>
             <h1 className="text-sm font-bold text-ink flex items-center space-x-2">
-              <span>决策痕迹溯源与审计轨迹 (Audit & Observability Traces)</span>
+              <span>{t('header.title')}</span>
               <span className="text-xs font-mono bg-muted text-ink-3 border border-line-strong px-2 py-0.5 rounded-full font-semibold">
-                数据来自后端决策记录
+                {t('header.sourceBadge')}
               </span>
             </h1>
             <p className="text-xs text-ink-3">
-              全链路记录多 Agent 辩论思维链 (COT)、StepTrace 耗时、幂等键与双轨硬风控一票否决依据
+              {t('header.subtitle')}
             </p>
           </div>
         </div>
@@ -178,7 +182,7 @@ export default function AuditTracesView({ activeBotId = "bot_eth_debate_01" }) {
                     : "text-ink-3 hover:text-ink"
                 }`}
               >
-                {stance === 'ALL' ? '全部方向' : stance}
+                {stance === 'ALL' ? t('filter.all') : stance}
               </button>
             ))}
           </div>
@@ -189,7 +193,7 @@ export default function AuditTracesView({ activeBotId = "bot_eth_debate_01" }) {
             className="p-1.5 bg-surface border border-line-strong hover:border-brand rounded-lg text-xs font-semibold text-ink-2 flex items-center space-x-1.5 shadow-xs transition"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
-            <span>刷新</span>
+            <span>{t('common:refresh')}</span>
           </button>
         </div>
       </div>
@@ -199,8 +203,8 @@ export default function AuditTracesView({ activeBotId = "bot_eth_debate_01" }) {
         {!loading && filtered.length === 0 && (
           <div className="p-8 text-center text-xs text-ink-3 bg-surface rounded-xl border border-dashed border-line-strong">
             {decisions.length === 0
-              ? '该机器人暂无决策审计记录。完成首轮推演后，这里会显示真实的决策轨迹。'
-              : '当前筛选条件下没有记录。'}
+              ? t('empty.noRecords')
+              : t('empty.noMatch')}
           </div>
         )}
         {filtered.map((item) => {
@@ -213,7 +217,7 @@ export default function AuditTracesView({ activeBotId = "bot_eth_debate_01" }) {
             : isRejected
             ? 'bg-danger-soft text-danger border-danger-line'
             : 'bg-canvas text-ink-3 border-line';
-          const statusText = isApproved ? '风控通过' : isRejected ? '风控拦截' : isHalted ? '本轮无提案' : '结论未知';
+          const statusText = isApproved ? t('status.completed') : isRejected ? t('status.rejected') : isHalted ? t('status.halted') : t('status.unknown');
 
           return (
             <div 
@@ -250,15 +254,15 @@ export default function AuditTracesView({ activeBotId = "bot_eth_debate_01" }) {
                           ? 'bg-brand-soft text-brand border-brand-line'
                           : 'bg-canvas text-ink-3 border-line'
                       }`}>
-                        裁决: {item.action || '--'}{item.confidence !== null ? ` (置信度 ${Math.round(item.confidence * 100)}%)` : ''}
+                        {t('row.verdict', { action: item.action || '--' })}{item.confidence !== null ? ` ${t('row.confidence', { pct: Math.round(item.confidence * 100) })}` : ''}
                       </span>
                       {item.regime && <span className="text-xs text-ink-4 font-mono">[{item.regime}]</span>}
                     </div>
 
                     <div className="flex items-center space-x-3 text-xs text-ink-3 mt-1 font-mono">
-                      <span>决策 ID: {item.decisionId || '--'}</span>
-                      <span>时间: {item.timestamp}</span>
-                      <span>耗时: {item.totalLatencyMs !== null ? `${item.totalLatencyMs}ms` : '--'}</span>
+                      <span>{t('row.decisionId', { id: item.decisionId || '--' })}</span>
+                      <span>{t('row.time', { time: fmt.dateTime(item.timestampRaw) })}</span>
+                      <span>{t('row.latency', { latency: item.totalLatencyMs !== null ? `${item.totalLatencyMs}ms` : '--' })}</span>
                     </div>
                   </div>
                 </div>
@@ -285,14 +289,14 @@ export default function AuditTracesView({ activeBotId = "bot_eth_debate_01" }) {
                     <div className="flex items-center justify-between text-ink font-bold">
                       <span className="flex items-center space-x-1.5">
                         <span>⚖️</span>
-                        <span>Debate Moderator 投资总监终审裁决</span>
+                        <span>{t('detail.moderator')}</span>
                       </span>
                       <span className="font-mono text-xs text-ink-3 bg-muted px-2 py-0.5 rounded border border-line-strong">
                         IdempotencyKey: {item.idempotencyKey || '--'}
                       </span>
                     </div>
                     <p className="text-ink-2 leading-relaxed bg-panel p-2.5 rounded-lg border border-line-soft">
-                      {item.verdict || '本轮未返回裁决说明'}
+                      {item.verdict || t('detail.noVerdict')}
                     </p>
                   </div>
 
@@ -301,20 +305,20 @@ export default function AuditTracesView({ activeBotId = "bot_eth_debate_01" }) {
                     <div className="bg-surface p-3.5 rounded-xl border border-success-line space-y-1.5">
                       <div className="font-bold text-success flex items-center space-x-1.5">
                         <span>🐂</span>
-                        <span>多头研究员 (Bull Researcher)</span>
+                        <span>{t('detail.bull')}</span>
                       </div>
                       <p className="text-success leading-relaxed text-xs">
-                        {item.bullThesis || '本轮未返回多头论点'}
+                        {item.bullThesis || t('detail.noBull')}
                       </p>
                     </div>
 
                     <div className="bg-surface p-3.5 rounded-xl border border-brand-line space-y-1.5">
                       <div className="font-bold text-brand flex items-center space-x-1.5">
                         <span>🐻</span>
-                        <span>空头研究员 (Bear Researcher)</span>
+                        <span>{t('detail.bear')}</span>
                       </div>
                       <p className="text-ink-2 leading-relaxed text-xs">
-                        {item.bearThesis || '本轮未返回空头论点'}
+                        {item.bearThesis || t('detail.noBear')}
                       </p>
                     </div>
                   </div>
@@ -324,17 +328,17 @@ export default function AuditTracesView({ activeBotId = "bot_eth_debate_01" }) {
                     <div className="font-bold text-ink flex items-center justify-between">
                       <span className="flex items-center space-x-1.5">
                         <ShieldCheck className="w-4 h-4 text-brand" />
-                        <span>双轨风控核验审计 (Risk Enforcement Check)</span>
+                        <span>{t('detail.riskCheck')}</span>
                       </span>
                       {item.rejectionReason && (
                         <span className="text-danger font-medium text-xs">
-                          拦截原因: {item.rejectionReason}
+                          {t('detail.rejectReason', { reason: item.rejectionReason })}
                         </span>
                       )}
                     </div>
 
                     {Object.keys(item.checkedRules || {}).length === 0 && (
-                      <div className="text-xs text-ink-4">本轮未返回逐条规则明细</div>
+                      <div className="text-xs text-ink-4">{t('detail.noRules')}</div>
                     )}
                     <div className="grid grid-cols-3 gap-2 pt-1 font-mono text-xs">
                       {item.checkedRules && Object.entries(item.checkedRules).map(([ruleName, passed]) => (
@@ -356,7 +360,7 @@ export default function AuditTracesView({ activeBotId = "bot_eth_debate_01" }) {
                   {/* 4. 微秒级 StepTrace 可观测流水线 */}
                   {(!item.stepTraces || item.stepTraces.length === 0) && (
                     <div className="p-3 rounded-xl border border-dashed border-line-strong bg-surface text-xs text-ink-4">
-                      该记录没有 StepTrace 明细（数据库历史记录只保存思维链、提案与风控结论）。
+                      {t('detail.noSteps')}
                     </div>
                   )}
                   {item.stepTraces && item.stepTraces.length > 0 && (
@@ -375,14 +379,14 @@ export default function AuditTracesView({ activeBotId = "bot_eth_debate_01" }) {
                             key={idx} 
                             onClick={() => setSelectedStepDetail({ ...st, trace: item })}
                             className="py-1.5 px-2 -mx-2 rounded hover:bg-[#3D352E] cursor-pointer transition flex items-center justify-between text-xs group"
-                            title="点击展开查看向大模型提交的真实提示词与原始输出"
+                            title={t('steps.inspectHint')}
                           >
                             <span className="text-[#DFD6C7] flex items-center space-x-2">
                               <span className="text-[#8E8476]">{idx + 1}.</span>
                               <span className="group-hover:text-[#DE6438] font-medium">{st.name}</span>
                               <span className="text-[#7A6F62] text-xs">({st.agent})</span>
                               <span className="text-xs text-[#A69784] opacity-0 group-hover:opacity-100 transition flex items-center space-x-1">
-                                <span>🔍 审查 Prompt</span>
+                                <span>{t('steps.inspect')}</span>
                               </span>
                             </span>
                             <div className="flex items-center space-x-3">
@@ -431,13 +435,14 @@ export default function AuditTracesView({ activeBotId = "bot_eth_debate_01" }) {
                     </span>
                   </div>
                   <p className="text-xs text-ink-3 font-mono">
-                    决策 ID: {selectedStepDetail.trace?.decisionId || '--'} · 耗时: {selectedStepDetail.latency !== null ? `${selectedStepDetail.latency}ms` : '--'}
+                    {t('drawer.meta', { id: selectedStepDetail.trace?.decisionId || '--', latency: selectedStepDetail.latency !== null ? `${selectedStepDetail.latency}ms` : '--' })}
                   </p>
                 </div>
               </div>
 
               <button 
                 onClick={() => setSelectedStepDetail(null)}
+                aria-label={t('drawer.close')}
                 className="w-8 h-8 rounded-full bg-muted hover:bg-muted-strong text-ink-2 flex items-center justify-center text-sm font-bold transition"
               >
                 ✕
@@ -452,7 +457,7 @@ export default function AuditTracesView({ activeBotId = "bot_eth_debate_01" }) {
                 <div className="flex items-center justify-between text-ink font-bold text-xs">
                   <span className="flex items-center space-x-1.5 text-info">
                     <span>📥</span>
-                    <span>提交给 LLM 的真实提示词与行情入参 (Prompt & Context)</span>
+                    <span>{t('drawer.promptTitle')}</span>
                   </span>
                   <span className="text-xs bg-info-soft text-info px-2 py-0.5 rounded">
                     Tokens: {selectedStepDetail.tokensUsed ?? '--'}
@@ -467,9 +472,9 @@ export default function AuditTracesView({ activeBotId = "bot_eth_debate_01" }) {
                     <pre className="whitespace-pre-wrap font-mono">{selectedStepDetail.prompt}</pre>
                   ) : (
                     <div className="text-[#9E917F]">
-                      该步骤未记录完整提示词（可能未调用大模型，或使用了本地算法降级）。
+                      {t('drawer.noPrompt')}
                       {selectedStepDetail.inputSummary && (
-                        <div className="mt-2 text-[#D8CEBE]">输入摘要: {selectedStepDetail.inputSummary}</div>
+                        <div className="mt-2 text-[#D8CEBE]">{t('drawer.inputSummary', { summary: selectedStepDetail.inputSummary })}</div>
                       )}
                     </div>
                   )}
@@ -481,7 +486,7 @@ export default function AuditTracesView({ activeBotId = "bot_eth_debate_01" }) {
                 <div className="flex items-center justify-between text-ink font-bold text-xs">
                   <span className="flex items-center space-x-1.5 text-success">
                     <span>📤</span>
-                    <span>大模型处理输出 (LLM Response & Feature Schema)</span>
+                    <span>{t('drawer.responseTitle')}</span>
                   </span>
                   <span className="text-xs bg-success-soft text-success px-2 py-0.5 rounded font-bold">
                     Status: {selectedStepDetail.status}
@@ -496,18 +501,18 @@ export default function AuditTracesView({ activeBotId = "bot_eth_debate_01" }) {
                   ) : selectedStepDetail.llmResponse ? (
                     <pre className="whitespace-pre-wrap font-mono">{selectedStepDetail.llmResponse}</pre>
                   ) : selectedStepDetail.outputSummary ? (
-                    <div className="text-[#D8CEBE]">输出摘要: {selectedStepDetail.outputSummary}</div>
+                    <div className="text-[#D8CEBE]">{t('drawer.outputSummary', { summary: selectedStepDetail.outputSummary })}</div>
                   ) : (
-                    <div className="text-ink-4">该步骤未记录输出。</div>
+                    <div className="text-ink-4">{t('drawer.noOutput')}</div>
                   )}
                 </div>
               </div>
 
               {/* 3. 运行指标与检查点 */}
               <div className="p-3 bg-canvas rounded-xl border border-line-strong flex items-center justify-between text-xs text-ink-3">
-                <span>本地降级: {selectedStepDetail.fallback ? '是' : '否'}</span>
-                <span>错误信息: {selectedStepDetail.errorMessage || '无'}</span>
-                <span>幂等键: <code className="bg-surface px-1.5 py-0.5 rounded border border-line-strong">{selectedStepDetail.trace?.idempotencyKey || '--'}</code></span>
+                <span>{t('drawer.fallback', { value: selectedStepDetail.fallback ? t('drawer.yes') : t('drawer.no') })}</span>
+                <span>{t('drawer.error', { message: selectedStepDetail.errorMessage || t('drawer.none') })}</span>
+                <span>{t('drawer.idempotencyKey')} <code className="bg-surface px-1.5 py-0.5 rounded border border-line-strong">{selectedStepDetail.trace?.idempotencyKey || '--'}</code></span>
               </div>
 
             </div>
@@ -515,13 +520,13 @@ export default function AuditTracesView({ activeBotId = "bot_eth_debate_01" }) {
             {/* 底栏 */}
             <div className="p-3 bg-surface border-t border-line flex items-center justify-between">
               <span className="text-xs text-ink-4">
-                数据来源: 后端 StepTrace 记录
+                {t('drawer.dataSource')}
               </span>
               <button 
                 onClick={() => setSelectedStepDetail(null)}
                 className="px-4 py-1.5 rounded-xl bg-brand hover:bg-brand-hover text-white text-xs font-semibold shadow-xs transition"
               >
-                完成阅知
+                {t('drawer.done')}
               </button>
             </div>
 

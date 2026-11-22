@@ -1,10 +1,14 @@
 import React, { useState, useEffect } from 'react';
+import { useTranslation, Trans } from 'react-i18next';
+import { fmt } from '../../i18n';
 import { placePaperOrder, getPaperOrderQuote } from '../../api/endpoints';
 import { RefreshCw } from 'lucide-react';
 import { priceSourceMeta, formatUsd, formatDeviation, deviationClass } from './navFormat';
 
 /** 快捷沙盒模拟下单：方向、金额、杠杆、可选指定成交价（与跨所实时参考价比对偏差） */
 export default function PaperOrderPanel({ activeBotId, accountKnown, balance, onOrderPlaced }) {
+  const { t, i18n } = useTranslation('nav');
+  const locale = i18n.resolvedLanguage || i18n.language;
   // 模拟下单表单状态
   const [orderSide, setOrderSide] = useState('BUY'); // BUY | SELL | CLOSE
   const [orderAmount, setOrderAmount] = useState(1000);
@@ -28,7 +32,7 @@ export default function PaperOrderPanel({ activeBotId, accountKnown, balance, on
       setQuoteError(null);
     } catch (err) {
       setQuote(null);
-      setQuoteError(err?.message || '参考价读取失败');
+      setQuoteError(err?.message || t('order.quoteFailed'));
     } finally {
       setQuoteLoading(false);
     }
@@ -51,8 +55,9 @@ export default function PaperOrderPanel({ activeBotId, accountKnown, balance, on
       if (res && res.success) {
         setOrderStatus({
           success: true,
-          title: '撮合成交成功',
-          msg: res.message || `模拟下单撮合成交成功！最新 NAV: ${Number(res.nav || 1.0).toFixed(4)}`,
+          title: t('order.filled'),
+          // 后端提示目前只有中文；其他语言用前端文案（后端返回结构化错误码后再统一，见多语言第 5 步）
+          msg: (locale === 'zh-CN' && res.message) || t('order.filledMsg', { nav: Number(res.nav || 1.0).toFixed(4) }),
           // M2：成交价锚定跨所实时中位价，回显参考价、价格来源与偏差，便于核对成交是否可信
           pricing: {
             fillPrice: res.trade?.price,
@@ -69,34 +74,34 @@ export default function PaperOrderPanel({ activeBotId, accountKnown, balance, on
         dismissMs = 12000;
         setOrderStatus({
           success: false,
-          title: '下单未能完成',
-          msg: res?.detail || res?.message || '下单未能完成'
+          title: t('order.incomplete'),
+          msg: res?.detail || res?.message || t('order.incomplete')
         });
       }
     } catch (err) {
       // 按后端拒单原因分类展示：503 行情不可用 / 400 价格偏差 / 400 风控拦截 / 400 资金不足 / 其他
       dismissMs = 12000;
       const statusCode = err?.status;
-      const detail = err?.message || '模拟下单请求异常';
-      let title = '下单被拒绝';
+      const detail = err?.message || t('order.requestError');
+      let title = t('order.rejected');
       let kind = 'generic';
       if (statusCode === 503) {
-        title = '行情不可用，已拒单';
+        title = t('order.marketUnavailable');
         kind = 'market_unavailable';
       } else if (statusCode === 400 && detail.includes('偏离')) {
-        title = '价格偏离实时行情，已拒单';
+        title = t('order.priceDeviation');
         kind = 'price_deviation';
       } else if (statusCode === 400 && detail.includes('风控拦截')) {
-        title = '风控拦截';
+        title = t('order.riskGuard');
         kind = 'risk_guard';
       } else if (statusCode === 400 && detail.includes('资金不足')) {
-        title = '可用资金不足';
+        title = t('order.insufficientFunds');
         kind = 'insufficient_funds';
       } else if (statusCode === 401 || statusCode === 403) {
-        title = '无权限下单';
+        title = t('order.noPermission');
         kind = 'auth';
       } else if (statusCode === 0 || statusCode === 408) {
-        title = '网络异常';
+        title = t('order.network');
         kind = 'network';
       }
       setOrderStatus({
@@ -144,14 +149,14 @@ export default function PaperOrderPanel({ activeBotId, accountKnown, balance, on
         <div className="flex items-center space-x-2">
           <span className="text-base">⚡</span>
           <h3 className="text-xs font-bold text-ink">
-            沙盒模拟交易下单 (Paper Order Simulator)
+            {t('order.title')}
           </h3>
           <span className="text-xs font-mono bg-success-soft text-success border border-success-line px-2 py-0.5 rounded-full font-semibold">
             Paper Execution Engine
           </span>
         </div>
         <span className="text-xs text-ink-3">
-          撮合成交将即时更新持仓资产并沉淀成交流水与 NAV 净值走势
+          {t('order.subtitle')}
         </span>
       </div>
 
@@ -168,7 +173,7 @@ export default function PaperOrderPanel({ activeBotId, accountKnown, balance, on
             }`}
           >
             <span>🟢</span>
-            <span>做多 (BUY)</span>
+            <span>{t('order.buy')}</span>
           </button>
           <button
             type="button"
@@ -180,7 +185,7 @@ export default function PaperOrderPanel({ activeBotId, accountKnown, balance, on
             }`}
           >
             <span>🔴</span>
-            <span>做空 (SELL)</span>
+            <span>{t('order.sell')}</span>
           </button>
           <button
             type="button"
@@ -192,14 +197,14 @@ export default function PaperOrderPanel({ activeBotId, accountKnown, balance, on
             }`}
           >
             <span>⚪</span>
-            <span>平仓 (CLOSE)</span>
+            <span>{t('order.close')}</span>
           </button>
         </div>
 
         {/* 名义金额输入与购买力控制 */}
         {orderSide !== 'CLOSE' && (
           <div className="flex flex-wrap items-center gap-2">
-            <span className="text-xs text-ink-3 font-medium">委托规模:</span>
+            <span className="text-xs text-ink-3 font-medium">{t('order.size')}</span>
             <div className="relative">
               <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-ink-3 font-mono">$</span>
               <input
@@ -222,7 +227,7 @@ export default function PaperOrderPanel({ activeBotId, accountKnown, balance, on
                 { label: '25%', ratio: 0.25 },
                 { label: '50%', ratio: 0.50 },
                 { label: '75%', ratio: 0.75 },
-                { label: '100% 最大', ratio: 1.0 },
+                { label: t('order.max100'), ratio: 1.0 },
               ].map((btn) => {
                 const targetAmt = Math.max(10, Math.floor(maxPurchasingPower * btn.ratio));
                 const isActive = Number(orderAmount) === targetAmt;
@@ -248,16 +253,16 @@ export default function PaperOrderPanel({ activeBotId, accountKnown, balance, on
         {/* 杠杆选择 */}
         {orderSide !== 'CLOSE' && (
           <div className="flex items-center space-x-2">
-            <span className="text-xs text-ink-3 font-medium">杠杆:</span>
+            <span className="text-xs text-ink-3 font-medium">{t('order.leverage')}</span>
             <select
               value={orderLeverage}
               onChange={(e) => setOrderLeverage(e.target.value)}
               className="bg-surface border border-line-strong rounded-lg px-2.5 py-1.5 text-xs font-mono font-bold focus:outline-none focus:border-brand"
             >
-              <option value="1">1.0x (无杠杆)</option>
-              <option value="1.5">1.5x (对冲稳健)</option>
-              <option value="2">2.0x (双倍收益)</option>
-              <option value="3">3.0x (HardRiskGuard 风控上限)</option>
+              <option value="1">{t('order.lev1')}</option>
+              <option value="1.5">{t('order.lev15')}</option>
+              <option value="2">{t('order.lev2')}</option>
+              <option value="3">{t('order.lev3')}</option>
             </select>
           </div>
         )}
@@ -277,7 +282,7 @@ export default function PaperOrderPanel({ activeBotId, accountKnown, balance, on
               }}
               className="accent-brand"
             />
-            <span>指定成交价</span>
+            <span>{t('order.customPrice')}</span>
           </label>
           {useCustomPrice && (
             <>
@@ -289,7 +294,7 @@ export default function PaperOrderPanel({ activeBotId, accountKnown, balance, on
                   step="0.01"
                   value={customPrice}
                   onChange={(e) => setCustomPrice(e.target.value)}
-                  placeholder={referencePrice > 0 ? String(referencePrice) : '价格'}
+                  placeholder={referencePrice > 0 ? String(referencePrice) : t('order.pricePlaceholder')}
                   className={`w-28 pl-6 pr-2 py-1.5 text-xs font-mono font-bold bg-surface border rounded-lg focus:outline-none ${
                     customPriceExceeds || (customPrice !== '' && !customPriceValid)
                       ? 'border-danger text-danger focus:border-danger'
@@ -303,11 +308,11 @@ export default function PaperOrderPanel({ activeBotId, accountKnown, balance, on
                 disabled={!(referencePrice > 0)}
                 className="text-xs px-2 py-1 rounded border font-mono bg-surface text-ink-3 border-line-strong hover:border-brand disabled:opacity-40"
               >
-                用参考价
+                {t('order.useReference')}
               </button>
               {customDeviationPct !== null && (
                 <span className={`text-xs font-mono font-bold ${customPriceExceeds ? 'text-danger' : deviationClass(customDeviationPct)}`}>
-                  偏差 {formatDeviation(customDeviationPct)}
+                  {t('order.deviation', { value: formatDeviation(customDeviationPct) })}
                 </span>
               )}
             </>
@@ -328,7 +333,7 @@ export default function PaperOrderPanel({ activeBotId, accountKnown, balance, on
           } ${submitBlocked ? 'opacity-50 cursor-not-allowed' : ''}`}
         >
           <RefreshCw className={`w-3.5 h-3.5 ${orderLoading ? 'animate-spin' : ''}`} />
-          <span>{orderLoading ? '撮合中...' : '🚀 提交模拟撮合成交'}</span>
+          <span>{orderLoading ? t('order.filling') : t('order.submit')}</span>
         </button>
       </div>
 
@@ -336,17 +341,17 @@ export default function PaperOrderPanel({ activeBotId, accountKnown, balance, on
       {orderSide !== 'CLOSE' && (
         <div className="flex flex-wrap items-center justify-between text-xs px-1 pt-0.5 text-ink-3">
           <div className="flex items-center space-x-2 font-mono">
-            <span>空闲可用现金: <strong className="text-success">{accountKnown ? `$${freeCash.toLocaleString(undefined, { minimumFractionDigits: 2 })}` : '--'}</strong></span>
+            <span><Trans t={t} i18nKey="order.freeCashLine" values={{ amount: accountKnown ? fmt.usd(freeCash) : '--' }} components={{ strong: <strong className="text-success" /> }} /></span>
             <span>·</span>
-            <span>当前杠杆购买力上限: <strong className="text-ink">{accountKnown ? `$${maxPurchasingPower.toLocaleString()}` : '--'}</strong> USD</span>
+            <span><Trans t={t} i18nKey="order.buyingPowerLine" values={{ amount: accountKnown ? fmt.usd(maxPurchasingPower, 0) : '--' }} components={{ strong: <strong className="text-ink" /> }} /></span>
           </div>
           {!accountKnown && (
-            <span className="text-warning font-semibold">📡 账户数据不可用，暂不能开仓</span>
+            <span className="text-warning font-semibold">{t('order.accountUnavailable')}</span>
           )}
           {overBuyingPower && (
             <span className="text-danger font-semibold flex items-center space-x-1">
               <span>⚠️</span>
-              <span>委托规模超出可用资金上限，请降低金额或提高杠杆</span>
+              <span>{t('order.overBuyingPower')}</span>
             </span>
           )}
         </div>
@@ -356,9 +361,9 @@ export default function PaperOrderPanel({ activeBotId, accountKnown, balance, on
       <div className="flex flex-wrap items-center justify-between gap-2 text-xs px-1 text-ink-3">
         <div className="flex flex-wrap items-center gap-2 font-mono">
           <span>
-            跨所参考价:{' '}
+            {t('order.refPrice')}{' '}
             <strong className={quote?.tradable ? 'text-ink' : 'text-warning'}>
-              {quote?.tradable ? formatUsd(quote.reference_price) : (quoteLoading && !quote ? '读取中…' : '不可用')}
+              {quote?.tradable ? formatUsd(quote.reference_price) : (quoteLoading && !quote ? t('common:loading') : t('common:unavailable'))}
             </strong>
           </span>
           {quote?.tradable && (
@@ -367,25 +372,25 @@ export default function PaperOrderPanel({ activeBotId, accountKnown, balance, on
             </span>
           )}
           <span>·</span>
-          <span>指定价容差 ±{formatDeviation(maxDeviationPct)}</span>
+          <span>{t('order.tolerance', { value: formatDeviation(maxDeviationPct) })}</span>
           <button
             type="button"
             onClick={fetchQuote}
             disabled={quoteLoading}
             className="flex items-center space-x-1 text-ink-3 hover:text-brand disabled:opacity-40"
-            title="刷新参考价"
+            title={t('order.refreshQuote')}
           >
             <RefreshCw className={`w-3 h-3 ${quoteLoading ? 'animate-spin' : ''}`} />
-            <span className="font-sans">刷新</span>
+            <span className="font-sans">{t('common:refresh')}</span>
           </button>
         </div>
         {useCustomPrice && customPriceExceeds && (
           <span className="text-danger font-semibold">
-            ⚠️ 指定价偏离参考价 {formatDeviation(customDeviationPct)}，超过 ±{formatDeviation(maxDeviationPct)} 容差，提交将被拒绝
+            {t('order.overTolerance', { value: formatDeviation(customDeviationPct), max: formatDeviation(maxDeviationPct) })}
           </span>
         )}
         {useCustomPrice && customPrice !== '' && !customPriceValid && (
-          <span className="text-danger font-semibold">⚠️ 请输入大于 0 的价格</span>
+          <span className="text-danger font-semibold">{t('order.invalidPrice')}</span>
         )}
         {!quote?.tradable && (quote?.message || quoteError) && (
           <span className="text-warning font-semibold">📡 {quote?.message || quoteError}</span>
@@ -410,7 +415,7 @@ export default function PaperOrderPanel({ activeBotId, accountKnown, balance, on
               </span>
               <div className="min-w-0">
                 <div className="font-bold">
-                  {orderStatus.title || (orderStatus.success ? '撮合成交成功' : '下单被拒绝')}
+                  {orderStatus.title || (orderStatus.success ? t('order.filled') : t('order.rejected'))}
                   {!orderStatus.success && orderStatus.statusCode ? (
                     <span className="ml-1.5 font-mono font-normal opacity-70">HTTP {orderStatus.statusCode}</span>
                   ) : null}
@@ -418,12 +423,12 @@ export default function PaperOrderPanel({ activeBotId, accountKnown, balance, on
                 <div className="mt-0.5 font-medium break-words">{orderStatus.msg}</div>
                 {orderStatus.kind === 'market_unavailable' && (
                   <div className="mt-1 text-xs opacity-80">
-                    跨所行情源暂不可用或价格严重背离，为避免按失真价格成交已暂停下单，请稍后重试。
+                    {t('order.marketUnavailableHint')}
                   </div>
                 )}
                 {orderStatus.kind === 'price_deviation' && (
                   <div className="mt-1 text-xs opacity-80">
-                    成交价须贴近跨所实时中位价（默认容差 1%），不填价格将直接按实时价成交。
+                    {t('order.deviationHint')}
                   </div>
                 )}
               </div>
@@ -432,7 +437,7 @@ export default function PaperOrderPanel({ activeBotId, accountKnown, balance, on
               type="button"
               onClick={() => setOrderStatus(null)}
               className="shrink-0 opacity-60 hover:opacity-100 font-mono"
-              aria-label="关闭提示"
+              aria-label={t('common:dismiss')}
             >
               ✕
             </button>
@@ -442,17 +447,17 @@ export default function PaperOrderPanel({ activeBotId, accountKnown, balance, on
           {orderStatus.success && orderStatus.pricing && (
             <div className="mt-2 pt-2 border-t border-success-line grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs text-ink-2">
               <div>
-                <div className="text-ink-3">成交价</div>
+                <div className="text-ink-3">{t('order.fillPrice')}</div>
                 <div className="font-mono font-bold text-ink">{formatUsd(orderStatus.pricing.fillPrice)}</div>
               </div>
               <div>
-                <div className="text-ink-3">价格来源</div>
+                <div className="text-ink-3">{t('order.priceSource')}</div>
                 <span className={`inline-block mt-0.5 px-1.5 py-0.5 rounded border font-semibold ${priceSourceMeta(orderStatus.pricing.priceSource).className}`}>
                   {priceSourceMeta(orderStatus.pricing.priceSource).label}
                 </span>
               </div>
               <div>
-                <div className="text-ink-3">跨所参考价</div>
+                <div className="text-ink-3">{t('order.refPriceLabel')}</div>
                 <div className="font-mono font-bold text-ink">
                   {formatUsd(orderStatus.pricing.referencePrice)}
                 </div>
@@ -461,7 +466,7 @@ export default function PaperOrderPanel({ activeBotId, accountKnown, balance, on
                 )}
               </div>
               <div>
-                <div className="text-ink-3">偏差</div>
+                <div className="text-ink-3">{t('order.deviationLabel')}</div>
                 <div className={`font-mono font-bold ${deviationClass(orderStatus.pricing.deviationPct)}`}>
                   {formatDeviation(orderStatus.pricing.deviationPct)}
                 </div>
@@ -470,7 +475,7 @@ export default function PaperOrderPanel({ activeBotId, accountKnown, balance, on
           )}
           {orderStatus.success && orderStatus.pricing?.priceSource === 'SIMULATED' && (
             <div className="mt-2 text-xs text-warning font-semibold">
-              ⚠️ 本笔按离线仿真价成交（已显式开启离线兜底），净值与盈亏不代表真实行情。
+              {t('order.simulatedWarn')}
             </div>
           )}
         </div>

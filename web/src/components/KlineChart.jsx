@@ -12,6 +12,8 @@
  */
 
 import React, { useState, useEffect, useRef } from 'react';
+import { useTranslation, Trans } from 'react-i18next';
+import { fmt } from '../i18n';
 import { cssColor, useThemeName } from '../utils/theme';
 
 // 计算 EMA 指数移动平均线
@@ -39,6 +41,9 @@ export default function KlineChart({
   interval = "15m",
   trades = [],
 }) {
+  const { t, i18n } = useTranslation('arena');
+  // TradingView 组件语言随界面语言：zh-CN -> zh_CN，en-US -> en
+  const tvLocale = (i18n.resolvedLanguage || i18n.language) === 'en-US' ? 'en' : 'zh_CN';
   const [chartEngine, setChartEngine] = useState("tradingview"); // "tradingview" | "bifrost"
   // M5：不再预置 2024 年的离线假 K 线与写死的标的价格；未取到真实数据前显示加载 / 不可用状态
   const [klines, setKlines] = useState([]);
@@ -134,7 +139,7 @@ export default function KlineChart({
       timezone: "Etc/UTC",
       theme: themeName === "dark" ? "dark" : "light",
       style: "1",
-      locale: "zh_CN",
+      locale: tvLocale,
       enable_publishing: false,
       allow_symbol_change: true,
       hide_side_toolbar: false,
@@ -149,7 +154,7 @@ export default function KlineChart({
     });
 
     container.appendChild(script);
-  }, [chartEngine, symbol, activeInterval, themeName]);
+  }, [chartEngine, symbol, activeInterval, themeName, tvLocale]);
 
   // ---------------------------------------------------------------------------
   // 2. 从后端加载零前视偏差 K 线数据
@@ -172,7 +177,7 @@ export default function KlineChart({
         if (!isSubscribed) return;
         const data = payload && Array.isArray(payload.data) ? payload.data : [];
         if (data.length === 0) {
-          setKlinesState({ status: 'empty', provenance: payload?.provenance || 'UNAVAILABLE', message: '后端未返回 K 线数据' });
+          setKlinesState({ status: 'empty', provenance: payload?.provenance || 'UNAVAILABLE', message: '' });
           return;
         }
         setKlines(data);
@@ -185,7 +190,7 @@ export default function KlineChart({
       })
       .catch((err) => {
         if (!isSubscribed) return;
-        setKlinesState({ status: 'error', provenance: 'UNAVAILABLE', message: err?.message || '网络请求失败' });
+        setKlinesState({ status: 'error', provenance: 'UNAVAILABLE', message: err?.message || '' });
       });
 
     return () => {
@@ -370,7 +375,7 @@ export default function KlineChart({
             <span className="text-base">⚡</span>
             <span>{symbol}-USDT</span>
             <span className="text-xs bg-muted text-ink-3 px-1.5 py-0.2 rounded font-normal font-mono">
-              永续合约
+              {t('kline.perpetual')}
             </span>
           </div>
 
@@ -394,7 +399,7 @@ export default function KlineChart({
                   : "text-ink-3 hover:text-ink"
               }`}
             >
-              <span>🏛️ Bifrost 底座</span>
+              <span>{t('kline.bifrost')}</span>
             </button>
           </div>
         </div>
@@ -426,7 +431,7 @@ export default function KlineChart({
                   onChange={(e) => setShowIndicators(e.target.checked)}
                   className="rounded text-brand" 
                 />
-                <span>EMA均线</span>
+                <span>{t('kline.ema')}</span>
               </label>
               <label className="flex items-center space-x-1 cursor-pointer">
                 <input 
@@ -435,7 +440,7 @@ export default function KlineChart({
                   onChange={(e) => setShowTradeMarkers(e.target.checked)}
                   className="rounded text-success" 
                 />
-                <span>成交打点</span>
+                <span>{t('kline.tradeMarkers')}</span>
               </label>
             </div>
           )}
@@ -447,15 +452,15 @@ export default function KlineChart({
             // M5：状态灯反映真实连接 / 数据来源，不再常亮绿色 LIVE
             const st = chartEngine === "tradingview"
               ? (wsConnected
-                  ? { dot: 'bg-success-solid animate-pulse', text: 'TV · BINANCE WS 已连接' }
-                  : { dot: 'bg-ink-4', text: 'TV · BINANCE WS 未连接' })
+                  ? { dot: 'bg-success-solid animate-pulse', text: t('kline.status.tvConnected') }
+                  : { dot: 'bg-ink-4', text: t('kline.status.tvDisconnected') })
               : klinesState.status === 'loading'
-              ? { dot: 'bg-warning-solid animate-pulse', text: `BIFROST · ${activeInterval} 加载中` }
+              ? { dot: 'bg-warning-solid animate-pulse', text: t('kline.status.loading', { interval: activeInterval }) }
               : klinesState.status === 'ok' && klinesState.provenance === 'SIMULATED'
-              ? { dot: 'bg-warning-solid', text: `BIFROST · ${activeInterval} 离线仿真数据` }
+              ? { dot: 'bg-warning-solid', text: t('kline.status.simulated', { interval: activeInterval }) }
               : klinesState.status === 'ok'
               ? { dot: 'bg-success-solid animate-pulse', text: `BIFROST · ${activeInterval} ZERO-LOOKAHEAD` }
-              : { dot: 'bg-danger-solid', text: `BIFROST · ${activeInterval} 数据不可用` };
+              : { dot: 'bg-danger-solid', text: t('kline.status.unavailable', { interval: activeInterval }) };
             return (
               <div className="flex items-center space-x-1.5 px-2 py-0.5 rounded-md bg-canvas border border-line">
                 <span className={`w-2 h-2 rounded-full ${st.dot}`}></span>
@@ -485,16 +490,16 @@ export default function KlineChart({
               <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
                 <div className="px-4 py-3 rounded-xl bg-surface/90 border border-line text-xs text-ink-3 text-center shadow-xs">
                   {klinesState.status === 'loading' || klinesState.status === 'idle'
-                    ? '⏳ 正在加载 K 线数据…'
+                    ? t('kline.loading')
                     : klinesState.status === 'empty'
-                    ? '📭 暂无 K 线数据'
-                    : `📡 K 线数据不可用：${klinesState.message || '请检查后端服务与行情源'}`}
+                    ? t('kline.empty')
+                    : t('kline.unavailable', { reason: klinesState.message || t('kline.networkFailed') })}
                 </div>
               </div>
             )}
             {klinesState.status === 'ok' && klinesState.provenance === 'SIMULATED' && (
               <div className="absolute top-2 left-1/2 -translate-x-1/2 px-3 py-1 rounded-lg bg-warning-soft border border-warning-line text-xs font-semibold text-warning pointer-events-none">
-                ⚠️ 所有外部行情源不可用，当前为离线仿真 K 线，非真实行情
+                {t('kline.simulatedBanner')}
               </div>
             )}
           </>
@@ -504,8 +509,8 @@ export default function KlineChart({
       {/* 底部行情条 */}
       <div className="h-7 px-4 bg-panel border-t border-line-soft flex items-center justify-between text-xs text-ink-3">
         <div className="flex items-center space-x-4">
-          <span>最新标记价: <strong className="font-mono text-ink">{Number.isFinite(latestPrice) ? `$${latestPrice.toFixed(2)}` : '--'}</strong></span>
-          <span>价格源: <span className={`font-mono ${wsConnected ? 'text-success' : 'text-ink-4'}`}>{wsConnected ? 'Binance WS 实时' : 'Binance WS 未连接'}</span></span>
+          <span><Trans t={t} i18nKey="kline.markPrice" values={{ price: Number.isFinite(latestPrice) ? fmt.price(latestPrice) : '--' }} components={{ strong: <strong className="font-mono text-ink" /> }} /></span>
+          <span>{t('kline.priceSource')} <span className={`font-mono ${wsConnected ? 'text-success' : 'text-ink-4'}`}>{wsConnected ? t('kline.wsLive') : t('kline.wsDisconnected')}</span></span>
         </div>
         <div className="flex items-center space-x-2">
           <span>Heimdall Zero-Lookahead Engine v2.0</span>

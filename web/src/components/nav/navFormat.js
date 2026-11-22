@@ -1,15 +1,18 @@
-/** 净值页共用的格式化工具：成交价来源标签、金额、价格偏差 */
+/** 净值页共用的格式化工具：成交价来源标签、金额、价格偏差（文案见 i18n 语言包 nav.priceSource） */
+import i18n, { getLocale } from '../../i18n';
 
 // 成交价来源标签（对应后端 place_paper_order 返回的 price_source / reference_price_source）
 export const PRICE_SOURCE_META = {
-  LIVE: { label: '跨所实时中位价', className: 'bg-success-soft text-success border-success-line' },
-  USER: { label: '手动指定价', className: 'bg-subtle text-ink-2 border-line-strong' },
-  SIMULATED: { label: '离线仿真价', className: 'bg-warning-soft text-warning border-warning-line' },
+  LIVE: { labelKey: 'nav:priceSource.live', className: 'bg-success-soft text-success border-success-line' },
+  USER: { labelKey: 'nav:priceSource.user', className: 'bg-subtle text-ink-2 border-line-strong' },
+  SIMULATED: { labelKey: 'nav:priceSource.simulated', className: 'bg-warning-soft text-warning border-warning-line' },
 };
 
 export function priceSourceMeta(source) {
-  return PRICE_SOURCE_META[String(source || '').toUpperCase()] || {
-    label: source || '未知来源',
+  const meta = PRICE_SOURCE_META[String(source || '').toUpperCase()];
+  if (meta) return { label: i18n.t(meta.labelKey), className: meta.className };
+  return {
+    label: source || i18n.t('nav:priceSource.unknown'),
     className: 'bg-subtle text-ink-3 border-line-strong',
   };
 }
@@ -17,7 +20,7 @@ export function priceSourceMeta(source) {
 export function formatUsd(value) {
   const num = Number(value);
   if (!Number.isFinite(num) || num <= 0) return '--';
-  return `$${num.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  return `$${num.toLocaleString(getLocale(), { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
 export function formatDeviation(value) {

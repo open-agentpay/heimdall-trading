@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import i18n from '../i18n';
 import { clearAuthSession } from '../api/endpoints';
 
 export const DISCONNECTED_WALLET = {
@@ -33,7 +34,7 @@ export function useWalletSession({ showToast, onAuthExpired } = {}) {
   useEffect(() => {
     const onExpired = (evt) => {
       setWalletState({ ...DISCONNECTED_WALLET });
-      callbacksRef.current.showToast?.(`🔐 ${evt?.detail?.message || '会话已过期，请重新连接钱包签名登录'}`, 'critical');
+      callbacksRef.current.showToast?.(`🔐 ${evt?.detail?.message || i18n.t('app:wallet.sessionExpired')}`, 'critical');
       callbacksRef.current.onAuthExpired?.();
     };
     window.addEventListener('heimdall:auth-expired', onExpired);
@@ -49,7 +50,7 @@ export function useWalletSession({ showToast, onAuthExpired } = {}) {
     if (newWalletData.address) {
       localStorage.setItem('heimdall_wallet_address', newWalletData.address);
     }
-    callbacksRef.current.showToast?.(`🎉 钱包连接成功！已授权: ${newWalletData.shortAddress || newWalletData.address}`, 'success');
+    callbacksRef.current.showToast?.(i18n.t('app:wallet.connected', { address: newWalletData.shortAddress || newWalletData.address }), 'success');
   }, []);
 
   // 断开连接（清空持久化状态与登录会话）
@@ -58,7 +59,7 @@ export function useWalletSession({ showToast, onAuthExpired } = {}) {
     localStorage.removeItem('heimdall_wallet_connected');
     localStorage.removeItem('heimdall_wallet_state');
     clearAuthSession();
-    callbacksRef.current.showToast?.('👋 钱包已安全断开连接', 'info');
+    callbacksRef.current.showToast?.(i18n.t('app:wallet.disconnected'), 'info');
   }, []);
 
   return { walletState, handleConnectWallet, handleDisconnectWallet };

@@ -1,0 +1,61 @@
+{
+  "header": {
+    "title": "决策痕迹溯源与审计轨迹 (Audit & Observability Traces)",
+    "sourceBadge": "数据来自后端决策记录",
+    "subtitle": "全链路记录多 Agent 辩论思维链 (COT)、StepTrace 耗时、幂等键与双轨硬风控一票否决依据"
+  },
+  "filter": {
+    "all": "全部方向"
+  },
+  "empty": {
+    "noRecords": "该机器人暂无决策审计记录。完成首轮推演后，这里会显示真实的决策轨迹。",
+    "noMatch": "当前筛选条件下没有记录。"
+  },
+  "status": {
+    "completed": "风控通过",
+    "rejected": "风控拦截",
+    "halted": "本轮无提案",
+    "unknown": "结论未知"
+  },
+  "row": {
+    "verdict": "裁决: {{action}}",
+    "confidence": "(置信度 {{pct}}%)",
+    "decisionId": "决策 ID: {{id}}",
+    "time": "时间: {{time}}",
+    "latency": "耗时: {{latency}}"
+  },
+  "detail": {
+    "moderator": "Debate Moderator 投资总监终审裁决",
+    "noVerdict": "本轮未返回裁决说明",
+    "bull": "多头研究员 (Bull Researcher)",
+    "noBull": "本轮未返回多头论点",
+    "bear": "空头研究员 (Bear Researcher)",
+    "noBear": "本轮未返回空头论点",
+    "riskCheck": "双轨风控核验审计 (Risk Enforcement Check)",
+    "rejectReason": "拦截原因: {{reason}}",
+    "noRules": "本轮未返回逐条规则明细",
+    "noSteps": "该记录没有 StepTrace 明细（数据库历史记录只保存思维链、提案与风控结论）。"
+  },
+  "steps": {
+    "inspectHint": "点击展开查看向大模型提交的真实提示词与原始输出",
+    "inspect": "🔍 审查 Prompt"
+  },
+  "drawer": {
+    "meta": "决策 ID: {{id}} · 耗时: {{latency}}",
+    "close": "关闭",
+    "promptTitle": "提交给 LLM 的真实提示词与行情入参 (Prompt & Context)",
+    "noPrompt": "该步骤未记录完整提示词（可能未调用大模型，或使用了本地算法降级）。",
+    "inputSummary": "输入摘要: {{summary}}",
+    "responseTitle": "大模型处理输出 (LLM Response & Feature Schema)",
+    "outputSummary": "输出摘要: {{summary}}",
+    "noOutput": "该步骤未记录输出。",
+    "fallback": "本地降级: {{value}}",
+    "yes": "是",
+    "no": "否",
+    "error": "错误信息: {{message}}",
+    "none": "无",
+    "idempotencyKey": "幂等键:",
+    "dataSource": "数据来源: 后端 StepTrace 记录",
+    "done": "完成阅知"
+  }
+}

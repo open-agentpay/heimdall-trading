@@ -10,7 +10,8 @@
  * 4. 真实集成 Web3 钱包挑战验签与密钥金库安全托管。
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import { useTranslation } from 'react-i18next';
 import { showConfirm } from './utils/dialog';
 import Header from './components/Header';
 import Sidebar from './components/Sidebar';
@@ -51,7 +52,12 @@ import {
   sendBrowserNotification,
 } from './utils/alerts';
 
+/** 是否带有真实决策内容（仅有 symbol / latest_price 的占位记录不算） */
+const hasDecisionContent = (record) => Boolean(record) && !record.error
+  && Object.keys(record).some((k) => k !== 'symbol' && k !== 'latest_price');
+
 export default function App() {
+  const { t, i18n } = useTranslation('app');
   const { notification, showToast } = useToast();
   const [activeTab, setActiveTab] = useState("arena"); // arena | swarm | sentiment | nav | risk | audit
   const [activeBotId, setActiveBotId] = useState(() => {
@@ -83,9 +89,9 @@ export default function App() {
     if (!next) {
       await requestNotificationPermission();
       playTradeFillChime();
-      showToast('🔊 已开启成交与极端风控音效及桌面通知', 'info');
+      showToast(t('sound.on'), 'info');
     } else {
-      showToast('🔇 已静音告警提示音', 'info');
+      showToast(t('sound.off'), 'info');
     }
   };
   const [isCapitalModalOpen, setIsCapitalModalOpen] = useState(false);
@@ -93,6 +99,16 @@ export default function App() {
     showToast,
     onAuthExpired: () => setIsWalletModalOpen(true),
   });
+
+  // 切换语言后按当前语言重新生成席位文字（席位文字是收到决策时算好存进 state 的）
+  const lastLanguageRef = useRef(i18n.resolvedLanguage);
+  useEffect(() => {
+    if (lastLanguageRef.current === i18n.resolvedLanguage) return;
+    lastLanguageRef.current = i18n.resolvedLanguage;
+    setAgents(hasDecisionContent(decisionRecord)
+      ? applyDecisionToAgents(createPendingAgents(), decisionRecord)
+      : createPendingAgents());
+  }, [i18n.resolvedLanguage]);
 
   // 2. 根据后端真实决策更新席位（映射逻辑见 data/decisionToAgents.js）
   const updateAgentsFromDecision = (record) => {
@@ -119,14 +135,14 @@ export default function App() {
     const id = bot?.bot_id || bot?.id;
     if (!id) return;
     if (!localStorage.getItem('heimdall_session_token')) {
-      showToast('🔐 删除机器人需要先连接钱包签名鉴权', 'critical');
+      showToast(t('bot.deleteNeedAuth'), 'critical');
       setIsWalletModalOpen(true);
       return;
     }
     const label = bot?.name || id;
     const confirmed = await showConfirm(
-      `确认停止并彻底删除机器人「${label}」(${id}) 吗？\n该操作将撤销其残留挂单并清理对应的历史决策、净值与成交流水，且不可恢复。`,
-      { title: '删除机器人', confirmText: '停止并删除', danger: true }
+      t('bot.deleteConfirm', { label, id }),
+      { title: t('bot.deleteTitle'), confirmText: t('bot.deleteConfirmText'), danger: true }
     );
     if (!confirmed) return;
     try {
@@ -144,9 +160,9 @@ export default function App() {
           setDecisionRecord(null);
         }
       }
-      showToast(`🗑️ 已停止并删除机器人: ${label}`, 'success');
+      showToast(t('bot.deleted', { label }), 'success');
     } catch (err) {
-      showToast(`删除失败: ${err.message}`, 'critical');
+      showToast(t('bot.deleteFailed', { message: err.message }), 'critical');
     }
   };
 
@@ -175,14 +191,14 @@ export default function App() {
     setAgents(createPendingAgents());
     fetchBotLatest(id);
     const target = botsList.find(b => (b.bot_id || b.id) === id);
-    showToast(`已切换至机器人: ${target?.name || id} (${target?.symbol || 'USDT'})`);
+    showToast(t('bot.switched', { name: target?.name || id, symbol: target?.symbol || 'USDT' }));
   };
 
 
   // 手动强制触发一轮最新决策推演与对弈刷新（后端已拦截匿名 refresh=true）
   const handleManualRefresh = async () => {
     if (!localStorage.getItem('heimdall_session_token')) {
-      showToast('🔐 强制刷新 LLM 推演需要先连接钱包签名鉴权', 'critical');
+      showToast(t('refresh.needAuth'), 'critical');
       setIsWalletModalOpen(true);
       return;
     }
@@ -190,9 +206,9 @@ export default function App() {
     try {
       await fetchBotLatest(activeBotId, true);
       await fetchBots();
-      showToast("🔄 对弈台已执行最新一轮推演并刷新", "success");
+      showToast(t('refresh.done'), "success");
     } catch (e) {
-      showToast("刷新失败: " + e.message, "critical");
+      showToast(t('refresh.failed', { message: e.message }), "critical");
     } finally {
       setIsRefreshing(false);
     }
@@ -221,22 +237,22 @@ export default function App() {
       if (botId === activeBotId && result) {
         setDecisionRecord(result);
         updateAgentsFromDecision(result);
-        showToast(`⚡ WebSocket 收到 [${botId}] 最新决策推演`, "info");
+        showToast(t('ws.step', { botId }), "info");
       }
     },
     onOrder: (orderEvt, botId) => {
       playTradeFillChime();
-      const msg = `成交回报 [${botId || activeBotId}]: ${orderEvt?.symbol || ''} ${orderEvt?.execution_id || orderEvt?.order_id || ''}`;
-      sendBrowserNotification('Heimdall 订单成交', msg);
+      const msg = t('ws.orderFill', { botId: botId || activeBotId, symbol: orderEvt?.symbol || '', orderId: orderEvt?.execution_id || orderEvt?.order_id || '' });
+      sendBrowserNotification(t('ws.orderNotifyTitle'), msg);
       showToast(`✅ ${msg}`, 'success');
       fetchBots();
       getBotTrades(activeBotId, 30).then((res) => { if (Array.isArray(res)) setTrades(res); }).catch(() => {});
     },
     onRiskAlert: (alert) => {
       playRiskAlertBeep();
-      const msg = alert?.message || alert?.action || '触发硬风控拦截';
-      sendBrowserNotification('Heimdall 极端风控告警', msg);
-      showToast(`🚨 风控熔断告警: ${msg}`, "critical");
+      const msg = alert?.message || alert?.action || t('ws.riskFallback');
+      sendBrowserNotification(t('ws.riskNotifyTitle'), msg);
+      showToast(t('ws.riskToast', { message: msg }), "critical");
     },
   });
 
@@ -267,21 +283,21 @@ export default function App() {
   const handleEmergencyKill = async () => {
     try {
       const res = await triggerEmergencyKill(activeBotId);
-      showToast(res.message || "🚨 [紧急熔断触发] 已撤销全部挂单并强制锁仓！", "critical");
+      showToast(res.message || t('kill.done'), "critical");
       await fetchBots();
     } catch (e) {
-      showToast(`🚨 急停指令下发: ${e.message}`, "critical");
+      showToast(t('kill.failed', { message: e.message }), "critical");
     }
   };
 
   // 下发撮合订单 / 单步执行响应 (真实调用单步决策)
   const handleExecuteTrade = async () => {
     try {
-      showToast(`⚡ 正在触发机器人 [${activeBotId}] 启动单步多 Agent 闭环推演...`, "info");
+      showToast(t('step.starting', { botId: activeBotId }), "info");
       const res = await stepBot(activeBotId);
       // 后端失败即关闭（宏观日历失效 / 凭证缺失 / 部署安全预检未通过 / 行情异常）时如实提示，不更新席位
       if (res && res.result && res.result.error) {
-        showToast(`⛔ 本轮推演被拒绝: ${res.result.error}`, "critical");
+        showToast(t('step.rejected', { error: res.result.error }), "critical");
         await fetchBots();
         return;
       }
@@ -290,11 +306,11 @@ export default function App() {
         updateAgentsFromDecision(res.result);
         const p = res.result.trade_proposal;
         const sym = res.result.symbol || 'ETH';
-        showToast(`⚡ [推演完成] ${sym} 现价 ${fmtUsd(res.result.latest_price)} | 结论: ${res.result.debate_consensus || '--'}${p ? ' | 已生成提案' : ' | 无提案'}`, "success");
+        showToast(t('step.done', { symbol: sym, price: fmtUsd(res.result.latest_price), consensus: res.result.debate_consensus || '--', proposal: p ? t('step.withProposal') : t('step.noProposal') }), "success");
       }
       await fetchBots();
     } catch (e) {
-      showToast(`⚡ 触发单步决策: ${e.message}`, "info");
+      showToast(t('step.failed', { message: e.message }), "info");
     }
   };
 
@@ -309,15 +325,8 @@ export default function App() {
         activeTab={activeTab} 
         onTabChange={(tab) => {
           setActiveTab(tab);
-          const tabNames = {
-            arena: '对弈大厅',
-            swarm: '蜂群编排',
-            sentiment: '情绪与情报',
-            nav: 'NAV 单位净值',
-            risk: '七大铁律风控',
-            audit: '审计轨迹'
-          };
-          showToast(`已切换至视图: ${tabNames[tab] || tab}`);
+          const viewName = i18n.exists(`app:views.${tab}`) ? t(`views.${tab}`) : tab;
+          showToast(t('views.switched', { name: viewName }));
         }} 
         walletState={walletState}
         onOpenWalletModal={() => setIsWalletModalOpen(true)}
@@ -470,7 +479,7 @@ export default function App() {
         onCreated={(newBotId) => {
           fetchBots();
           setActiveBotId(newBotId);
-          showToast(`🎉 成功创建机器人 [${newBotId}]！已无缝装载席位`, "success");
+          showToast(t('bot.created', { botId: newBotId }), "success");
         }}
       />
 
@@ -480,7 +489,7 @@ export default function App() {
         onClose={() => setIsCapitalModalOpen(false)}
         onUpdated={() => {
           fetchBots();
-          showToast("📊 机器人组合资金配比已同步更新", "success");
+          showToast(t('capital.updated'), "success");
         }}
       />
 

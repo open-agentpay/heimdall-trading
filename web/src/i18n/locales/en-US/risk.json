@@ -1,0 +1,93 @@
+{
+  "header": {
+    "title": "Extreme-Market Risk Radar & Reconciliation Guard",
+    "subtitle": "Deterministic millisecond-level guards · Live exchange position reconciliation & dead man's switch monitoring",
+    "probe": "Probe now"
+  },
+  "radar": {
+    "requestFailed": "Radar request failed",
+    "noRules": "Radar returned no rule data"
+  },
+  "kill": {
+    "button": "Global kill switch",
+    "killing": "Killing all activity...",
+    "confirmTitle": "Global kill switch",
+    "confirmMessage": "Trigger the global emergency kill switch?\nThis immediately broadcasts cancel-all orders to every exchange and force-stops all strategy workers.",
+    "confirmButton": "Confirm kill",
+    "success": "Kill switch triggered. All open orders have been canceled.",
+    "failedTitle": "Kill switch failed"
+  },
+  "overall": {
+    "triggered": "Extreme-market hard guard triggered — entries blocked",
+    "warning": "Guards on alert (watch volatility)",
+    "unavailable": "Risk radar telemetry unavailable",
+    "loading": "Fetching risk radar telemetry…",
+    "healthy": "All rules healthy",
+    "rulesClear": "{{clear}}/{{total}} rules clear",
+    "awaiting": "Awaiting telemetry",
+    "symbolError": "Symbol: {{symbol}} · {{error}}",
+    "symbolDesc": "Symbol: {{symbol}} · On any 1m flash spike, cross-exchange spread isolation or macro blackout window, new position proposals are rejected within milliseconds",
+    "lastProbe": "Last probe",
+    "blockState": "Block status",
+    "blocking": "{{n}} blocking",
+    "warnings": "{{n}} warnings",
+    "noneTriggered": "0 triggered (allowing)"
+  },
+  "reconcile": {
+    "title": "Exchange Position Reconciler (ExchangeReconciler) & Dead Man's Switch",
+    "running": "Reconciling...",
+    "runNow": "🔍 Reconcile now",
+    "resume": "✅ Verified — resume bot",
+    "consistency": "Reconciliation status",
+    "cleanStatus": "CLEAN (books match exchange)",
+    "diffStatus": "⚠️ Discrepancies ({{n}})",
+    "notRun": "Not reconciled yet (use the button on the right)",
+    "botStatus": "Bot status & positions",
+    "openPositions": "{{n}} open positions",
+    "deadManSwitch": "Dead man's switch (DeadManSwitch)",
+    "dmsOnline": "● Online ({{n}} heartbeats)",
+    "dmsOff": "○ Disabled (dev mode)",
+    "resumed": "Reconciliation clean — bot resumed from paused/circuit-broken state!",
+    "clean": "Exchange and local positions match exactly — no ghost positions.",
+    "foundCount": "Reconciliation found {{n}} discrepancies",
+    "found": "Reconciliation found discrepancies",
+    "autoPaused": ". The bot was auto-paused to protect capital!",
+    "failed": "Reconciliation failed: {{message}}"
+  },
+  "rules": {
+    "unavailable": "Risk radar telemetry unavailable: {{error}}",
+    "connecting": "Connecting to /api/v1/market/radar for risk telemetry…",
+    "ruleNo": "Rule {{id}}",
+    "liveTelemetry": "Live telemetry",
+    "items": {
+      "r1": {
+        "name": "Macro Event Blackout Window",
+        "desc": "Blocks new positions during the blackout window around major macro events (calendar: config/macro_events.yaml)."
+      },
+      "r2": {
+        "name": "1m Price Spike Guard",
+        "desc": "Rejects entries when the latest candle's range exceeds the flash-spike circuit-breaker threshold."
+      },
+      "r3": {
+        "name": "Pin Bar Liquidation Detector",
+        "desc": "Flags extreme upper/lower wicks using the latest candle's wick-to-body ratio."
+      },
+      "r4": {
+        "name": "Spread & Liquidity Guard (bps)",
+        "desc": "Monitors the live cross-exchange spread in bps and isolates the market when liquidity deteriorates."
+      },
+      "r5": {
+        "name": "Funding Squeeze Alert",
+        "desc": "Warns of crowded positioning when annualized funding is below -20% or above +40%."
+      },
+      "r6": {
+        "name": "Portfolio Exposure Guard",
+        "desc": "Caps total registered portfolio exposure and blocks offsetting (wash) positions across bots."
+      },
+      "r7": {
+        "name": "Gateway RPC Latency & Heartbeat",
+        "desc": "Measures data-gateway RPC latency and the dead man's switch heartbeat; isolates on gateway failure."
+      }
+    }
+  }
+}
