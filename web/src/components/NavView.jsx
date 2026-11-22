@@ -21,15 +21,15 @@ import { numOrNull, fmtNum, fmtUsd } from '../data/agentRoles';
 
 // 成交价来源标签（对应后端 place_paper_order 返回的 price_source / reference_price_source）
 const PRICE_SOURCE_META = {
-  LIVE: { label: '跨所实时中位价', className: 'bg-[#EBF5EE] text-[#3D784E] border-[#CDE3D2]' },
-  USER: { label: '手动指定价', className: 'bg-[#F3EEE6] text-[#5A5046] border-[#DFD6C7]' },
-  SIMULATED: { label: '离线仿真价', className: 'bg-[#FDF3E3] text-[#B9770E] border-[#F1DDB8]' },
+  LIVE: { label: '跨所实时中位价', className: 'bg-success-soft text-success border-success-line' },
+  USER: { label: '手动指定价', className: 'bg-subtle text-ink-2 border-line-strong' },
+  SIMULATED: { label: '离线仿真价', className: 'bg-warning-soft text-warning border-warning-line' },
 };
 
 function priceSourceMeta(source) {
   return PRICE_SOURCE_META[String(source || '').toUpperCase()] || {
     label: source || '未知来源',
-    className: 'bg-[#F3EEE6] text-[#7E7469] border-[#DFD6C7]',
+    className: 'bg-subtle text-ink-3 border-line-strong',
   };
 }
 
@@ -48,9 +48,9 @@ function formatDeviation(value) {
 // 偏差着色：≤0.3% 绿 / ≤0.7% 橙 / 其余红（后端默认容差 1%）
 function deviationClass(value) {
   const num = Math.abs(Number(value) || 0);
-  if (num <= 0.003) return 'text-[#3D784E]';
-  if (num <= 0.007) return 'text-[#C28B38]';
-  return 'text-[#C24D4D]';
+  if (num <= 0.003) return 'text-success';
+  if (num <= 0.007) return 'text-warning';
+  return 'text-danger';
 }
 
 export default function NavView({ activeBotId = "bot_eth_debate_01" }) {
@@ -265,12 +265,12 @@ export default function NavView({ activeBotId = "bot_eth_debate_01" }) {
   const cumRet = metrics.cumulative_return_pct;
   const sharpe = metrics.sharpe_ratio;
   const sharpeLabel = sharpe === null ? '--' : sharpe >= 2 ? '优秀 (≥2.0)' : sharpe >= 1 ? '良好 (1.0–2.0)' : sharpe > 0 ? '一般 (0–1.0)' : '偏弱 (≤0)';
-  const sharpeLabelColor = sharpe === null ? 'text-[#9E9486]' : sharpe >= 1 ? 'text-[#3D784E]' : sharpe > 0 ? 'text-[#C28B38]' : 'text-[#C24D4D]';
+  const sharpeLabelColor = sharpe === null ? 'text-ink-4' : sharpe >= 1 ? 'text-success' : sharpe > 0 ? 'text-warning' : 'text-danger';
   const pf = metrics.profit_loss_ratio;
   const pfLabel = pf === null
     ? ((metrics.total_trades ?? 0) > 0 ? '暂无亏损交易，无法计算' : '暂无已平仓交易')
     : pf > 1 ? '盈利交易总额大于亏损' : pf < 1 ? '亏损交易总额大于盈利' : '盈亏持平';
-  const pfLabelColor = pf === null ? 'text-[#9E9486]' : pf > 1 ? 'text-[#3D784E]' : pf < 1 ? 'text-[#C24D4D]' : 'text-[#7E7469]';
+  const pfLabelColor = pf === null ? 'text-ink-4' : pf > 1 ? 'text-success' : pf < 1 ? 'text-danger' : 'text-ink-3';
 
   // 净值曲线只画后端真实快照；不足两个点时显示空状态，不再补“初始 1.0000”这类虚拟点
   const series = (navData && Array.isArray(navData.nav_series))
@@ -291,22 +291,22 @@ export default function NavView({ activeBotId = "bot_eth_debate_01" }) {
   }).join(' ');
 
   return (
-    <div className="flex-1 flex flex-col bg-[#F6F2EB] overflow-hidden">
+    <div className="flex-1 flex flex-col bg-canvas overflow-hidden">
       
       {/* 1. 顶部控制栏 */}
-      <div className="h-14 bg-[#FAF7F2] border-b border-[#E6DFD5] px-6 flex items-center justify-between shrink-0">
+      <div className="h-14 bg-panel border-b border-line px-6 flex items-center justify-between shrink-0">
         <div className="flex items-center space-x-3">
-          <div className="w-8 h-8 rounded-lg bg-[#EFE9DF] border border-[#DFD6C7] flex items-center justify-center text-[#3D784E]">
+          <div className="w-8 h-8 rounded-lg bg-muted border border-line-strong flex items-center justify-center text-success">
             <TrendingUp className="w-4 h-4" />
           </div>
           <div>
-            <h1 className="text-sm font-bold text-[#2E2823] flex items-center space-x-2">
+            <h1 className="text-sm font-bold text-ink flex items-center space-x-2">
               <span>单位净值绩效与对账中心 (NAV & Ledger)</span>
-              <span className="text-xs font-mono bg-[#E8F2EA] text-[#3D784E] border border-[#CDE3D2] px-2 py-0.5 rounded-full font-semibold">
+              <span className="text-xs font-mono bg-success-soft text-success border border-success-line px-2 py-0.5 rounded-full font-semibold">
                 公募基金级折算
               </span>
             </h1>
-            <p className="text-xs text-[#7E7469]">
+            <p className="text-xs text-ink-3">
               消除实盘追加本金与提现干扰，真实核算夏普比率、最大回撤与累计超额 Alpha
             </p>
           </div>
@@ -314,15 +314,15 @@ export default function NavView({ activeBotId = "bot_eth_debate_01" }) {
 
         <div className="flex items-center space-x-2">
           {/* 时间区间选择 */}
-          <div className="flex bg-[#EFE9DF] p-0.5 rounded-lg border border-[#DFD6C7] text-xs">
+          <div className="flex bg-muted p-0.5 rounded-lg border border-line-strong text-xs">
             {['1D', '1W', '1M', 'ALL'].map((r) => (
               <button
                 key={r}
                 onClick={() => setTimeRange(r)}
                 className={`px-2.5 py-1 rounded-md font-semibold transition ${
                   timeRange === r
-                    ? "bg-white text-[#2E2823] shadow-xs"
-                    : "text-[#7E7469] hover:text-[#2E2823]"
+                    ? "bg-surface text-ink shadow-xs"
+                    : "text-ink-3 hover:text-ink"
                 }`}
               >
                 {r}
@@ -333,7 +333,7 @@ export default function NavView({ activeBotId = "bot_eth_debate_01" }) {
           <button 
             onClick={fetchData}
             disabled={loading}
-            className="p-1.5 bg-white border border-[#D8CEBE] hover:border-[#DE6438] rounded-lg text-xs font-semibold text-[#5A5046] flex items-center space-x-1.5 shadow-xs transition"
+            className="p-1.5 bg-surface border border-line-strong hover:border-brand rounded-lg text-xs font-semibold text-ink-2 flex items-center space-x-1.5 shadow-xs transition"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
             <span>刷新</span>
@@ -345,131 +345,131 @@ export default function NavView({ activeBotId = "bot_eth_debate_01" }) {
       <div className="flex-1 overflow-y-auto p-6 space-y-6">
         
         {navError && (
-          <div className="p-3 rounded-xl bg-[#FDF3E3] border border-[#F1DDB8] text-xs font-semibold text-[#B9770E]">
+          <div className="p-3 rounded-xl bg-warning-soft border border-warning-line text-xs font-semibold text-warning">
             📡 净值与账户数据不可用：{navError}。以下指标显示为 “--”，请检查后端服务后点击刷新。
           </div>
         )}
 
         {/* 2.0 账户资金状态与当前持仓总控看板 */}
-        <div className="bg-white p-4 rounded-2xl border border-[#E6DFD5] shadow-xs flex flex-wrap items-center justify-between gap-4">
+        <div className="bg-surface p-4 rounded-2xl border border-line shadow-xs flex flex-wrap items-center justify-between gap-4">
           <div className="flex flex-wrap items-center gap-6">
             <div>
-              <span className="text-xs font-semibold text-[#7E7469] flex items-center space-x-1">
+              <span className="text-xs font-semibold text-ink-3 flex items-center space-x-1">
                 <span>💼</span>
                 <span>账户总资产 (Equity)</span>
               </span>
-              <div className="text-base font-bold font-mono text-[#2E2823] mt-0.5">
+              <div className="text-base font-bold font-mono text-ink mt-0.5">
                 {fmtUsd(accountKnown ? balance.total_equity : null)}
               </div>
             </div>
 
-            <div className="h-8 w-px bg-[#EFE9DF] hidden sm:block" />
+            <div className="h-8 w-px bg-muted hidden sm:block" />
 
             <div>
-              <span className="text-xs font-semibold text-[#3D784E] flex items-center space-x-1">
+              <span className="text-xs font-semibold text-success flex items-center space-x-1">
                 <span>🟢</span>
                 <span>空闲可用现金 (Free Cash)</span>
               </span>
-              <div className="text-base font-bold font-mono text-[#3D784E] mt-0.5">
+              <div className="text-base font-bold font-mono text-success mt-0.5">
                 {fmtUsd(accountKnown ? balance.cash_balance : null)}
               </div>
             </div>
 
-            <div className="h-8 w-px bg-[#EFE9DF] hidden sm:block" />
+            <div className="h-8 w-px bg-muted hidden sm:block" />
 
             <div>
-              <span className="text-xs font-semibold text-[#8C5E2E] flex items-center space-x-1">
+              <span className="text-xs font-semibold text-warning-strong flex items-center space-x-1">
                 <span>🔒</span>
                 <span>占用保证金 (Margin Used)</span>
               </span>
-              <div className="text-base font-bold font-mono text-[#8C5E2E] mt-0.5">
+              <div className="text-base font-bold font-mono text-warning-strong mt-0.5">
                 {accountKnown ? `$${Number(balance.margin_used || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '--'}
               </div>
             </div>
 
-            <div className="h-8 w-px bg-[#EFE9DF] hidden sm:block" />
+            <div className="h-8 w-px bg-muted hidden sm:block" />
 
             <div>
-              <span className="text-xs font-semibold text-[#7E7469] flex items-center space-x-1">
+              <span className="text-xs font-semibold text-ink-3 flex items-center space-x-1">
                 <span>📈</span>
                 <span>持仓浮动盈亏 (Unrealized)</span>
               </span>
-              <div className={`text-base font-bold font-mono mt-0.5 ${!accountKnown ? 'text-[#9E9486]' : Number(balance.unrealized_pnl || 0) >= 0 ? 'text-[#3D784E]' : 'text-[#C24D4D]'}`}>
+              <div className={`text-base font-bold font-mono mt-0.5 ${!accountKnown ? 'text-ink-4' : Number(balance.unrealized_pnl || 0) >= 0 ? 'text-success' : 'text-danger'}`}>
                 {!accountKnown ? '--' : `${Number(balance.unrealized_pnl || 0) >= 0 ? '+' : '-'}$${Math.abs(Number(balance.unrealized_pnl || 0)).toFixed(2)}`}
               </div>
             </div>
           </div>
 
           {/* 右侧当前持仓头寸徽标 */}
-          <div className="flex items-center space-x-2 bg-[#FAF8F5] px-3.5 py-2 rounded-xl border border-[#EFE9DF]">
-            <span className="text-xs text-[#7E7469] font-medium">当前持仓头寸:</span>
+          <div className="flex items-center space-x-2 bg-panel px-3.5 py-2 rounded-xl border border-line-soft">
+            <span className="text-xs text-ink-3 font-medium">当前持仓头寸:</span>
             {activePosition ? (
-              <span className="text-xs font-bold font-mono flex items-center space-x-1.5 text-[#2E2823]">
-                <span className={`px-2 py-0.5 rounded text-xs font-bold ${activePosition.side === 'LONG' ? 'bg-[#EBF5EE] text-[#3D784E]' : 'bg-[#FBEFEA] text-[#C24D4D]'}`}>
+              <span className="text-xs font-bold font-mono flex items-center space-x-1.5 text-ink">
+                <span className={`px-2 py-0.5 rounded text-xs font-bold ${activePosition.side === 'LONG' ? 'bg-success-soft text-success' : 'bg-brand-soft text-danger'}`}>
                   {activePosition.side} {activePosition.leverage}x
                 </span>
                 <span>{Number(activePosition.quantity).toFixed(4)} {activePosition.symbol}</span>
-                <span className="text-xs text-[#7E7469]">@ ${Number(activePosition.entry_price).toFixed(2)}</span>
+                <span className="text-xs text-ink-3">@ ${Number(activePosition.entry_price).toFixed(2)}</span>
               </span>
             ) : accountKnown ? (
-              <span className="text-xs font-bold font-mono text-[#7E7469] flex items-center space-x-1.5">
-                <span className="w-2 h-2 rounded-full bg-[#3D784E]" />
+              <span className="text-xs font-bold font-mono text-ink-3 flex items-center space-x-1.5">
+                <span className="w-2 h-2 rounded-full bg-success-solid" />
                 <span>当前空仓 (FLAT)</span>
               </span>
             ) : (
-              <span className="text-xs font-bold font-mono text-[#9E9486]">--（账户数据不可用）</span>
+              <span className="text-xs font-bold font-mono text-ink-4">--（账户数据不可用）</span>
             )}
           </div>
         </div>
 
         {/* 2.1 六大核心量化指标卡片 */}
         <div className="grid grid-cols-6 gap-3">
-          <div className="bg-white p-3.5 rounded-xl border border-[#E6DFD5] shadow-xs">
-            <span className="text-xs font-semibold text-[#7E7469]">单位净值 (NAV)</span>
-            <div className="text-xl font-bold font-mono text-[#2E2823] mt-1 flex items-baseline space-x-1">
+          <div className="bg-surface p-3.5 rounded-xl border border-line shadow-xs">
+            <span className="text-xs font-semibold text-ink-3">单位净值 (NAV)</span>
+            <div className="text-xl font-bold font-mono text-ink mt-1 flex items-baseline space-x-1">
               <span>{fmtNum(metrics.current_nav, 4)}</span>
-              <span className="text-xs text-[#3D784E] font-sans">USD</span>
+              <span className="text-xs text-success font-sans">USD</span>
             </div>
-            <span className="text-xs text-[#9E9486] font-mono">基准面值 1.0000</span>
+            <span className="text-xs text-ink-4 font-mono">基准面值 1.0000</span>
           </div>
 
-          <div className="bg-white p-3.5 rounded-xl border border-[#E6DFD5] shadow-xs">
-            <span className="text-xs font-semibold text-[#7E7469]">累计真实收益率</span>
-            <div className={`text-xl font-bold font-mono mt-1 flex items-center ${cumRet === null ? 'text-[#9E9486]' : cumRet >= 0 ? 'text-[#3D784E]' : 'text-[#C24D4D]'}`}>
+          <div className="bg-surface p-3.5 rounded-xl border border-line shadow-xs">
+            <span className="text-xs font-semibold text-ink-3">累计真实收益率</span>
+            <div className={`text-xl font-bold font-mono mt-1 flex items-center ${cumRet === null ? 'text-ink-4' : cumRet >= 0 ? 'text-success' : 'text-danger'}`}>
               {cumRet !== null && (cumRet >= 0 ? <ArrowUpRight className="w-4 h-4 mr-0.5" /> : <ArrowDownRight className="w-4 h-4 mr-0.5" />)}
               <span>{cumRet === null ? '--' : `${cumRet >= 0 ? '+' : ''}${cumRet.toFixed(2)}%`}</span>
             </div>
-            <span className="text-xs text-[#9E9486]">消除出入金扰动</span>
+            <span className="text-xs text-ink-4">消除出入金扰动</span>
           </div>
 
-          <div className="bg-white p-3.5 rounded-xl border border-[#E6DFD5] shadow-xs">
-            <span className="text-xs font-semibold text-[#7E7469]">夏普比率 (Sharpe)</span>
-            <div className="text-xl font-bold font-mono text-[#2E2823] mt-1">
+          <div className="bg-surface p-3.5 rounded-xl border border-line shadow-xs">
+            <span className="text-xs font-semibold text-ink-3">夏普比率 (Sharpe)</span>
+            <div className="text-xl font-bold font-mono text-ink mt-1">
               <span>{fmtNum(sharpe, 2)}</span>
             </div>
             <span className={`text-xs font-semibold ${sharpeLabelColor}`}>{sharpeLabel}</span>
           </div>
 
-          <div className="bg-white p-3.5 rounded-xl border border-[#E6DFD5] shadow-xs">
-            <span className="text-xs font-semibold text-[#7E7469]">历史最大回撤 (MDD)</span>
-            <div className="text-xl font-bold font-mono text-[#C24D4D] mt-1 flex items-center">
+          <div className="bg-surface p-3.5 rounded-xl border border-line shadow-xs">
+            <span className="text-xs font-semibold text-ink-3">历史最大回撤 (MDD)</span>
+            <div className="text-xl font-bold font-mono text-danger mt-1 flex items-center">
               <ArrowDownRight className="w-4 h-4 mr-0.5" />
               <span>{metrics.max_drawdown_pct === null ? '--' : `-${metrics.max_drawdown_pct.toFixed(2)}%`}</span>
             </div>
-            <span className="text-xs text-[#9E9486]">相对历史最高净值</span>
+            <span className="text-xs text-ink-4">相对历史最高净值</span>
           </div>
 
-          <div className="bg-white p-3.5 rounded-xl border border-[#E6DFD5] shadow-xs">
-            <span className="text-xs font-semibold text-[#7E7469]">交易胜率 (Win Rate)</span>
-            <div className="text-xl font-bold font-mono text-[#2E2823] mt-1">
+          <div className="bg-surface p-3.5 rounded-xl border border-line shadow-xs">
+            <span className="text-xs font-semibold text-ink-3">交易胜率 (Win Rate)</span>
+            <div className="text-xl font-bold font-mono text-ink mt-1">
               <span>{metrics.win_rate_pct === null ? '--' : `${metrics.win_rate_pct.toFixed(1)}%`}</span>
             </div>
-            <span className="text-xs text-[#7E7469]">共 {metrics.total_trades ?? '--'} 笔成交流水</span>
+            <span className="text-xs text-ink-3">共 {metrics.total_trades ?? '--'} 笔成交流水</span>
           </div>
 
-          <div className="bg-white p-3.5 rounded-xl border border-[#E6DFD5] shadow-xs">
-            <span className="text-xs font-semibold text-[#7E7469]">盈亏比 (Profit Factor)</span>
-            <div className="text-xl font-bold font-mono text-[#2E2823] mt-1">
+          <div className="bg-surface p-3.5 rounded-xl border border-line shadow-xs">
+            <span className="text-xs font-semibold text-ink-3">盈亏比 (Profit Factor)</span>
+            <div className="text-xl font-bold font-mono text-ink mt-1">
               <span>{pf === null ? '--' : `${pf.toFixed(2)}:1`}</span>
             </div>
             <span className={`text-xs font-semibold ${pfLabelColor}`}>{pfLabel}</span>
@@ -477,19 +477,19 @@ export default function NavView({ activeBotId = "bot_eth_debate_01" }) {
         </div>
 
         {/* 2.2 单位净值走势图 */}
-        <div className="bg-white p-5 rounded-2xl border border-[#E6DFD5] shadow-xs space-y-3">
+        <div className="bg-surface p-5 rounded-2xl border border-line shadow-xs space-y-3">
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-2">
-              <Activity className="w-4 h-4 text-[#DE6438]" />
-              <h3 className="text-xs font-bold text-[#2E2823]">单位净值历史走势曲线 (NAV Curve)</h3>
+              <Activity className="w-4 h-4 text-brand" />
+              <h3 className="text-xs font-bold text-ink">单位净值历史走势曲线 (NAV Curve)</h3>
             </div>
-            <div className="flex items-center space-x-3 text-xs text-[#7E7469]">
+            <div className="flex items-center space-x-3 text-xs text-ink-3">
               <span className="flex items-center space-x-1.5">
-                <span className="w-2.5 h-2.5 rounded-full bg-[#DE6438]"></span>
-                <span className="font-semibold text-[#2E2823]">Heimdall Alpha 策略</span>
+                <span className="w-2.5 h-2.5 rounded-full bg-brand"></span>
+                <span className="font-semibold text-ink">Heimdall Alpha 策略</span>
               </span>
               <span className="flex items-center space-x-1.5">
-                <span className="w-2.5 h-2.5 rounded-full bg-[#C2B7A8]"></span>
+                <span className="w-2.5 h-2.5 rounded-full bg-muted-strong"></span>
                 <span>基准基线 (1.0000)</span>
               </span>
             </div>
@@ -497,11 +497,11 @@ export default function NavView({ activeBotId = "bot_eth_debate_01" }) {
 
           {/* SVG 矢量走势图 */}
           {!hasCurve ? (
-            <div className="w-full h-48 bg-[#FAF8F5] rounded-xl border border-dashed border-[#E2D9CC] flex items-center justify-center text-xs text-[#9E9486]">
+            <div className="w-full h-48 bg-panel rounded-xl border border-dashed border-line flex items-center justify-center text-xs text-ink-4">
               {navError ? `净值数据不可用：${navError}` : '净值快照不足两个，暂无走势曲线'}
             </div>
           ) : (
-          <div className="w-full h-48 bg-[#FAF8F5] rounded-xl border border-[#F0EBE1] p-3 relative flex flex-col justify-between">
+          <div className="w-full h-48 bg-panel rounded-xl border border-line-soft p-3 relative flex flex-col justify-between">
             <svg viewBox="0 0 600 180" className="w-full h-full overflow-visible">
               {/* 基准虚线 1.000 */}
               <line 
@@ -509,7 +509,7 @@ export default function NavView({ activeBotId = "bot_eth_debate_01" }) {
                 y1={180 - ((1.000 - minNav) / range) * 160} 
                 x2="600" 
                 y2={180 - ((1.000 - minNav) / range) * 160} 
-                stroke="#D8CEBE" 
+                style={{ stroke: 'rgb(var(--c-line-strong))' }} 
                 strokeDasharray="4 4" 
                 strokeWidth="1.5"
               />
@@ -517,8 +517,8 @@ export default function NavView({ activeBotId = "bot_eth_debate_01" }) {
               {/* 曲线下方渐变填充 */}
               <defs>
                 <linearGradient id="navGradient" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#DE6438" stopOpacity="0.25" />
-                  <stop offset="100%" stopColor="#DE6438" stopOpacity="0.0" />
+                  <stop offset="0%" style={{ stopColor: 'rgb(var(--c-brand))', stopOpacity: 0.25 }} />
+                  <stop offset="100%" style={{ stopColor: 'rgb(var(--c-brand))', stopOpacity: 0.0 }} />
                 </linearGradient>
               </defs>
               <polygon 
@@ -529,7 +529,7 @@ export default function NavView({ activeBotId = "bot_eth_debate_01" }) {
               {/* 主走势曲线 */}
               <polyline
                 fill="none"
-                stroke="#DE6438"
+                style={{ stroke: 'rgb(var(--c-brand))' }}
                 strokeWidth="2.5"
                 strokeLinecap="round"
                 strokeLinejoin="round"
@@ -537,7 +537,7 @@ export default function NavView({ activeBotId = "bot_eth_debate_01" }) {
               />
             </svg>
 
-            <div className="flex justify-between text-xs text-[#9E9486] font-mono pt-1 border-t border-[#EFE9DF]">
+            <div className="flex justify-between text-xs text-ink-4 font-mono pt-1 border-t border-line-soft">
               {series.map((s, i) => (
                 <span key={i}>{s.date || (s.timestamp ? s.timestamp.slice(5, 10) : '')}</span>
               ))}
@@ -547,32 +547,32 @@ export default function NavView({ activeBotId = "bot_eth_debate_01" }) {
         </div>
 
         {/* 2.3 快捷沙盒模拟交易下单舱 */}
-        <div className="bg-white p-5 rounded-2xl border border-[#E6DFD5] shadow-xs space-y-3">
+        <div className="bg-surface p-5 rounded-2xl border border-line shadow-xs space-y-3">
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-2">
               <span className="text-base">⚡</span>
-              <h3 className="text-xs font-bold text-[#2E2823]">
+              <h3 className="text-xs font-bold text-ink">
                 沙盒模拟交易下单 (Paper Order Simulator)
               </h3>
-              <span className="text-xs font-mono bg-[#EBF5EE] text-[#3D784E] border border-[#CDE3D2] px-2 py-0.5 rounded-full font-semibold">
+              <span className="text-xs font-mono bg-success-soft text-success border border-success-line px-2 py-0.5 rounded-full font-semibold">
                 Paper Execution Engine
               </span>
             </div>
-            <span className="text-xs text-[#7E7469]">
+            <span className="text-xs text-ink-3">
               撮合成交将即时更新持仓资产并沉淀成交流水与 NAV 净值走势
             </span>
           </div>
 
-          <div className="flex flex-wrap items-center gap-3 bg-[#FAF8F5] p-3 rounded-xl border border-[#EFE9DF]">
+          <div className="flex flex-wrap items-center gap-3 bg-panel p-3 rounded-xl border border-line-soft">
             {/* 方向切换 */}
-            <div className="flex bg-[#EFE9DF] p-1 rounded-lg border border-[#DFD6C7] text-xs font-bold space-x-1">
+            <div className="flex bg-muted p-1 rounded-lg border border-line-strong text-xs font-bold space-x-1">
               <button
                 type="button"
                 onClick={() => setOrderSide('BUY')}
                 className={`px-3 py-1.5 rounded-md transition flex items-center space-x-1 ${
                   orderSide === 'BUY'
-                    ? 'bg-[#3D784E] text-white shadow-xs'
-                    : 'text-[#5A5046] hover:text-[#2E2823]'
+                    ? 'bg-success-solid text-white shadow-xs'
+                    : 'text-ink-2 hover:text-ink'
                 }`}
               >
                 <span>🟢</span>
@@ -583,8 +583,8 @@ export default function NavView({ activeBotId = "bot_eth_debate_01" }) {
                 onClick={() => setOrderSide('SELL')}
                 className={`px-3 py-1.5 rounded-md transition flex items-center space-x-1 ${
                   orderSide === 'SELL'
-                    ? 'bg-[#C24D4D] text-white shadow-xs'
-                    : 'text-[#5A5046] hover:text-[#2E2823]'
+                    ? 'bg-danger-solid text-white shadow-xs'
+                    : 'text-ink-2 hover:text-ink'
                 }`}
               >
                 <span>🔴</span>
@@ -595,8 +595,8 @@ export default function NavView({ activeBotId = "bot_eth_debate_01" }) {
                 onClick={() => setOrderSide('CLOSE')}
                 className={`px-3 py-1.5 rounded-md transition flex items-center space-x-1 ${
                   orderSide === 'CLOSE'
-                    ? 'bg-[#2E2823] text-white shadow-xs'
-                    : 'text-[#5A5046] hover:text-[#2E2823]'
+                    ? 'bg-ink text-canvas shadow-xs'
+                    : 'text-ink-2 hover:text-ink'
                 }`}
               >
                 <span>⚪</span>
@@ -607,19 +607,19 @@ export default function NavView({ activeBotId = "bot_eth_debate_01" }) {
             {/* 名义金额输入与购买力控制 */}
             {orderSide !== 'CLOSE' && (
               <div className="flex flex-wrap items-center gap-2">
-                <span className="text-xs text-[#7E7469] font-medium">委托规模:</span>
+                <span className="text-xs text-ink-3 font-medium">委托规模:</span>
                 <div className="relative">
-                  <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-[#7E7469] font-mono">$</span>
+                  <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-ink-3 font-mono">$</span>
                   <input
                     type="number"
                     min="10"
                     step="100"
                     value={orderAmount}
                     onChange={(e) => setOrderAmount(e.target.value)}
-                    className={`w-28 pl-6 pr-2 py-1.5 text-xs font-mono font-bold bg-white border rounded-lg focus:outline-none ${
+                    className={`w-28 pl-6 pr-2 py-1.5 text-xs font-mono font-bold bg-surface border rounded-lg focus:outline-none ${
                       overBuyingPower
-                        ? 'border-[#C24D4D] text-[#C24D4D] focus:border-[#C24D4D]'
-                        : 'border-[#DFD6C7] text-[#2E2823] focus:border-[#DE6438]'
+                        ? 'border-danger text-danger focus:border-danger'
+                        : 'border-line-strong text-ink focus:border-brand'
                     }`}
                     placeholder="1000"
                   />
@@ -641,8 +641,8 @@ export default function NavView({ activeBotId = "bot_eth_debate_01" }) {
                         onClick={() => setOrderAmount(targetAmt)}
                         className={`text-xs px-2 py-1 rounded border font-mono transition ${
                           isActive
-                            ? 'bg-[#DE6438] text-white border-[#DE6438]'
-                            : 'bg-white text-[#7E7469] border-[#DFD6C7] hover:border-[#DE6438]'
+                            ? 'bg-brand text-white border-brand'
+                            : 'bg-surface text-ink-3 border-line-strong hover:border-brand'
                         }`}
                       >
                         {btn.label}
@@ -656,11 +656,11 @@ export default function NavView({ activeBotId = "bot_eth_debate_01" }) {
             {/* 杠杆选择 */}
             {orderSide !== 'CLOSE' && (
               <div className="flex items-center space-x-2">
-                <span className="text-xs text-[#7E7469] font-medium">杠杆:</span>
+                <span className="text-xs text-ink-3 font-medium">杠杆:</span>
                 <select
                   value={orderLeverage}
                   onChange={(e) => setOrderLeverage(e.target.value)}
-                  className="bg-white border border-[#DFD6C7] rounded-lg px-2.5 py-1.5 text-xs font-mono font-bold focus:outline-none focus:border-[#DE6438]"
+                  className="bg-surface border border-line-strong rounded-lg px-2.5 py-1.5 text-xs font-mono font-bold focus:outline-none focus:border-brand"
                 >
                   <option value="1">1.0x (无杠杆)</option>
                   <option value="1.5">1.5x (对冲稳健)</option>
@@ -672,7 +672,7 @@ export default function NavView({ activeBotId = "bot_eth_debate_01" }) {
 
             {/* 指定成交价（可选） */}
             <div className="flex flex-wrap items-center gap-2">
-              <label className="flex items-center space-x-1.5 text-xs text-[#7E7469] font-medium cursor-pointer">
+              <label className="flex items-center space-x-1.5 text-xs text-ink-3 font-medium cursor-pointer">
                 <input
                   type="checkbox"
                   checked={useCustomPrice}
@@ -683,14 +683,14 @@ export default function NavView({ activeBotId = "bot_eth_debate_01" }) {
                       setCustomPrice(String(referencePrice));
                     }
                   }}
-                  className="accent-[#DE6438]"
+                  className="accent-brand"
                 />
                 <span>指定成交价</span>
               </label>
               {useCustomPrice && (
                 <>
                   <div className="relative">
-                    <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-[#7E7469] font-mono">$</span>
+                    <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-ink-3 font-mono">$</span>
                     <input
                       type="number"
                       min="0"
@@ -698,10 +698,10 @@ export default function NavView({ activeBotId = "bot_eth_debate_01" }) {
                       value={customPrice}
                       onChange={(e) => setCustomPrice(e.target.value)}
                       placeholder={referencePrice > 0 ? String(referencePrice) : '价格'}
-                      className={`w-28 pl-6 pr-2 py-1.5 text-xs font-mono font-bold bg-white border rounded-lg focus:outline-none ${
+                      className={`w-28 pl-6 pr-2 py-1.5 text-xs font-mono font-bold bg-surface border rounded-lg focus:outline-none ${
                         customPriceExceeds || (customPrice !== '' && !customPriceValid)
-                          ? 'border-[#C24D4D] text-[#C24D4D] focus:border-[#C24D4D]'
-                          : 'border-[#DFD6C7] text-[#2E2823] focus:border-[#DE6438]'
+                          ? 'border-danger text-danger focus:border-danger'
+                          : 'border-line-strong text-ink focus:border-brand'
                       }`}
                     />
                   </div>
@@ -709,12 +709,12 @@ export default function NavView({ activeBotId = "bot_eth_debate_01" }) {
                     type="button"
                     onClick={() => referencePrice > 0 && setCustomPrice(String(referencePrice))}
                     disabled={!(referencePrice > 0)}
-                    className="text-xs px-2 py-1 rounded border font-mono bg-white text-[#7E7469] border-[#DFD6C7] hover:border-[#DE6438] disabled:opacity-40"
+                    className="text-xs px-2 py-1 rounded border font-mono bg-surface text-ink-3 border-line-strong hover:border-brand disabled:opacity-40"
                   >
                     用参考价
                   </button>
                   {customDeviationPct !== null && (
-                    <span className={`text-xs font-mono font-bold ${customPriceExceeds ? 'text-[#C24D4D]' : deviationClass(customDeviationPct)}`}>
+                    <span className={`text-xs font-mono font-bold ${customPriceExceeds ? 'text-danger' : deviationClass(customDeviationPct)}`}>
                       偏差 {formatDeviation(customDeviationPct)}
                     </span>
                   )}
@@ -727,12 +727,12 @@ export default function NavView({ activeBotId = "bot_eth_debate_01" }) {
               type="button"
               onClick={handlePlaceOrder}
               disabled={submitBlocked}
-              className={`px-4 py-2 rounded-xl text-xs font-bold text-white shadow-xs transition flex items-center space-x-1.5 ${
+              className={`px-4 py-2 rounded-xl text-xs font-bold shadow-xs transition flex items-center space-x-1.5 ${
                 orderSide === 'BUY'
-                  ? 'bg-[#3D784E] hover:bg-[#346642]'
+                  ? 'bg-success-solid hover:bg-success-solid-hover text-white'
                   : orderSide === 'SELL'
-                  ? 'bg-[#C24D4D] hover:bg-[#A93F3F]'
-                  : 'bg-[#2E2823] hover:bg-[#1A1614]'
+                  ? 'bg-danger-solid hover:bg-danger-solid-hover text-white'
+                  : 'bg-ink hover:bg-ink-2 text-canvas'
               } ${submitBlocked ? 'opacity-50 cursor-not-allowed' : ''}`}
             >
               <RefreshCw className={`w-3.5 h-3.5 ${orderLoading ? 'animate-spin' : ''}`} />
@@ -742,17 +742,17 @@ export default function NavView({ activeBotId = "bot_eth_debate_01" }) {
 
           {/* 实时购买力限额说明与超额告警 */}
           {orderSide !== 'CLOSE' && (
-            <div className="flex flex-wrap items-center justify-between text-xs px-1 pt-0.5 text-[#7E7469]">
+            <div className="flex flex-wrap items-center justify-between text-xs px-1 pt-0.5 text-ink-3">
               <div className="flex items-center space-x-2 font-mono">
-                <span>空闲可用现金: <strong className="text-[#3D784E]">{accountKnown ? `$${freeCash.toLocaleString(undefined, { minimumFractionDigits: 2 })}` : '--'}</strong></span>
+                <span>空闲可用现金: <strong className="text-success">{accountKnown ? `$${freeCash.toLocaleString(undefined, { minimumFractionDigits: 2 })}` : '--'}</strong></span>
                 <span>·</span>
-                <span>当前杠杆购买力上限: <strong className="text-[#2E2823]">{accountKnown ? `$${maxPurchasingPower.toLocaleString()}` : '--'}</strong> USD</span>
+                <span>当前杠杆购买力上限: <strong className="text-ink">{accountKnown ? `$${maxPurchasingPower.toLocaleString()}` : '--'}</strong> USD</span>
               </div>
               {!accountKnown && (
-                <span className="text-[#B9770E] font-semibold">📡 账户数据不可用，暂不能开仓</span>
+                <span className="text-warning font-semibold">📡 账户数据不可用，暂不能开仓</span>
               )}
               {overBuyingPower && (
-                <span className="text-[#C24D4D] font-semibold flex items-center space-x-1">
+                <span className="text-danger font-semibold flex items-center space-x-1">
                   <span>⚠️</span>
                   <span>委托规模超出可用资金上限，请降低金额或提高杠杆</span>
                 </span>
@@ -761,11 +761,11 @@ export default function NavView({ activeBotId = "bot_eth_debate_01" }) {
           )}
 
           {/* 跨所实时参考价 & 指定价偏差预检 */}
-          <div className="flex flex-wrap items-center justify-between gap-2 text-xs px-1 text-[#7E7469]">
+          <div className="flex flex-wrap items-center justify-between gap-2 text-xs px-1 text-ink-3">
             <div className="flex flex-wrap items-center gap-2 font-mono">
               <span>
                 跨所参考价:{' '}
-                <strong className={quote?.tradable ? 'text-[#2E2823]' : 'text-[#B9770E]'}>
+                <strong className={quote?.tradable ? 'text-ink' : 'text-warning'}>
                   {quote?.tradable ? formatUsd(quote.reference_price) : (quoteLoading && !quote ? '读取中…' : '不可用')}
                 </strong>
               </span>
@@ -780,7 +780,7 @@ export default function NavView({ activeBotId = "bot_eth_debate_01" }) {
                 type="button"
                 onClick={fetchQuote}
                 disabled={quoteLoading}
-                className="flex items-center space-x-1 text-[#7E7469] hover:text-[#DE6438] disabled:opacity-40"
+                className="flex items-center space-x-1 text-ink-3 hover:text-brand disabled:opacity-40"
                 title="刷新参考价"
               >
                 <RefreshCw className={`w-3 h-3 ${quoteLoading ? 'animate-spin' : ''}`} />
@@ -788,15 +788,15 @@ export default function NavView({ activeBotId = "bot_eth_debate_01" }) {
               </button>
             </div>
             {useCustomPrice && customPriceExceeds && (
-              <span className="text-[#C24D4D] font-semibold">
+              <span className="text-danger font-semibold">
                 ⚠️ 指定价偏离参考价 {formatDeviation(customDeviationPct)}，超过 ±{formatDeviation(maxDeviationPct)} 容差，提交将被拒绝
               </span>
             )}
             {useCustomPrice && customPrice !== '' && !customPriceValid && (
-              <span className="text-[#C24D4D] font-semibold">⚠️ 请输入大于 0 的价格</span>
+              <span className="text-danger font-semibold">⚠️ 请输入大于 0 的价格</span>
             )}
             {!quote?.tradable && (quote?.message || quoteError) && (
-              <span className="text-[#B9770E] font-semibold">📡 {quote?.message || quoteError}</span>
+              <span className="text-warning font-semibold">📡 {quote?.message || quoteError}</span>
             )}
           </div>
 
@@ -805,10 +805,10 @@ export default function NavView({ activeBotId = "bot_eth_debate_01" }) {
             <div
               className={`p-3 rounded-lg text-xs border animate-fade-in ${
                 orderStatus.success
-                  ? 'bg-[#EBF5EE] text-[#3D784E] border-[#CDE3D2]'
+                  ? 'bg-success-soft text-success border-success-line'
                   : orderStatus.kind === 'market_unavailable'
-                  ? 'bg-[#FDF3E3] text-[#B9770E] border-[#F1DDB8]'
-                  : 'bg-[#FBEFEA] text-[#C24D4D] border-[#F2D6CA]'
+                  ? 'bg-warning-soft text-warning border-warning-line'
+                  : 'bg-brand-soft text-danger border-brand-line'
               }`}
             >
               <div className="flex items-start justify-between gap-2">
@@ -848,28 +848,28 @@ export default function NavView({ activeBotId = "bot_eth_debate_01" }) {
 
               {/* M2：成交价格核对明细（成交价 / 价格来源 / 跨所参考价 / 偏差） */}
               {orderStatus.success && orderStatus.pricing && (
-                <div className="mt-2 pt-2 border-t border-[#CDE3D2] grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs text-[#5A5046]">
+                <div className="mt-2 pt-2 border-t border-success-line grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs text-ink-2">
                   <div>
-                    <div className="text-[#7E7469]">成交价</div>
-                    <div className="font-mono font-bold text-[#2E2823]">{formatUsd(orderStatus.pricing.fillPrice)}</div>
+                    <div className="text-ink-3">成交价</div>
+                    <div className="font-mono font-bold text-ink">{formatUsd(orderStatus.pricing.fillPrice)}</div>
                   </div>
                   <div>
-                    <div className="text-[#7E7469]">价格来源</div>
+                    <div className="text-ink-3">价格来源</div>
                     <span className={`inline-block mt-0.5 px-1.5 py-0.5 rounded border font-semibold ${priceSourceMeta(orderStatus.pricing.priceSource).className}`}>
                       {priceSourceMeta(orderStatus.pricing.priceSource).label}
                     </span>
                   </div>
                   <div>
-                    <div className="text-[#7E7469]">跨所参考价</div>
-                    <div className="font-mono font-bold text-[#2E2823]">
+                    <div className="text-ink-3">跨所参考价</div>
+                    <div className="font-mono font-bold text-ink">
                       {formatUsd(orderStatus.pricing.referencePrice)}
                     </div>
                     {orderStatus.pricing.referenceSource && orderStatus.pricing.referenceSource !== 'LIVE' && (
-                      <div className="text-xs text-[#B9770E]">{priceSourceMeta(orderStatus.pricing.referenceSource).label}</div>
+                      <div className="text-xs text-warning">{priceSourceMeta(orderStatus.pricing.referenceSource).label}</div>
                     )}
                   </div>
                   <div>
-                    <div className="text-[#7E7469]">偏差</div>
+                    <div className="text-ink-3">偏差</div>
                     <div className={`font-mono font-bold ${deviationClass(orderStatus.pricing.deviationPct)}`}>
                       {formatDeviation(orderStatus.pricing.deviationPct)}
                     </div>
@@ -877,7 +877,7 @@ export default function NavView({ activeBotId = "bot_eth_debate_01" }) {
                 </div>
               )}
               {orderStatus.success && orderStatus.pricing?.priceSource === 'SIMULATED' && (
-                <div className="mt-2 text-xs text-[#B9770E] font-semibold">
+                <div className="mt-2 text-xs text-warning font-semibold">
                   ⚠️ 本笔按离线仿真价成交（已显式开启离线兜底），净值与盈亏不代表真实行情。
                 </div>
               )}
@@ -886,29 +886,29 @@ export default function NavView({ activeBotId = "bot_eth_debate_01" }) {
         </div>
 
         {/* 2.4 成交流水簿 & OMS 订单状态机/原生保护单 双视图 */}
-        <div className="bg-white rounded-2xl border border-[#E6DFD5] shadow-xs overflow-hidden">
-          <div className="px-5 py-3 bg-[#FAF7F2] border-b border-[#E6DFD5] flex flex-wrap items-center justify-between gap-2">
+        <div className="bg-surface rounded-2xl border border-line shadow-xs overflow-hidden">
+          <div className="px-5 py-3 bg-panel border-b border-line flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center space-x-2">
               <button
                 onClick={() => setLedgerTab('trades')}
-                className={`px-3 py-1 rounded-lg text-xs font-bold transition ${ledgerTab === 'trades' ? 'bg-white text-[#DE6438] shadow-xs border border-[#E6DFD5]' : 'text-[#7E7469] hover:text-[#2E2823]'}`}
+                className={`px-3 py-1 rounded-lg text-xs font-bold transition ${ledgerTab === 'trades' ? 'bg-surface text-brand shadow-xs border border-line' : 'text-ink-3 hover:text-ink'}`}
               >
                 成交流水簿 ({trades.length})
               </button>
               <button
                 onClick={() => setLedgerTab('oms')}
-                className={`px-3 py-1 rounded-lg text-xs font-bold transition flex items-center space-x-1.5 ${ledgerTab === 'oms' ? 'bg-white text-[#DE6438] shadow-xs border border-[#E6DFD5]' : 'text-[#7E7469] hover:text-[#2E2823]'}`}
+                className={`px-3 py-1 rounded-lg text-xs font-bold transition flex items-center space-x-1.5 ${ledgerTab === 'oms' ? 'bg-surface text-brand shadow-xs border border-line' : 'text-ink-3 hover:text-ink'}`}
               >
                 <span>OMS 订单状态机 &amp; 原生保护单 ({omsData?.summary?.total || 0})</span>
                 {(omsData?.summary?.unknown_count || 0) > 0 && (
-                  <span className="px-1.5 py-0.2 rounded-full bg-[#C24D4D] text-white text-xs">
+                  <span className="px-1.5 py-0.2 rounded-full bg-danger-solid text-white text-xs">
                     {omsData.summary.unknown_count} UNKNOWN
                   </span>
                 )}
               </button>
             </div>
             {omsData?.instrument_spec && (
-              <span className="text-xs font-mono text-[#7E7469] bg-white px-2.5 py-1 rounded-lg border border-[#E6DFD5]">
+              <span className="text-xs font-mono text-ink-3 bg-surface px-2.5 py-1 rounded-lg border border-line">
                 精度规格 {omsData.instrument_spec.symbol}: tick={omsData.instrument_spec.tick_size} · step={omsData.instrument_spec.step_size} · min=${omsData.instrument_spec.min_notional_usd}
               </span>
             )}
@@ -917,12 +917,12 @@ export default function NavView({ activeBotId = "bot_eth_debate_01" }) {
           {ledgerTab === 'trades' ? (
             <div className="overflow-x-auto">
               {trades.length === 0 ? (
-                <div className="p-8 text-center text-xs text-[#8C8275]">
+                <div className="p-8 text-center text-xs text-ink-3">
                   当前机器人暂无真实成交流水（已禁用历史假盈利兜底）。
                 </div>
               ) : (
                 <table className="w-full text-left text-xs">
-                  <thead className="bg-[#FAF8F5] text-[#7E7469] font-semibold border-b border-[#EFE9DF]">
+                  <thead className="bg-panel text-ink-3 font-semibold border-b border-line-soft">
                     <tr>
                       <th className="py-2.5 px-4">流水单号</th>
                       <th className="py-2.5 px-4">成交时间</th>
@@ -934,21 +934,21 @@ export default function NavView({ activeBotId = "bot_eth_debate_01" }) {
                       <th className="py-2.5 px-4 text-right">实现盈亏</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-[#EFE9DF] font-mono text-xs">
+                  <tbody className="divide-y divide-line-soft font-mono text-xs">
                     {trades.map((t, idx) => (
-                      <tr key={idx} className="hover:bg-[#FAF7F2] transition">
-                        <td className="py-2.5 px-4 text-[#7E7469]">{t.tradeId || t.trade_id}</td>
-                        <td className="py-2.5 px-4 text-[#5A5046]">{t.timestamp}</td>
-                        <td className="py-2.5 px-4 font-bold text-[#2E2823]">{t.symbol}</td>
+                      <tr key={idx} className="hover:bg-panel transition">
+                        <td className="py-2.5 px-4 text-ink-3">{t.tradeId || t.trade_id}</td>
+                        <td className="py-2.5 px-4 text-ink-2">{t.timestamp}</td>
+                        <td className="py-2.5 px-4 font-bold text-ink">{t.symbol}</td>
                         <td className="py-2.5 px-4">
-                          <span className={`px-2 py-0.5 rounded text-xs font-bold ${(t.side === 'BUY' || t.posSide === 'LONG') ? 'bg-[#EBF5EE] text-[#3D784E]' : 'bg-[#FBEFEA] text-[#DE6438]'}`}>
+                          <span className={`px-2 py-0.5 rounded text-xs font-bold ${(t.side === 'BUY' || t.posSide === 'LONG') ? 'bg-success-soft text-success' : 'bg-brand-soft text-brand'}`}>
                             {t.posSide || t.side}
                           </span>
                         </td>
                         <td className="py-2.5 px-4">${Number(t.price || t.executed_price || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
                         <td className="py-2.5 px-4">${Number(t.sizeUsd || t.size_usd || 0).toFixed(2)}</td>
-                        <td className="py-2.5 px-4 text-[#7E7469]">${Number(t.feeUsd || t.fee_usd || 0).toFixed(4)}</td>
-                        <td className={`py-2.5 px-4 text-right font-bold ${t.pnlColor || 'text-[#3D784E]'}`}>
+                        <td className="py-2.5 px-4 text-ink-3">${Number(t.feeUsd || t.fee_usd || 0).toFixed(4)}</td>
+                        <td className={`py-2.5 px-4 text-right font-bold ${t.pnlColor || 'text-success'}`}>
                           {t.realizedPnl || t.realized_pnl || '$0.00'}
                         </td>
                       </tr>
@@ -960,12 +960,12 @@ export default function NavView({ activeBotId = "bot_eth_debate_01" }) {
           ) : (
             <div className="overflow-x-auto">
               {(!omsData?.orders || omsData.orders.length === 0) ? (
-                <div className="p-8 text-center text-xs text-[#8C8275]">
+                <div className="p-8 text-center text-xs text-ink-3">
                   暂无 OMS 托管订单与原生条件止损/止盈单记录。
                 </div>
               ) : (
                 <table className="w-full text-left text-xs">
-                  <thead className="bg-[#FAF8F5] text-[#7E7469] font-semibold border-b border-[#EFE9DF]">
+                  <thead className="bg-panel text-ink-3 font-semibold border-b border-line-soft">
                     <tr>
                       <th className="py-2.5 px-4">幂等键 (clientOrderId)</th>
                       <th className="py-2.5 px-4">类型 / 保护属性</th>
@@ -976,14 +976,14 @@ export default function NavView({ activeBotId = "bot_eth_debate_01" }) {
                       <th className="py-2.5 px-4 text-right">人工干预</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-[#EFE9DF] font-mono text-xs">
+                  <tbody className="divide-y divide-line-soft font-mono text-xs">
                     {omsData.orders.map((o) => (
-                      <tr key={o.client_order_id} className="hover:bg-[#FAF7F2] transition">
-                        <td className="py-2.5 px-4 text-[#5A5046]">{o.client_order_id}</td>
+                      <tr key={o.client_order_id} className="hover:bg-panel transition">
+                        <td className="py-2.5 px-4 text-ink-2">{o.client_order_id}</td>
                         <td className="py-2.5 px-4">
-                          <span className="font-bold text-[#2E2823]">{o.order_type}</span>
+                          <span className="font-bold text-ink">{o.order_type}</span>
                           {Boolean(o.reduce_only) && (
-                            <span className="ml-1.5 px-1.5 py-0.2 rounded bg-[#EBF5EE] text-[#3D784E] text-xs font-sans font-bold">
+                            <span className="ml-1.5 px-1.5 py-0.2 rounded bg-success-soft text-success text-xs font-sans font-bold">
                               reduceOnly 原生保护
                             </span>
                           )}
@@ -995,10 +995,10 @@ export default function NavView({ activeBotId = "bot_eth_debate_01" }) {
                         </td>
                         <td className="py-2.5 px-4">
                           <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${
-                            o.state === 'FILLED' ? 'bg-[#EBF5EE] text-[#3D784E]' :
-                            o.state === 'UNKNOWN' ? 'bg-[#FDECEC] text-[#C24D4D]' :
-                            o.state === 'REJECTED' ? 'bg-[#FDECEC] text-[#C24D4D]' :
-                            'bg-[#EFE9DF] text-[#5A5046]'
+                            o.state === 'FILLED' ? 'bg-success-soft text-success' :
+                            o.state === 'UNKNOWN' ? 'bg-danger-soft text-danger' :
+                            o.state === 'REJECTED' ? 'bg-danger-soft text-danger' :
+                            'bg-muted text-ink-2'
                           }`}>
                             {o.state}
                           </span>
@@ -1008,12 +1008,12 @@ export default function NavView({ activeBotId = "bot_eth_debate_01" }) {
                             <button
                               onClick={() => handleRecoverUnknown(o.client_order_id)}
                               disabled={recoveringCid === o.client_order_id}
-                              className="px-2.5 py-1 rounded bg-[#DE6438] hover:bg-[#C5532A] text-white text-xs font-sans font-bold"
+                              className="px-2.5 py-1 rounded bg-brand hover:bg-brand-hover text-white text-xs font-sans font-bold"
                             >
                               {recoveringCid === o.client_order_id ? '查单中...' : '立即查单恢复'}
                             </button>
                           ) : (
-                            <span className="text-[#9E9486] text-xs">{o.exchange_order_id || '-'}</span>
+                            <span className="text-ink-4 text-xs">{o.exchange_order_id || '-'}</span>
                           )}
                         </td>
                       </tr>

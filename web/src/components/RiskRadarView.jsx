@@ -118,16 +118,16 @@ export default function RiskRadarView({
   const botPausedByRecon = reconcileData?.bot_status === 'PAUSED' || reconcileData?.bot_status === 'CIRCUIT_BROKEN';
 
   return (
-    <div className="flex-1 flex flex-col bg-[#F6F2EB] overflow-hidden">
+    <div className="flex-1 flex flex-col bg-canvas overflow-hidden">
       {/* 顶部控制栏 */}
-      <div className="h-14 bg-[#FAF7F2] border-b border-[#E6DFD5] px-6 flex items-center justify-between shrink-0">
+      <div className="h-14 bg-panel border-b border-line px-6 flex items-center justify-between shrink-0">
         <div className="flex items-center space-x-3">
-          <div className="w-8 h-8 rounded-lg bg-[#EFE9DF] border border-[#DFD6C7] flex items-center justify-center text-[#DE6438]">
+          <div className="w-8 h-8 rounded-lg bg-muted border border-line-strong flex items-center justify-center text-brand">
             <ShieldAlert className="w-4 h-4" />
           </div>
           <div>
-            <h1 className="text-sm font-semibold text-[#1F1E1B] tracking-tight">七大极端行情避险雷达 &amp; 对账守卫</h1>
-            <p className="text-xs text-[#8C8275]">
+            <h1 className="text-sm font-semibold text-ink tracking-tight">七大极端行情避险雷达 &amp; 对账守卫</h1>
+            <p className="text-xs text-ink-3">
               代码确定性毫秒级拦截守卫 · 交易所持仓对账与外部死信心跳实时监控
             </p>
           </div>
@@ -137,7 +137,7 @@ export default function RiskRadarView({
           <button
             onClick={fetchRadarAndReconcile}
             disabled={isLoading}
-            className="flex items-center space-x-1.5 px-3 py-1.5 text-xs text-[#5C5549] hover:text-[#1F1E1B] bg-white border border-[#DFD6C7] rounded shadow-xs hover:border-[#1F1E1B] transition-all cursor-pointer"
+            className="flex items-center space-x-1.5 px-3 py-1.5 text-xs text-ink-2 hover:text-ink bg-surface border border-line-strong rounded shadow-xs hover:border-ink transition-all cursor-pointer"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
             <span>实时探测</span>
@@ -146,7 +146,7 @@ export default function RiskRadarView({
           <button
             onClick={handleKillTrigger}
             disabled={isKilling}
-            className="flex items-center space-x-2 px-4 py-1.5 bg-[#DE6438] hover:bg-[#C9552D] text-white text-xs font-semibold rounded shadow-sm hover:shadow transition-all cursor-pointer active:scale-95"
+            className="flex items-center space-x-2 px-4 py-1.5 bg-brand hover:bg-brand-hover text-white text-xs font-semibold rounded shadow-sm hover:shadow transition-all cursor-pointer active:scale-95"
           >
             <Power className="w-3.5 h-3.5" />
             <span>{isKilling ? '正在拔网线急停...' : '一键全局紧急急停'}</span>
@@ -156,14 +156,14 @@ export default function RiskRadarView({
 
       {/* 成功急停提示 Banner */}
       {killSuccessMessage && (
-        <div className="bg-[#DE6438]/10 border-b border-[#DE6438]/30 px-6 py-2.5 flex items-center justify-between text-xs text-[#DE6438]">
+        <div className="bg-brand/10 border-b border-brand/30 px-6 py-2.5 flex items-center justify-between text-xs text-brand">
           <div className="flex items-center space-x-2">
             <AlertOctagon className="w-4 h-4 shrink-0" />
             <span className="font-medium">{killSuccessMessage}</span>
           </div>
           <button
             onClick={() => setKillSuccessMessage(null)}
-            className="text-[#DE6438] font-bold hover:underline cursor-pointer"
+            className="text-brand font-bold hover:underline cursor-pointer"
           >
             关闭提示
           </button>
@@ -176,24 +176,24 @@ export default function RiskRadarView({
         <div
           className={`p-5 rounded-xl border shadow-xs flex items-center justify-between ${
             overallStatus === 'TRIGGERED'
-              ? 'border-[#F2B8B5] bg-[#FEF3F2]'
+              ? 'border-danger-line bg-danger-soft'
               : overallStatus === 'WARNING'
-              ? 'border-[#F3D8A8] bg-[#FFFBEB]'
+              ? 'border-warning-line bg-warning-soft'
               : isUnknown
-              ? 'border-[#E2D9CC] bg-[#F5F2EB]'
-              : 'border-[#DFD6C7] bg-[#FAF7F2]'
+              ? 'border-line bg-canvas'
+              : 'border-line-strong bg-panel'
           }`}
         >
           <div className="flex items-center space-x-4">
             <div
               className={`w-12 h-12 rounded-full border flex items-center justify-center ${
                 overallStatus === 'TRIGGERED'
-                  ? 'bg-[#C24D4D]/15 border-[#C24D4D]/30 text-[#C24D4D]'
+                  ? 'bg-danger-solid/15 border-danger/30 text-danger'
                   : overallStatus === 'WARNING'
-                  ? 'bg-[#C28B38]/15 border-[#C28B38]/30 text-[#C28B38]'
+                  ? 'bg-warning-solid/15 border-warning/30 text-warning'
                   : isUnknown
-                  ? 'bg-[#9E917F]/10 border-[#9E917F]/30 text-[#9E917F]'
-                  : 'bg-[#3D784E]/10 border-[#3D784E]/30 text-[#3D784E]'
+                  ? 'bg-ink-4/10 border-ink-4/30 text-ink-4'
+                  : 'bg-success-solid/10 border-success/30 text-success'
               }`}
             >
               {overallStatus === 'TRIGGERED' ? (
@@ -206,7 +206,7 @@ export default function RiskRadarView({
             </div>
             <div>
               <div className="flex items-center space-x-2">
-                <span className="text-base font-semibold text-[#1F1E1B]">
+                <span className="text-base font-semibold text-ink">
                   {overallStatus === 'TRIGGERED'
                     ? '极端行情硬风控已触发拦截'
                     : overallStatus === 'WARNING'
@@ -218,18 +218,18 @@ export default function RiskRadarView({
                 <span
                   className={`text-xs px-2 py-0.5 rounded-full font-medium border ${
                     overallStatus === 'TRIGGERED'
-                      ? 'bg-[#C24D4D]/15 text-[#C24D4D] border-[#C24D4D]/30'
+                      ? 'bg-danger-solid/15 text-danger border-danger/30'
                       : overallStatus === 'WARNING'
-                      ? 'bg-[#C28B38]/15 text-[#C28B38] border-[#C28B38]/30'
+                      ? 'bg-warning-solid/15 text-warning border-warning/30'
                       : isUnknown
-                      ? 'bg-[#9E917F]/15 text-[#7E7469] border-[#9E917F]/20'
-                      : 'bg-[#3D784E]/15 text-[#3D784E] border-[#3D784E]/20'
+                      ? 'bg-ink-4/15 text-ink-3 border-ink-4/20'
+                      : 'bg-success-solid/15 text-success border-success/20'
                   }`}
                 >
                   {rules.length > 0 ? `${rules.length - triggeredCount}/${rules.length} 规则未触发` : '等待遥测'}
                 </span>
               </div>
-              <p className="text-xs text-[#706757] mt-0.5">
+              <p className="text-xs text-ink-3 mt-0.5">
                 {isUnknown && radarError
                   ? `标的对象: ${symbol} · ${radarError}`
                   : `标的对象: ${symbol} · 任何分钟级剧烈插针、跨所基差隔离或宏观静默窗口，系统将在毫秒内硬驳回开仓提案`}
@@ -239,16 +239,16 @@ export default function RiskRadarView({
 
           <div className="flex items-center space-x-6 text-right">
             <div>
-              <div className="text-xs text-[#8C8275] uppercase tracking-wider">最近探测时间</div>
-              <div className="text-xs font-mono font-medium text-[#1F1E1B] mt-0.5">
+              <div className="text-xs text-ink-3 uppercase tracking-wider">最近探测时间</div>
+              <div className="text-xs font-mono font-medium text-ink mt-0.5">
                 {radarData?.timestamp ? new Date(radarData.timestamp).toLocaleTimeString() : '--:--:--'}
               </div>
             </div>
             <div>
-              <div className="text-xs text-[#8C8275] uppercase tracking-wider">当前拦截状态</div>
+              <div className="text-xs text-ink-3 uppercase tracking-wider">当前拦截状态</div>
               <div
                 className={`text-xs font-bold mt-0.5 ${
-                  isUnknown ? 'text-[#9E917F]' : triggeredCount > 0 ? 'text-[#C24D4D]' : warningCount > 0 ? 'text-[#C28B38]' : 'text-[#3D784E]'
+                  isUnknown ? 'text-ink-4' : triggeredCount > 0 ? 'text-danger' : warningCount > 0 ? 'text-warning' : 'text-success'
                 }`}
               >
                 {isUnknown
@@ -264,14 +264,14 @@ export default function RiskRadarView({
         </div>
 
         {/* 2. 对账引擎 (ExchangeReconciler) & 外部死信心跳 (DeadManSwitch) 面板 */}
-        <div className="p-5 rounded-xl border border-[#DFD6C7] bg-white shadow-xs space-y-3">
+        <div className="p-5 rounded-xl border border-line-strong bg-surface shadow-xs space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center space-x-2.5">
-              <Radio className="w-4 h-4 text-[#DE6438]" />
-              <h2 className="text-xs font-bold text-[#1F1E1B]">
+              <Radio className="w-4 h-4 text-brand" />
+              <h2 className="text-xs font-bold text-ink">
                 交易所持仓对账引擎 (ExchangeReconciler) &amp; 外部死信心跳
               </h2>
-              <span className="text-xs font-mono px-2 py-0.5 rounded-full bg-[#EFE9DF] text-[#5C5549]">
+              <span className="text-xs font-mono px-2 py-0.5 rounded-full bg-muted text-ink-2">
                 Bot: {activeBotId} ({reconcileData?.market_type || '--'} · {reconcileData?.execution_mode || '--'})
               </span>
             </div>
@@ -280,7 +280,7 @@ export default function RiskRadarView({
               <button
                 onClick={() => handleManualReconcile(false)}
                 disabled={isReconciling}
-                className="px-3 py-1.5 rounded-lg bg-[#FAF7F2] hover:bg-[#EFE9DF] border border-[#DFD6C7] text-xs font-semibold text-[#2E2823] transition cursor-pointer"
+                className="px-3 py-1.5 rounded-lg bg-panel hover:bg-muted border border-line-strong text-xs font-semibold text-ink transition cursor-pointer"
               >
                 {isReconciling ? '对账中...' : '🔍 立即执行对账'}
               </button>
@@ -288,7 +288,7 @@ export default function RiskRadarView({
                 <button
                   onClick={() => handleManualReconcile(true)}
                   disabled={isReconciling}
-                  className="px-3 py-1.5 rounded-lg bg-[#3D784E] hover:bg-[#316340] text-white text-xs font-semibold transition cursor-pointer"
+                  className="px-3 py-1.5 rounded-lg bg-success-solid hover:bg-success-solid-hover text-white text-xs font-semibold transition cursor-pointer"
                 >
                   ✅ 核查无误并恢复运行
                 </button>
@@ -297,40 +297,40 @@ export default function RiskRadarView({
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
-            <div className="p-3 rounded-lg bg-[#FAF7F2] border border-[#EDE5DA]">
-              <div className="text-xs text-[#8C8275]">对账一致性状态</div>
+            <div className="p-3 rounded-lg bg-panel border border-line-soft">
+              <div className="text-xs text-ink-3">对账一致性状态</div>
               <div className="mt-1 font-bold flex items-center space-x-1.5">
                 {lastRecon ? (
                   lastRecon.is_clean ? (
-                    <span className="text-[#3D784E] flex items-center space-x-1">
+                    <span className="text-success flex items-center space-x-1">
                       <CheckCircle2 className="w-3.5 h-3.5" />
                       <span>CLEAN (账实完全一致)</span>
                     </span>
                   ) : (
-                    <span className="text-[#C24D4D]">
+                    <span className="text-danger">
                       ⚠️ 存在差异 ({lastRecon.discrepancies?.length || 0} 项)
                     </span>
                   )
                 ) : (
-                  <span className="text-[#7E7469]">尚未执行对账（点击右侧按钮即时核对）</span>
+                  <span className="text-ink-3">尚未执行对账（点击右侧按钮即时核对）</span>
                 )}
               </div>
             </div>
 
-            <div className="p-3 rounded-lg bg-[#FAF7F2] border border-[#EDE5DA]">
-              <div className="text-xs text-[#8C8275]">机器人状态 &amp; 持仓数</div>
-              <div className="mt-1 font-mono font-bold text-[#2E2823]">
+            <div className="p-3 rounded-lg bg-panel border border-line-soft">
+              <div className="text-xs text-ink-3">机器人状态 &amp; 持仓数</div>
+              <div className="mt-1 font-mono font-bold text-ink">
                 {reconcileData?.bot_status || 'UNKNOWN'} · 活动持仓 {reconcileData?.open_positions_count ?? 0} 笔
               </div>
             </div>
 
-            <div className="p-3 rounded-lg bg-[#FAF7F2] border border-[#EDE5DA]">
-              <div className="text-xs text-[#8C8275]">外部死信心跳 (DeadManSwitch)</div>
+            <div className="p-3 rounded-lg bg-panel border border-line-soft">
+              <div className="text-xs text-ink-3">外部死信心跳 (DeadManSwitch)</div>
               <div className="mt-1 font-mono font-bold">
                 {dms.running ? (
-                  <span className="text-[#3D784E]">● 在线 ({dms.ping_count || 0} 次心跳)</span>
+                  <span className="text-success">● 在线 ({dms.ping_count || 0} 次心跳)</span>
                 ) : (
-                  <span className="text-[#C28B38]">○ 未启用 (开发模式)</span>
+                  <span className="text-warning">○ 未启用 (开发模式)</span>
                 )}
               </div>
             </div>
@@ -340,8 +340,8 @@ export default function RiskRadarView({
             <div
               className={`px-3 py-2 rounded-lg text-xs font-medium border ${
                 reconcileMsg.ok
-                  ? 'bg-[#EBF5EE] text-[#3D784E] border-[#CDE3D2]'
-                  : 'bg-[#FDECEC] text-[#C24D4D] border-[#F7CDCD]'
+                  ? 'bg-success-soft text-success border-success-line'
+                  : 'bg-danger-soft text-danger border-danger-line'
               }`}
             >
               {reconcileMsg.text}
@@ -352,7 +352,7 @@ export default function RiskRadarView({
         {/* 3. 7 大规则网格卡片 */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {rules.length === 0 ? (
-            <div className="col-span-full p-8 text-center text-xs text-[#8C8275] bg-white rounded-xl border border-[#DFD6C7]">
+            <div className="col-span-full p-8 text-center text-xs text-ink-3 bg-surface rounded-xl border border-line-strong">
               {radarError
                 ? `风控雷达遥测不可用：${radarError}`
                 : '正在连接后端 /api/v1/market/radar 获取风控遥测数据…'}
@@ -366,42 +366,42 @@ export default function RiskRadarView({
                   key={rule.id}
                   className={`p-4 rounded-xl border transition-all flex flex-col justify-between shadow-xs ${
                     isTriggered
-                      ? 'border-[#F2B8B5] bg-[#FEF3F2]'
-                      : 'border-[#DFD6C7] bg-[#FAF7F2] hover:border-[#BFB39E]'
+                      ? 'border-danger-line bg-danger-soft'
+                      : 'border-line-strong bg-panel hover:border-line-strong'
                   }`}
                 >
                   <div>
                     <div className="flex items-start justify-between">
                       <div className="flex items-center space-x-2">
                         <span className="text-lg">{rule.icon}</span>
-                        <span className="text-xs font-bold text-[#1F1E1B] line-clamp-1">
+                        <span className="text-xs font-bold text-ink line-clamp-1">
                           规则 {rule.id}
                         </span>
                       </div>
                       <span
                         className={`text-xs font-mono px-2 py-0.5 rounded-full border ${
                           isHealthy
-                            ? 'bg-[#3D784E]/10 text-[#3D784E] border-[#3D784E]/20'
+                            ? 'bg-success-solid/10 text-success border-success/20'
                             : isTriggered
-                            ? 'bg-[#C24D4D]/15 text-[#C24D4D] border-[#C24D4D]/30 font-bold'
-                            : 'bg-[#C28B38]/15 text-[#C28B38] border-[#C28B38]/30'
+                            ? 'bg-danger-solid/15 text-danger border-danger/30 font-bold'
+                            : 'bg-warning-solid/15 text-warning border-warning/30'
                         }`}
                       >
                         {rule.status}
                       </span>
                     </div>
 
-                    <h3 className="text-xs font-semibold text-[#2B2925] mt-2 mb-1">
+                    <h3 className="text-xs font-semibold text-ink mt-2 mb-1">
                       {rule.name}
                     </h3>
-                    <p className="text-xs text-[#706757] leading-relaxed">
+                    <p className="text-xs text-ink-3 leading-relaxed">
                       {rule.desc}
                     </p>
                   </div>
 
-                  <div className="mt-4 pt-3 border-t border-[#EFE9DF] flex items-center justify-between text-xs">
-                    <span className="text-xs text-[#8C8275]">当前实时遥测</span>
-                    <span className={`font-mono font-semibold ${rule.valueColor || 'text-[#7E7469]'}`}>
+                  <div className="mt-4 pt-3 border-t border-line-soft flex items-center justify-between text-xs">
+                    <span className="text-xs text-ink-3">当前实时遥测</span>
+                    <span className={`font-mono font-semibold ${rule.valueColor || 'text-ink-3'}`}>
                       {rule.value}
                     </span>
                   </div>

@@ -3,9 +3,9 @@ import { AlertTriangle, Info, XCircle } from 'lucide-react';
 import { subscribeDialogs, resolveDialog } from '../utils/dialog';
 
 const TONES = {
-  info: { Icon: Info, cls: 'bg-[#E8EFF4] text-[#3E6B89]' },
-  warning: { Icon: AlertTriangle, cls: 'bg-[#FBF1E0] text-[#B9770E]' },
-  error: { Icon: XCircle, cls: 'bg-[#FBEAEA] text-[#C24D4D]' },
+  info: { Icon: Info, cls: 'bg-info-soft text-info' },
+  warning: { Icon: AlertTriangle, cls: 'bg-warning-soft text-warning' },
+  error: { Icon: XCircle, cls: 'bg-danger-soft text-danger' },
 };
 
 /** 渲染 showAlert / showConfirm 排队中的第一个对话框 */
@@ -53,15 +53,15 @@ export default function DialogHost() {
         aria-modal="true"
         aria-labelledby="hd-dialog-title"
         aria-describedby="hd-dialog-message"
-        className="w-full max-w-md rounded-2xl bg-[#FAF7F2] border border-[#E6DFD5] shadow-2xl"
+        className="w-full max-w-md rounded-2xl bg-panel border border-line shadow-2xl"
       >
         <div className="px-5 pt-5 flex items-start gap-3">
           <div className={`w-9 h-9 rounded-full flex items-center justify-center shrink-0 ${cls}`}>
             <Icon className="w-4 h-4" />
           </div>
           <div className="min-w-0 flex-1">
-            <h2 id="hd-dialog-title" className="text-sm font-bold text-[#2E2823]">{title}</h2>
-            <p id="hd-dialog-message" className="mt-1.5 text-[13px] leading-relaxed text-[#5E554B] whitespace-pre-line break-words">
+            <h2 id="hd-dialog-title" className="text-sm font-bold text-ink">{title}</h2>
+            <p id="hd-dialog-message" className="mt-1.5 text-[13px] leading-relaxed text-ink-2 whitespace-pre-line break-words">
               {current.message}
             </p>
           </div>
@@ -72,7 +72,7 @@ export default function DialogHost() {
               ref={cancelRef}
               type="button"
               onClick={() => close(false)}
-              className="px-3.5 py-1.5 rounded-lg border border-[#DCD3C5] bg-white hover:bg-[#F2ECE3] text-xs font-semibold text-[#2E2823] transition focus:outline-none focus:ring-2 focus:ring-[#DE6438]/40"
+              className="px-3.5 py-1.5 rounded-lg border border-line-strong bg-surface hover:bg-subtle text-xs font-semibold text-ink transition focus:outline-none focus:ring-2 focus:ring-brand/40"
             >
               {current.cancelText || '取消'}
             </button>
@@ -83,8 +83,8 @@ export default function DialogHost() {
             onClick={() => close(isConfirm ? true : undefined)}
             className={`px-3.5 py-1.5 rounded-lg text-xs font-bold text-white transition focus:outline-none focus:ring-2 focus:ring-offset-1 ${
               current.danger
-                ? 'bg-[#C24D4D] hover:bg-[#A83838] focus:ring-[#C24D4D]/50'
-                : 'bg-[#DE6438] hover:bg-[#C8542A] focus:ring-[#DE6438]/50'
+                ? 'bg-danger-solid hover:bg-danger-solid-hover focus:ring-danger/50'
+                : 'bg-brand hover:bg-brand-hover focus:ring-brand/50'
             }`}
           >
             {confirmText}

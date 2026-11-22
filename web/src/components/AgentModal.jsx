@@ -20,12 +20,12 @@ export default function AgentModal({ agent, onClose }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 backdrop-blur-xs p-4 animate-fade-in">
       <div 
-        className="w-full max-w-lg bg-[#FAF7F2] border-2 border-[#D8CEBE] rounded-3xl shadow-2xl overflow-hidden flex flex-col transform transition-all"
+        className="w-full max-w-lg bg-panel border-2 border-line-strong rounded-3xl shadow-2xl overflow-hidden flex flex-col transform transition-all"
         onClick={(e) => e.stopPropagation()}
       >
         
         {/* 弹窗顶栏：角色形象与关闭按键 */}
-        <div className="p-4 bg-white border-b border-[#EBE3D7] flex items-center justify-between">
+        <div className="p-4 bg-surface border-b border-line flex items-center justify-between">
           <div className="flex items-center space-x-3">
             <div 
               className="w-12 h-12 rounded-2xl flex items-center justify-center text-2xl shadow-xs"
@@ -35,7 +35,7 @@ export default function AgentModal({ agent, onClose }) {
             </div>
             <div>
               <div className="flex items-center space-x-2">
-                <h3 className="font-bold text-base text-[#2E2823]">{agent.name}</h3>
+                <h3 className="font-bold text-base text-ink">{agent.name}</h3>
                 <span 
                   className="text-xs px-2 py-0.5 rounded-full font-mono font-bold text-white shadow-xs"
                   style={{ backgroundColor: agent.color }}
@@ -43,13 +43,13 @@ export default function AgentModal({ agent, onClose }) {
                   {agent.badge}
                 </span>
               </div>
-              <p className="text-xs text-[#7E7469] font-medium">{agent.title}</p>
+              <p className="text-xs text-ink-3 font-medium">{agent.title}</p>
             </div>
           </div>
 
           <button 
             onClick={onClose}
-            className="w-8 h-8 rounded-full bg-[#EFE9DF] hover:bg-[#E5DACB] text-[#5E554B] flex items-center justify-center text-sm font-bold transition"
+            className="w-8 h-8 rounded-full bg-muted hover:bg-muted-strong text-ink-2 flex items-center justify-center text-sm font-bold transition"
           >
             ✕
           </button>
@@ -60,27 +60,27 @@ export default function AgentModal({ agent, onClose }) {
           
           {/* M5：机器人尚未产生推演结果时明确提示，不展示任何编造的结论 */}
           {agent.pending && (
-            <div className="bg-[#FDF3E3] p-3 rounded-xl border border-[#F1DDB8] text-[#B9770E] text-xs font-semibold">
+            <div className="bg-warning-soft p-3 rounded-xl border border-warning-line text-warning text-xs font-semibold">
               ⏳ 该机器人尚未产生推演结果，以下仅为角色说明；首轮决策周期完成后将展示真实论据与数据。
             </div>
           )}
 
           {/* 1. 角色白话速懂介绍 */}
-          <div className="bg-[#FFFDFB] p-3 rounded-xl border border-[#E8DEC0] leading-relaxed text-[#5E554B]">
+          <div className="bg-surface p-3 rounded-xl border border-warning-line leading-relaxed text-ink-2">
             {agent.roleDescription}
           </div>
 
           {/* 2. 决策结论与置信度量化仪表 */}
-          <div className="bg-white p-3.5 rounded-xl border border-[#E6DFD5] space-y-2 shadow-xs">
+          <div className="bg-surface p-3.5 rounded-xl border border-line space-y-2 shadow-xs">
             <div className="flex items-center justify-between">
-              <span className="font-semibold text-[#8C8276] uppercase tracking-wide text-xs">
+              <span className="font-semibold text-ink-3 uppercase tracking-wide text-xs">
                 当前决策观点 (Decision Stance)
               </span>
               <span 
                 className="font-mono font-bold text-xs px-2.5 py-0.5 rounded-md"
                 style={{
-                  backgroundColor: agent.stance === 'LONG' ? '#EBF5EE' : agent.stance === 'SHORT' ? '#FCECE8' : '#EFE9DF',
-                  color: agent.stance === 'LONG' ? '#4D835C' : agent.stance === 'SHORT' ? '#C24D4D' : '#5E554B',
+                  backgroundColor: agent.stance === 'LONG' ? 'rgb(var(--c-success-soft))' : agent.stance === 'SHORT' ? 'rgb(var(--c-danger-soft))' : 'rgb(var(--c-muted))',
+                  color: agent.stance === 'LONG' ? 'rgb(var(--c-success))' : agent.stance === 'SHORT' ? 'rgb(var(--c-danger))' : 'rgb(var(--c-ink-2))',
                 }}
               >
                 {agent.stance} · {agent.tag}
@@ -89,13 +89,13 @@ export default function AgentModal({ agent, onClose }) {
 
             {/* 置信度进度槽 */}
             <div className="space-y-1 pt-1">
-              <div className="flex justify-between text-xs text-[#7E7469] font-mono">
+              <div className="flex justify-between text-xs text-ink-3 font-mono">
                 <span>模型确定性置信度 (Confidence Score):</span>
-                <span className="font-bold text-[#2E2823]">
+                <span className="font-bold text-ink">
                   {Number.isFinite(agent.confidence) ? `${Math.round(agent.confidence * 100)}%` : '--'}
                 </span>
               </div>
-              <div className="w-full h-2 bg-[#EFE9DF] rounded-full overflow-hidden">
+              <div className="w-full h-2 bg-muted rounded-full overflow-hidden">
                 <div 
                   className="h-full rounded-full transition-all duration-500"
                   style={{ 
@@ -108,29 +108,29 @@ export default function AgentModal({ agent, onClose }) {
           </div>
 
           {/* 3. 核心立论主张 (Key Thesis) */}
-          <div className="bg-white p-3.5 rounded-xl border border-[#E6DFD5] space-y-1.5 shadow-xs">
-            <div className="font-bold text-xs text-[#2E2823] flex items-center space-x-1.5">
+          <div className="bg-surface p-3.5 rounded-xl border border-line space-y-1.5 shadow-xs">
+            <div className="font-bold text-xs text-ink flex items-center space-x-1.5">
               <span>🎯</span>
               <span>核心决策论据 (Key Thesis)</span>
             </div>
-            <p className="text-[#4A4237] leading-relaxed text-xs bg-[#FAF7F2] p-2.5 rounded-lg border border-[#EDE5DA]">
+            <p className="text-ink-2 leading-relaxed text-xs bg-panel p-2.5 rounded-lg border border-line-soft">
               {agent.keyThesis || '--'}
             </p>
           </div>
 
           {/* 4. 量化指标与证据清单 (Supporting Evidence) */}
-          <div className="bg-white p-3.5 rounded-xl border border-[#E6DFD5] space-y-2 shadow-xs">
-            <div className="font-bold text-xs text-[#2E2823] flex items-center space-x-1.5">
+          <div className="bg-surface p-3.5 rounded-xl border border-line space-y-2 shadow-xs">
+            <div className="font-bold text-xs text-ink flex items-center space-x-1.5">
               <span>🔍</span>
               <span>数据证据与指标支撑 (Evidence Checklist)</span>
             </div>
             <div className="space-y-1.5">
               {(!agent.evidence || agent.evidence.length === 0) && (
-                <div className="text-xs text-[#9E917F]">暂无数据证据</div>
+                <div className="text-xs text-ink-4">暂无数据证据</div>
               )}
               {(agent.evidence || []).map((item, idx) => (
-                <div key={idx} className="flex items-start space-x-2 text-xs text-[#4A4237]">
-                  <span className="text-[#4D835C] font-bold">✓</span>
+                <div key={idx} className="flex items-start space-x-2 text-xs text-ink-2">
+                  <span className="text-success font-bold">✓</span>
                   <span className="leading-tight">{item}</span>
                 </div>
               ))}
@@ -138,12 +138,12 @@ export default function AgentModal({ agent, onClose }) {
           </div>
 
           {/* 5. 观点失效与止损条件 (Invalidation Stop Condition) */}
-          <div className="bg-[#FCF7F5] p-3 rounded-xl border border-[#F2D6CA] space-y-1">
-            <div className="font-bold text-xs text-[#C24D4D] flex items-center space-x-1">
+          <div className="bg-brand-soft p-3 rounded-xl border border-brand-line space-y-1">
+            <div className="font-bold text-xs text-danger flex items-center space-x-1">
               <span>🛡️</span>
               <span>立论失效与防守点位 (Invalidation Rule)</span>
             </div>
-            <p className="text-[#8C3A3A] text-xs leading-relaxed">
+            <p className="text-danger-strong text-xs leading-relaxed">
               {agent.invalidation || '--'}
             </p>
           </div>
@@ -162,13 +162,13 @@ export default function AgentModal({ agent, onClose }) {
         </div>
 
         {/* 弹窗底栏操作 */}
-        <div className="p-3 bg-white border-t border-[#EBE3D7] flex items-center justify-between">
-          <span className="text-xs text-[#9E917F]">
-            审计追踪 ID: <code className="bg-[#EFE9DF] px-1 rounded">{agent.traceId || '--'}</code>
+        <div className="p-3 bg-surface border-t border-line flex items-center justify-between">
+          <span className="text-xs text-ink-4">
+            审计追踪 ID: <code className="bg-muted px-1 rounded">{agent.traceId || '--'}</code>
           </span>
           <button 
             onClick={onClose}
-            className="px-4 py-1.5 rounded-xl bg-[#DE6438] hover:bg-[#C8542A] text-white text-xs font-semibold shadow-xs transition"
+            className="px-4 py-1.5 rounded-xl bg-brand hover:bg-brand-hover text-white text-xs font-semibold shadow-xs transition"
           >
             已阅知 (Dismiss)
           </button>

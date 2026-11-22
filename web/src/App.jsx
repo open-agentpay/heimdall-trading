@@ -610,7 +610,7 @@ export default function App() {
   const currentSymbol = (activeBot?.symbol || decisionRecord?.symbol || (activeBotId.includes("btc") ? "BTC" : activeBotId.includes("sol") ? "SOL" : "ETH")).toUpperCase();
 
   return (
-    <div className="h-screen w-screen flex flex-col bg-[#F6F2EB] text-[#2E2823] overflow-hidden">
+    <div className="h-screen w-screen flex flex-col bg-canvas text-ink overflow-hidden">
       
       {/* 1. 顶部视窗导航栏 */}
       <Header 
@@ -797,10 +797,10 @@ export default function App() {
         <div 
           className={`fixed bottom-6 right-6 z-50 px-4 py-2.5 rounded-xl shadow-lg border text-xs font-semibold flex items-center space-x-2 animate-bounce ${
             notification.type === "critical"
-              ? "bg-[#C24D4D] text-white border-[#A83838]"
+              ? "bg-danger-solid text-white border-danger"
               : notification.type === "success"
-              ? "bg-[#4D835C] text-white border-[#3B6A48]"
-              : "bg-[#FAF7F2] text-[#2E2823] border-[#D8CEBE]"
+              ? "bg-success-solid text-white border-success"
+              : "bg-panel text-ink border-line-strong"
           }`}
         >
           <span>{notification.msg}</span>

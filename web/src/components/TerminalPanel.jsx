@@ -62,11 +62,11 @@ export default function TerminalPanel({
         }
       }
       const lower = agentName.toLowerCase();
-      let color = "#3E6B89";
-      if (lower.includes("risk") || lower.includes("guard")) color = "#C24D4D";
-      else if (lower.includes("bull")) color = "#4D835C";
-      else if (lower.includes("bear")) color = "#D48B38";
-      else if (lower.includes("debate") || lower.includes("moderator")) color = "#DE6438";
+      let color = "rgb(var(--c-info))";
+      if (lower.includes("risk") || lower.includes("guard")) color = "rgb(var(--c-danger))";
+      else if (lower.includes("bull")) color = "rgb(var(--c-success))";
+      else if (lower.includes("bear")) color = "rgb(var(--c-warning))";
+      else if (lower.includes("debate") || lower.includes("moderator")) color = "rgb(var(--c-brand))";
 
       // 按名称匹配对应的 StepTrace，取后端真实耗时；匹配不到就不显示耗时（不再按序号编造）
       const key = lower.split(/[\s\/·:]/)[0];
@@ -303,21 +303,21 @@ export default function TerminalPanel({
   };
 
   return (
-    <aside className="w-64 bg-[#FAF7F2] border-l border-[#E6DFD5] flex flex-col shrink-0">
+    <aside className="w-64 bg-panel border-l border-line flex flex-col shrink-0">
       
       {/* 顶栏标签切换 */}
-      <div className="h-10 px-2.5 border-b border-[#EBE3D7] flex items-center justify-between">
+      <div className="h-10 px-2.5 border-b border-line flex items-center justify-between">
         <div className="flex space-x-1">
           <button
             onClick={() => setActiveTab("stream")}
             className={`px-2 py-1 rounded-md text-xs font-bold transition flex items-center space-x-1 ${
               activeTab === "stream"
-                ? "bg-white text-[#DE6438] shadow-xs"
-                : "text-[#7E7469] hover:text-[#2E2823]"
+                ? "bg-surface text-brand shadow-xs"
+                : "text-ink-3 hover:text-ink"
             }`}
           >
             <span>🧠 思维链</span>
-            <span className="text-xs bg-[#EFE8DE] px-1 rounded-full text-[#7E7469]">
+            <span className="text-xs bg-muted px-1 rounded-full text-ink-3">
               {activeThinkingLogs.length}
             </span>
           </button>
@@ -325,16 +325,16 @@ export default function TerminalPanel({
             onClick={() => setActiveTab("console")}
             className={`px-2 py-1 rounded-md text-xs font-bold transition flex items-center space-x-1 ${
               activeTab === "console"
-                ? "bg-white text-[#DE6438] shadow-xs"
-                : "text-[#7E7469] hover:text-[#2E2823]"
+                ? "bg-surface text-brand shadow-xs"
+                : "text-ink-3 hover:text-ink"
             }`}
           >
             <span>💻 控制台</span>
-            <span className={`w-1.5 h-1.5 rounded-full ${isWsConnected ? 'bg-[#4D835C] animate-pulse' : 'bg-[#C28B38]'}`}></span>
+            <span className={`w-1.5 h-1.5 rounded-full ${isWsConnected ? 'bg-success-solid animate-pulse' : 'bg-warning-solid'}`}></span>
           </button>
         </div>
 
-        <span className={`text-xs font-mono ${isWsConnected ? 'text-[#4D835C]' : 'text-[#C28B38]'}`}>
+        <span className={`text-xs font-mono ${isWsConnected ? 'text-success' : 'text-warning'}`}>
           {isWsConnected ? 'WS: LIVE' : 'WS: POLL'}
         </span>
       </div>
@@ -344,7 +344,7 @@ export default function TerminalPanel({
         <div className="flex-1 flex flex-col min-h-0">
           
           {/* 角色过滤标签 */}
-          <div className="px-2.5 py-1.5 border-b border-[#F0EAE1] flex items-center space-x-1 overflow-x-auto text-xs font-medium text-[#7E7469] bg-[#FAF4EB]">
+          <div className="px-2.5 py-1.5 border-b border-line-soft flex items-center space-x-1 overflow-x-auto text-xs font-medium text-ink-3 bg-canvas">
             <span>过滤:</span>
             {[
               { key: "ALL", label: "全部" },
@@ -358,8 +358,8 @@ export default function TerminalPanel({
                 onClick={() => setFilterAgent(key)}
                 className={`px-1.5 py-0.5 rounded transition text-xs whitespace-nowrap ${
                   filterAgent === key
-                    ? "bg-[#DE6438] text-white font-bold"
-                    : "bg-white text-[#7E7469] hover:bg-[#EAE2D5]"
+                    ? "bg-brand text-white font-bold"
+                    : "bg-surface text-ink-3 hover:bg-muted"
                 }`}
               >
                 {label}
@@ -370,7 +370,7 @@ export default function TerminalPanel({
           {/* 思维链条目滚动列表 */}
           <div className="flex-1 overflow-y-auto p-2.5 space-y-2 text-xs font-mono">
             {activeThinkingLogs.length === 0 && (
-              <div className="p-3 rounded-xl border border-dashed border-[#DFD6C7] bg-white text-[10.5px] text-[#9E917F] leading-relaxed font-sans">
+              <div className="p-3 rounded-xl border border-dashed border-line-strong bg-surface text-xs text-ink-4 leading-relaxed font-sans">
                 暂无推演记录。机器人完成首轮决策后，这里会显示后端返回的真实思维链。
               </div>
             )}
@@ -379,13 +379,13 @@ export default function TerminalPanel({
               .map((item, index) => (
                 <div 
                   key={index} 
-                  className="bg-white p-2 rounded-xl border border-[#E6DFD5] shadow-xs hover:border-[#D48B38] transition"
+                  className="bg-surface p-2 rounded-xl border border-line shadow-xs hover:border-warning transition"
                 >
                   <div className="flex items-center justify-between text-xs font-bold mb-1">
                     <span style={{ color: item.color }} className="truncate max-w-[120px]">[{item.agent}]</span>
-                    <span className="text-[#9E917F] text-xs shrink-0">{item.latency ? `${item.time} · ${item.latency}` : item.time}</span>
+                    <span className="text-ink-4 text-xs shrink-0">{item.latency ? `${item.time} · ${item.latency}` : item.time}</span>
                   </div>
-                  <p className="text-[#4A4237] text-[10.5px] leading-relaxed break-words">
+                  <p className="text-ink-2 text-xs leading-relaxed break-words">
                     {item.text}
                   </p>
                 </div>
@@ -399,7 +399,7 @@ export default function TerminalPanel({
           
           {/* 控制台日志打印区 */}
           <div className="flex-1 overflow-y-auto p-2.5 space-y-1.5">
-            <div className="text-[9.5px] text-[#8C8071] pb-1 border-b border-[#352F2A]">
+            <div className="text-xs text-[#8C8071] pb-1 border-b border-[#352F2A]">
               Heimdall Trading Engine v0.1.0 · Interactive Shell
               <br />输入 'help' 获取所有操作指令。
             </div>
@@ -419,7 +419,7 @@ export default function TerminalPanel({
           </div>
 
           {/* 快捷指令按钮条 */}
-          <div className="px-2 py-1 bg-[#26221E] border-t border-[#352F2A] flex items-center space-x-1 overflow-x-auto text-[9.5px]">
+          <div className="px-2 py-1 bg-[#26221E] border-t border-[#352F2A] flex items-center space-x-1 overflow-x-auto text-xs">
             <button
               onClick={() => { if (onExecuteTrade) onExecuteTrade(); }}
               className="px-1.5 py-0.5 rounded bg-[#4D835C] hover:bg-[#3E6B4A] text-white font-bold transition flex items-center space-x-0.5 shrink-0"
@@ -487,7 +487,7 @@ export default function TerminalPanel({
             />
             <button 
               type="submit" 
-              className="px-1.5 py-0.5 bg-[#DE6438] text-white text-[9.5px] font-bold rounded hover:bg-[#C8542A] transition"
+              className="px-1.5 py-0.5 bg-[#DE6438] text-white text-xs font-bold rounded hover:bg-[#C8542A] transition"
             >
               执行
             </button>

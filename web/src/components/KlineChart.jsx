@@ -12,6 +12,7 @@
  */
 
 import React, { useState, useEffect, useRef } from 'react';
+import { cssColor, useThemeName } from '../utils/theme';
 
 // 计算 EMA 指数移动平均线
 function computeEMA(prices, period) {
@@ -41,6 +42,7 @@ export default function KlineChart({
   const [chartEngine, setChartEngine] = useState("tradingview"); // "tradingview" | "bifrost"
   // M5：不再预置 2024 年的离线假 K 线与写死的标的价格；未取到真实数据前显示加载 / 不可用状态
   const [klines, setKlines] = useState([]);
+  const themeName = useThemeName();
   // status: idle | loading | ok | empty | error；provenance: LIVE | SIMULATED | UNAVAILABLE
   const [klinesState, setKlinesState] = useState({ status: 'idle', provenance: null, message: '' });
   const [activeInterval, setActiveInterval] = useState(interval);
@@ -130,7 +132,7 @@ export default function KlineChart({
       symbol: tvSymbol,
       interval: tvInterval,
       timezone: "Etc/UTC",
-      theme: "light",
+      theme: themeName === "dark" ? "dark" : "light",
       style: "1",
       locale: "zh_CN",
       enable_publishing: false,
@@ -138,8 +140,8 @@ export default function KlineChart({
       hide_side_toolbar: false,
       calendar: false,
       support_host: "https://www.tradingview.com",
-      backgroundColor: "#FAF7F2",
-      gridColor: "#EFE8DE",
+      backgroundColor: cssColor("panel"),
+      gridColor: cssColor("muted"),
       studies: [
         "STD;EMA",
         "STD;RSI"
@@ -147,7 +149,7 @@ export default function KlineChart({
     });
 
     container.appendChild(script);
-  }, [chartEngine, symbol, activeInterval]);
+  }, [chartEngine, symbol, activeInterval, themeName]);
 
   // ---------------------------------------------------------------------------
   // 2. 从后端加载零前视偏差 K 线数据
@@ -225,7 +227,7 @@ export default function KlineChart({
     const getVolY = (vol) => height - (vol / maxVolume) * volumeHeight;
 
     // 绘制价格网格线
-    ctx.strokeStyle = '#EDE6DC';
+    ctx.strokeStyle = cssColor('line-soft');
     ctx.lineWidth = 1;
     ctx.setLineDash([3, 3]);
     for (let i = 1; i <= 4; i++) {
@@ -236,7 +238,7 @@ export default function KlineChart({
       ctx.stroke();
 
       const p = maxPrice - (priceRange / 5) * i;
-      ctx.fillStyle = '#9E917F';
+      ctx.fillStyle = cssColor('ink-4');
       ctx.font = '10px monospace';
       ctx.fillText(`$${p.toFixed(1)}`, width - 46, y + 3);
     }
@@ -246,7 +248,7 @@ export default function KlineChart({
     klines.forEach((k, index) => {
       const x = 10 + index * spacing;
       const isUp = k.close >= k.open;
-      const candleColor = isUp ? '#4D835C' : '#C24D4D';
+      const candleColor = isUp ? cssColor('success') : cssColor('danger');
 
       const openY = getY(k.open);
       const closeY = getY(k.close);
@@ -277,7 +279,7 @@ export default function KlineChart({
     // 绘制 EMA(20) 与 EMA(50) 均线
     if (showIndicators) {
       // EMA20 (橙色)
-      ctx.strokeStyle = '#DE6438';
+      ctx.strokeStyle = cssColor('brand');
       ctx.lineWidth = 1.6;
       ctx.beginPath();
       let startedEma20 = false;
@@ -296,7 +298,7 @@ export default function KlineChart({
       ctx.stroke();
 
       // EMA50 (蓝色)
-      ctx.strokeStyle = '#3B72C2';
+      ctx.strokeStyle = cssColor('info');
       ctx.lineWidth = 1.6;
       ctx.beginPath();
       let startedEma50 = false;
@@ -318,9 +320,9 @@ export default function KlineChart({
       const lastEma20 = ema20[ema20.length - 1];
       const lastEma50 = ema50[ema50.length - 1];
       ctx.font = '10px monospace';
-      ctx.fillStyle = '#DE6438';
+      ctx.fillStyle = cssColor('brand');
       ctx.fillText(`EMA(20): $${lastEma20 ? lastEma20.toFixed(1) : '-'}`, 15, 20);
-      ctx.fillStyle = '#3B72C2';
+      ctx.fillStyle = cssColor('info');
       ctx.fillText(`EMA(50): $${lastEma50 ? lastEma50.toFixed(1) : '-'}`, 130, 20);
     }
 
@@ -334,7 +336,7 @@ export default function KlineChart({
         const y = getY(price);
         const x = width - 70 - i * 40;
 
-        ctx.fillStyle = isBuy ? '#3D784E' : '#DE6438';
+        ctx.fillStyle = isBuy ? cssColor('success') : cssColor('brand');
         ctx.beginPath();
         if (isBuy) {
           // 向上买入绿色三角
@@ -354,32 +356,32 @@ export default function KlineChart({
       });
     }
 
-  }, [chartEngine, klines, showIndicators, showTradeMarkers, trades, latestPrice]);
+  }, [chartEngine, klines, showIndicators, showTradeMarkers, trades, latestPrice, themeName]);
 
   return (
-    <div className="w-full h-full flex flex-col bg-white rounded-2xl border border-[#E6DFD5] shadow-xs overflow-hidden">
+    <div className="w-full h-full flex flex-col bg-surface rounded-2xl border border-line shadow-xs overflow-hidden">
       
       {/* 头部控制栏 */}
-      <div className="h-11 px-4 border-b border-[#F0EAE1] flex items-center justify-between bg-[#FAF7F2]">
+      <div className="h-11 px-4 border-b border-line-soft flex items-center justify-between bg-panel">
         
         {/* 左侧：标的与引擎模式切换 */}
         <div className="flex items-center space-x-3">
-          <div className="flex items-center space-x-1.5 font-bold text-sm text-[#2E2823]">
+          <div className="flex items-center space-x-1.5 font-bold text-sm text-ink">
             <span className="text-base">⚡</span>
             <span>{symbol}-USDT</span>
-            <span className="text-xs bg-[#EFE9DF] text-[#7E7469] px-1.5 py-0.2 rounded font-normal font-mono">
+            <span className="text-xs bg-muted text-ink-3 px-1.5 py-0.2 rounded font-normal font-mono">
               永续合约
             </span>
           </div>
 
           {/* 图表引擎选择器 */}
-          <div className="flex items-center bg-[#EFE9DF] p-0.5 rounded-lg border border-[#DFD6C7]">
+          <div className="flex items-center bg-muted p-0.5 rounded-lg border border-line-strong">
             <button
               onClick={() => setChartEngine("tradingview")}
               className={`px-2 py-0.5 rounded text-xs font-bold transition flex items-center space-x-1 cursor-pointer ${
                 chartEngine === "tradingview"
-                  ? "bg-white text-[#DE6438] shadow-xs"
-                  : "text-[#7E7469] hover:text-[#2E2823]"
+                  ? "bg-surface text-brand shadow-xs"
+                  : "text-ink-3 hover:text-ink"
               }`}
             >
               <span>📈 TradingView</span>
@@ -388,8 +390,8 @@ export default function KlineChart({
               onClick={() => setChartEngine("bifrost")}
               className={`px-2 py-0.5 rounded text-xs font-bold transition flex items-center space-x-1 cursor-pointer ${
                 chartEngine === "bifrost"
-                  ? "bg-white text-[#DE6438] shadow-xs"
-                  : "text-[#7E7469] hover:text-[#2E2823]"
+                  ? "bg-surface text-brand shadow-xs"
+                  : "text-ink-3 hover:text-ink"
               }`}
             >
               <span>🏛️ Bifrost 底座</span>
@@ -399,15 +401,15 @@ export default function KlineChart({
 
         {/* 中间：周期选择器 & 指标开关 */}
         <div className="flex items-center space-x-3">
-          <div className="flex items-center space-x-1 bg-[#EFE9DF] p-0.5 rounded-lg border border-[#DFD6C7]">
+          <div className="flex items-center space-x-1 bg-muted p-0.5 rounded-lg border border-line-strong">
             {["1m", "5m", "15m", "1h", "4h", "1d"].map((tf) => (
               <button
                 key={tf}
                 onClick={() => setActiveInterval(tf)}
                 className={`px-2 py-0.5 rounded text-xs font-mono transition cursor-pointer ${
                   activeInterval === tf
-                    ? "bg-white text-[#DE6438] font-bold shadow-xs"
-                    : "text-[#7E7469] hover:text-[#2E2823]"
+                    ? "bg-surface text-brand font-bold shadow-xs"
+                    : "text-ink-3 hover:text-ink"
                 }`}
               >
                 {tf}
@@ -416,13 +418,13 @@ export default function KlineChart({
           </div>
 
           {chartEngine === "bifrost" && (
-            <div className="flex items-center space-x-2 text-xs text-[#7E7469]">
+            <div className="flex items-center space-x-2 text-xs text-ink-3">
               <label className="flex items-center space-x-1 cursor-pointer">
                 <input 
                   type="checkbox" 
                   checked={showIndicators} 
                   onChange={(e) => setShowIndicators(e.target.checked)}
-                  className="rounded text-[#DE6438]" 
+                  className="rounded text-brand" 
                 />
                 <span>EMA均线</span>
               </label>
@@ -431,7 +433,7 @@ export default function KlineChart({
                   type="checkbox" 
                   checked={showTradeMarkers} 
                   onChange={(e) => setShowTradeMarkers(e.target.checked)}
-                  className="rounded text-[#3D784E]" 
+                  className="rounded text-success" 
                 />
                 <span>成交打点</span>
               </label>
@@ -445,19 +447,19 @@ export default function KlineChart({
             // M5：状态灯反映真实连接 / 数据来源，不再常亮绿色 LIVE
             const st = chartEngine === "tradingview"
               ? (wsConnected
-                  ? { dot: 'bg-[#4D835C] animate-pulse', text: 'TV · BINANCE WS 已连接' }
-                  : { dot: 'bg-[#9E917F]', text: 'TV · BINANCE WS 未连接' })
+                  ? { dot: 'bg-success-solid animate-pulse', text: 'TV · BINANCE WS 已连接' }
+                  : { dot: 'bg-ink-4', text: 'TV · BINANCE WS 未连接' })
               : klinesState.status === 'loading'
-              ? { dot: 'bg-[#C28B38] animate-pulse', text: `BIFROST · ${activeInterval} 加载中` }
+              ? { dot: 'bg-warning-solid animate-pulse', text: `BIFROST · ${activeInterval} 加载中` }
               : klinesState.status === 'ok' && klinesState.provenance === 'SIMULATED'
-              ? { dot: 'bg-[#B9770E]', text: `BIFROST · ${activeInterval} 离线仿真数据` }
+              ? { dot: 'bg-warning-solid', text: `BIFROST · ${activeInterval} 离线仿真数据` }
               : klinesState.status === 'ok'
-              ? { dot: 'bg-[#4D835C] animate-pulse', text: `BIFROST · ${activeInterval} ZERO-LOOKAHEAD` }
-              : { dot: 'bg-[#C24D4D]', text: `BIFROST · ${activeInterval} 数据不可用` };
+              ? { dot: 'bg-success-solid animate-pulse', text: `BIFROST · ${activeInterval} ZERO-LOOKAHEAD` }
+              : { dot: 'bg-danger-solid', text: `BIFROST · ${activeInterval} 数据不可用` };
             return (
-              <div className="flex items-center space-x-1.5 px-2 py-0.5 rounded-md bg-[#FAF4EB] border border-[#E5DACB]">
+              <div className="flex items-center space-x-1.5 px-2 py-0.5 rounded-md bg-canvas border border-line">
                 <span className={`w-2 h-2 rounded-full ${st.dot}`}></span>
-                <span className="font-mono text-xs text-[#7E7469]">{st.text}</span>
+                <span className="font-mono text-xs text-ink-3">{st.text}</span>
               </div>
             );
           })()}
@@ -465,7 +467,7 @@ export default function KlineChart({
       </div>
 
       {/* 图表展示区 (100% 垂直满高) */}
-      <div className="flex-1 w-full min-h-0 relative bg-[#FAF7F2]">
+      <div className="flex-1 w-full min-h-0 relative bg-panel">
         {chartEngine === "tradingview" ? (
           <div 
             ref={tvContainerRef} 
@@ -481,7 +483,7 @@ export default function KlineChart({
             />
             {klinesState.status !== 'ok' && (
               <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                <div className="px-4 py-3 rounded-xl bg-white/90 border border-[#E5DACB] text-xs text-[#7E7469] text-center shadow-xs">
+                <div className="px-4 py-3 rounded-xl bg-surface/90 border border-line text-xs text-ink-3 text-center shadow-xs">
                   {klinesState.status === 'loading' || klinesState.status === 'idle'
                     ? '⏳ 正在加载 K 线数据…'
                     : klinesState.status === 'empty'
@@ -491,7 +493,7 @@ export default function KlineChart({
               </div>
             )}
             {klinesState.status === 'ok' && klinesState.provenance === 'SIMULATED' && (
-              <div className="absolute top-2 left-1/2 -translate-x-1/2 px-3 py-1 rounded-lg bg-[#FDF3E3] border border-[#F1DDB8] text-xs font-semibold text-[#B9770E] pointer-events-none">
+              <div className="absolute top-2 left-1/2 -translate-x-1/2 px-3 py-1 rounded-lg bg-warning-soft border border-warning-line text-xs font-semibold text-warning pointer-events-none">
                 ⚠️ 所有外部行情源不可用，当前为离线仿真 K 线，非真实行情
               </div>
             )}
@@ -500,10 +502,10 @@ export default function KlineChart({
       </div>
 
       {/* 底部行情条 */}
-      <div className="h-7 px-4 bg-[#FAF7F2] border-t border-[#F0EAE1] flex items-center justify-between text-xs text-[#7E7469]">
+      <div className="h-7 px-4 bg-panel border-t border-line-soft flex items-center justify-between text-xs text-ink-3">
         <div className="flex items-center space-x-4">
-          <span>最新标记价: <strong className="font-mono text-[#2E2823]">{Number.isFinite(latestPrice) ? `$${latestPrice.toFixed(2)}` : '--'}</strong></span>
-          <span>价格源: <span className={`font-mono ${wsConnected ? 'text-[#3D784E]' : 'text-[#9E917F]'}`}>{wsConnected ? 'Binance WS 实时' : 'Binance WS 未连接'}</span></span>
+          <span>最新标记价: <strong className="font-mono text-ink">{Number.isFinite(latestPrice) ? `$${latestPrice.toFixed(2)}` : '--'}</strong></span>
+          <span>价格源: <span className={`font-mono ${wsConnected ? 'text-success' : 'text-ink-4'}`}>{wsConnected ? 'Binance WS 实时' : 'Binance WS 未连接'}</span></span>
         </div>
         <div className="flex items-center space-x-2">
           <span>Heimdall Zero-Lookahead Engine v2.0</span>

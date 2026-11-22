@@ -3,17 +3,116 @@
 @tailwind utilities;
 
 :root {
-  --bg-warm: #F6F2EB;
-  --card-bg: #FFFFFF;
-  --border-warm: #E6DFD5;
+  /* 颜色变量（R G B，供 Tailwind 透明度写法 bg-brand/10 使用）：暖沙亮色主题 */
+  --c-canvas: 246 242 235;
+  --c-panel: 250 247 242;
+  --c-surface: 255 255 255;
+  --c-subtle: 242 237 228;
+  --c-muted: 239 233 223;
+  --c-muted-strong: 229 218 203;
+  --c-line-soft: 240 234 225;
+  --c-line: 230 223 213;
+  --c-line-strong: 220 211 196;
+  --c-ink: 46 40 35;
+  --c-ink-2: 90 80 70;
+  --c-ink-3: 126 116 105;
+  --c-ink-4: 158 148 134;
+  --c-brand: 222 100 56;
+  --c-brand-hover: 200 84 42;
+  --c-brand-strong: 155 63 27;
+  --c-brand-soft: 251 239 234;
+  --c-brand-soft-strong: 248 227 218;
+  --c-brand-line: 242 214 202;
+  --c-success: 61 120 78;
+  --c-success-solid: 77 131 92;
+  --c-success-solid-hover: 52 102 66;
+  --c-success-strong: 42 93 55;
+  --c-success-soft: 235 245 238;
+  --c-success-line: 209 232 215;
+  --c-danger: 194 77 77;
+  --c-danger-solid: 194 77 77;
+  --c-danger-solid-hover: 168 56 56;
+  --c-danger-strong: 140 58 58;
+  --c-danger-soft: 253 236 236;
+  --c-danger-line: 247 205 205;
+  --c-warning: 185 119 14;
+  --c-warning-solid: 194 139 56;
+  --c-warning-solid-hover: 169 117 40;
+  --c-warning-strong: 140 94 46;
+  --c-warning-soft: 253 243 227;
+  --c-warning-line: 241 221 184;
+  --c-info: 62 107 137;
+  --c-info-solid: 59 114 194;
+  --c-info-solid-hover: 47 95 163;
+  --c-info-strong: 45 80 104;
+  --c-info-soft: 233 242 247;
+  --c-info-line: 201 220 232;
+  --c-plum: 162 93 143;
+  --c-arena-1: 244 239 230;
+  --c-arena-2: 232 224 210;
+  --c-arena-rim: 222 212 197;
+  color-scheme: light;
+}
+
+/* 暗色主题：同一套变量换一组取值（不再对整页做反色滤镜） */
+html[data-theme="dark"] {
+  --c-canvas: 20 18 16;
+  --c-panel: 27 24 21;
+  --c-surface: 35 31 27;
+  --c-subtle: 31 27 24;
+  --c-muted: 43 38 34;
+  --c-muted-strong: 56 49 43;
+  --c-line-soft: 42 37 33;
+  --c-line: 53 47 41;
+  --c-line-strong: 70 62 54;
+  --c-ink: 237 230 220;
+  --c-ink-2: 200 190 177;
+  --c-ink-3: 160 150 138;
+  --c-ink-4: 125 116 104;
+  --c-brand: 232 113 74;
+  --c-brand-hover: 240 132 95;
+  --c-brand-strong: 243 165 134;
+  --c-brand-soft: 58 35 26;
+  --c-brand-soft-strong: 74 43 31;
+  --c-brand-line: 94 54 38;
+  --c-success: 123 192 142;
+  --c-success-solid: 62 122 79;
+  --c-success-solid-hover: 74 138 92;
+  --c-success-strong: 159 212 173;
+  --c-success-soft: 28 43 33;
+  --c-success-line: 46 74 54;
+  --c-danger: 231 124 124;
+  --c-danger-solid: 181 70 70;
+  --c-danger-solid-hover: 197 85 85;
+  --c-danger-strong: 241 165 165;
+  --c-danger-soft: 58 30 30;
+  --c-danger-line: 92 47 47;
+  --c-warning: 226 174 95;
+  --c-warning-solid: 169 117 40;
+  --c-warning-solid-hover: 185 130 50;
+  --c-warning-strong: 237 200 144;
+  --c-warning-soft: 51 40 26;
+  --c-warning-line: 87 70 42;
+  --c-info: 134 179 209;
+  --c-info-solid: 61 112 168;
+  --c-info-solid-hover: 74 125 181;
+  --c-info-strong: 169 203 226;
+  --c-info-soft: 27 40 51;
+  --c-info-line: 46 69 86;
+  --c-plum: 210 147 194;
+  --c-arena-1: 33 29 25;
+  --c-arena-2: 24 21 18;
+  --c-arena-rim: 51 45 39;
+  color-scheme: dark;
 }
 
 body {
-  background-color: var(--bg-warm);
+  background-color: rgb(var(--c-canvas));
+  color: rgb(var(--c-ink));
   margin: 0;
   padding: 0;
   overflow: hidden;
-  transition: background-color 0.2s ease, filter 0.2s ease;
+  transition: background-color 0.2s ease, color 0.2s ease;
 }
 
 /* 文字默认可以选中复制（订单号、提示词、日志、报错）；只有按钮等可点击控件禁止选中，避免连点时误选 */
@@ -25,35 +124,18 @@ summary {
   user-select: none;
 }
 
-/* 夜间量化暗黑终端主题 (Theme Switcher: p2-3) */
-html[data-theme="dark"] {
-  background-color: #121110;
-}
-
-html[data-theme="dark"] body {
-  background-color: #121110;
-  filter: invert(0.91) hue-rotate(180deg);
-}
-
-/* 保持图表、Emoji 与强语义徽章在暗黑模式下色彩自然不失真 */
-html[data-theme="dark"] img,
-html[data-theme="dark"] svg,
-html[data-theme="dark"] canvas {
-  filter: invert(0) hue-rotate(0deg);
-}
-
 /* 扑克桌台质感 */
 .poker-arena {
-  background: radial-gradient(circle at center, #F4EFE6 0%, #E8E0D2 100%);
-  border: 10px solid #DED4C5;
+  background: radial-gradient(circle at center, rgb(var(--c-arena-1)) 0%, rgb(var(--c-arena-2)) 100%);
+  border: 10px solid rgb(var(--c-arena-rim));
   box-shadow: inset 0 3px 12px rgba(80, 60, 40, 0.08), 0 8px 24px rgba(60, 45, 30, 0.06);
   border-radius: 42px;
 }
 
 /* 席位卡片 */
 .tactile-card {
-  background: #FFFFFF;
-  border: 1px solid var(--border-warm);
+  background: rgb(var(--c-surface));
+  border: 1px solid rgb(var(--c-line));
   box-shadow: 0 4px 12px rgba(70, 50, 30, 0.04), 0 1px 2px rgba(70, 50, 30, 0.02);
   border-radius: 14px;
 }
