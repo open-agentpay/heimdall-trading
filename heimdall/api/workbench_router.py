@@ -341,6 +341,8 @@ def create_workbench_router(bot_manager: Any) -> APIRouter:
                 "min_qty": str(spec.min_qty),
                 "min_notional_usd": str(spec.min_notional_usd),
                 "contract_val": str(spec.contract_val),
+                # P1：exchange = 交易所 exchangeInfo，builtin = 内置规格表，default = 未登记（实盘/测试网会拒单）
+                "source": bot.oms.registry.spec_source(bot.exchange.value, bot.symbol, bot.market_type) or "default",
             },
             "summary": {
                 "total": len(orders_sorted),

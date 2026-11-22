@@ -173,6 +173,17 @@ class TradingBotInstance:
         self.coverage_max_failures: int = 3
         self._coverage_failures: int = 0
         self._last_exec_activity: Optional[datetime] = None
+        # P1：标的规格（价格步长 / 数量步长 / 最小下单额）从机器人所在交易所环境的 exchangeInfo 刷新
+        self.spec_refresh_seconds: float = 6 * 3600.0
+        self._spec_refreshed_at: Optional[datetime] = None
+        self._spec_retry_after: Optional[datetime] = None
+        # P4：独立账本的浮动盈亏与止损穿越判断只用机器人所在交易所环境的标记价格（exchange / market_data）
+        self._mark_price_source: Optional[str] = None
+        # P2：仓位归零后是否已按订单号前缀清理过交易所上本机器人的残留条件单
+        self._flat_sweep_done: bool = False
+        # P3：参与止损覆盖的非本机器人条件单（变化时才写日志）
+        self._external_cover_sig: Optional[tuple] = None
+        self._last_external_stops: List[Dict[str, Any]] = []
 
         # 挂载 Bifrost 数据客户端
         self.bifrost = bifrost_client or BifrostClient()
@@ -413,8 +424,6 @@ class TradingBotInstance:
         #    E7：独立账本模式先同步上一轮以来本标的的新成交（含交易所触发的止损/止盈），
         #        同步失败即关闭：持仓不可信时不做新决策
         if self.uses_bot_ledger:
-            if latest_price > 0:
-                self._last_mark_price = latest_price
             if not self._exchange_creds_hydrated and not await self.hydrate_exchange_credentials_from_vault():
                 reason = "未能从安全金库注入交易凭证，无法同步交易所成交，拒绝执行本轮决策"
                 logger.critical("[Bot %s 失败即关闭] %s", self.bot_id, reason)
@@ -427,6 +436,8 @@ class TradingBotInstance:
                 reason = f"同步交易所成交失败，本机器人持仓不可信，拒绝执行本轮决策: {sync_err}"
                 logger.critical("[Bot %s 失败即关闭] %s", self.bot_id, reason)
                 return {"error": reason, "bot_id": self.bot_id}
+            # P4：浮动盈亏用本机器人所在交易所环境的标记价格（测试网不再用正式网 K 线收盘价）
+            await self._refresh_exchange_mark(latest_price)
         balance = await self.get_bot_balance()
         open_positions = await self.get_bot_positions()
         total_equity = balance["total_equity"]
@@ -619,16 +630,25 @@ class TradingBotInstance:
                     approved_proposals[0], approved_proposals[1]
                 )
             elif self.use_oms:
+                await self._ensure_instrument_specs()
                 # 通过 OMS 状态机执行：市场校验 -> 精度对齐 -> Write-Ahead 落库 -> 订单事实映射 -> 仅按真实成交量挂载保护单
                 for prop in approved_proposals:
                     self._decision_id_by_proposal[prop.proposal_id] = decision_id
                     if len(self._decision_id_by_proposal) > 1000:
                         self._decision_id_by_proposal.pop(next(iter(self._decision_id_by_proposal)))
-                    managed_order, exec_res = await self.oms.submit_proposal(
-                        bot_id=self.bot_id,
-                        proposal=prop,
-                        attach_sl_tp=True,
-                    )
+                    try:
+                        managed_order, exec_res = await self.oms.submit_proposal(
+                            bot_id=self.bot_id,
+                            proposal=prop,
+                            attach_sl_tp=True,
+                        )
+                    except ValueError as pre_err:
+                        # 发单前拦截（标的规格未知、数量低于最小下单量、市场校验不通过等）：不发单，释放组合敞口
+                        logger.warning("[Bot %s · OMS 发单前拦截] 提案=%s | 原因=%s", self.bot_id, prop.proposal_id, pre_err)
+                        decision.thinking_logs.append(f"[OMS 发单前拦截]: {pre_err}")
+                        if self.portfolio_coordinator is not None:
+                            await self.portfolio_coordinator.release_exposure(self.bot_id, prop.trade_action.symbol)
+                        continue
                     if exec_res is not None:
                         executed_batch.append(exec_res)
                         logger.info(
@@ -917,6 +937,7 @@ class TradingBotInstance:
             mark = float(scoped[0].get("mark_price") or 0.0)
             if mark > 0:
                 self._last_mark_price = mark
+                self._mark_price_source = "exchange"
         return scoped
 
     def _proposal_for_exchange_order(self, exchange_order_id: str) -> Optional[str]:
@@ -1113,17 +1134,28 @@ class TradingBotInstance:
             await self._save_ledger()
 
         retired = 0
-        if led.is_flat and self.oms.active_protective_orders(self.symbol):
-            retired = await self.oms.retire_protection(
-                self.symbol, "仓位已平（止损或止盈可能已在交易所触发），残留保护单已撤销",
-            )
-            cancel_cond_all = getattr(self.executor, "cancel_all_conditional_orders", None)
-            if cancel_cond_all is not None:
-                try:
-                    await cancel_cond_all(self.symbol)
-                except Exception as cond_err:
-                    logger.warning("[Bot %s] 撤销残留 Algo 条件单失败: %s", self.bot_id, cond_err)
-            logger.info("[Bot %s · 独立账本对账] 仓位已平，收尾 %d 笔残留保护单", self.bot_id, retired)
+        swept: Optional[int] = 0
+        if not led.is_flat:
+            self._flat_sweep_done = False
+        elif self._exec_in_progress():
+            # 刚下过单或有未确认订单：新成交可能还没同步进账本，暂不收尾，避免误撤刚挂上的止损
+            logger.debug("[Bot %s · 独立账本对账] 账本为空仓但刚有下单活动，本轮不收尾保护单", self.bot_id)
+        else:
+            if self.oms.active_protective_orders(self.symbol):
+                retired = await self.oms.retire_protection(
+                    self.symbol, "仓位已平（止损或止盈可能已在交易所触发），残留保护单已撤销",
+                )
+            if retired or not self._flat_sweep_done:
+                # P2：本地记录可能已提前结束（例如被判定为"交易所上已不存在"），
+                #     再按本机器人订单号前缀撤一遍交易所上残留的条件单；不动用户自己在交易所下的单
+                swept = await self._sweep_own_conditional_orders()
+                if swept is not None:
+                    self._flat_sweep_done = True
+            if retired or swept:
+                logger.info(
+                    "[Bot %s · 独立账本对账] 仓位已平，收尾 %d 笔残留保护单，撤销交易所上本机器人残留条件单 %d 笔",
+                    self.bot_id, retired, swept or 0,
+                )
 
         actions: List[Dict[str, Any]] = []
         gaps: List[Dict[str, Any]] = []
@@ -1147,6 +1179,10 @@ class TradingBotInstance:
             "review_required": led.review_required,
         }
         out["protection_retired"] = retired
+        out["protection_swept"] = swept or 0
+        out["protection_external_stops"] = list(self._last_external_stops) if not led.is_flat else []
+        out["mark_price"] = self._last_mark_price
+        out["mark_price_source"] = self._mark_price_source
         out["protection_gaps"] = gaps
         out["protection_actions"] = actions
         out["protection_alert"] = bool(gaps) or any(
@@ -1173,6 +1209,9 @@ class TradingBotInstance:
         cover = Decimal("0")
         full = False
         triggers: List[Decimal] = []
+        external: List[Dict[str, Any]] = []
+        prefix = self.oms.bot_order_prefix(self.bot_id)
+        own_ids = {str(x.exchange_order_id) for x in self.oms.orders.values() if x.exchange_order_id}
         for o in ex_orders:
             otype = str(o.get("orderType") or o.get("type") or "").upper()
             if otype not in ("STOP_MARKET", "STOP"):
@@ -1189,10 +1228,20 @@ class TradingBotInstance:
                 full = True
             else:
                 cover += Decimal(str(o.get("quantity") or o.get("origQty") or "0"))
+            # P3：记录参与覆盖、但不是本机器人下的止损单（例如在交易所页面手动设置的）
+            ext_cid = str(o.get("clientAlgoId") or o.get("clientOrderId") or "")
+            ext_aid = o.get("algoId")
+            if not ext_cid.startswith(prefix) and not (ext_aid is not None and str(ext_aid) in own_ids):
+                external.append({
+                    "algo_id": str(ext_aid) if ext_aid is not None else None,
+                    "client_algo_id": ext_cid or None,
+                    "quantity": "ALL" if self._truthy(o.get("closePosition")) else str(o.get("quantity") or o.get("origQty") or "0"),
+                    "trigger_price": str(o.get("triggerPrice") or o.get("stopPrice") or ""),
+                })
             trig = o.get("triggerPrice") or o.get("stopPrice")
             if trig and Decimal(str(trig)) > 0:
                 triggers.append(Decimal(str(trig)))
-        return {"cover": cover, "full": full, "triggers": triggers}
+        return {"cover": cover, "full": full, "triggers": triggers, "external": external}
 
     def _stop_price_plan(self, led: BotLedger, existing_triggers: List[Decimal]) -> Dict[str, Any]:
         """补挂止损价：已有止损价 > 开仓单止损计划 > 开仓均价 ± fallback_stop_loss_pct"""
@@ -1212,6 +1261,139 @@ class TradingBotInstance:
         pct = Decimal(str(self.fallback_stop_loss_pct))
         px = led.avg_entry * (Decimal("1") - pct) if is_long else led.avg_entry * (Decimal("1") + pct)
         return {"price": px, "source": f"fallback_{self.fallback_stop_loss_pct:.2%}"}
+
+    # ==========================================================================
+    # P1：标的规格刷新；P4：交易所标记价格；P2：平仓后清理残留条件单；P3：外部止损覆盖日志
+    # ==========================================================================
+
+    async def _ensure_instrument_specs(self) -> None:
+        """
+        从机器人所在交易所环境（测试网 / 正式网）拉取 exchangeInfo 覆盖内置规格表，默认每 6 小时一次；
+        失败时 60 秒后再试，期间沿用已登记规格（没有登记的标的由 OMS 拒单）。
+        """
+        fetch = getattr(self.executor, "fetch_instrument_specs", None)
+        if fetch is None or self.execution_mode == ExecutionMode.LOCAL_SIM or self.exchange != ExchangeType.BINANCE:
+            return
+        now = datetime.now(timezone.utc)
+        if self._spec_refreshed_at and (now - self._spec_refreshed_at).total_seconds() < self.spec_refresh_seconds:
+            return
+        if self._spec_retry_after and now < self._spec_retry_after:
+            return
+        registry = self.oms.registry
+        try:
+            payload = await asyncio.wait_for(fetch(self.symbol), timeout=20.0)
+            if payload is None:  # 离线测试替身：沿用内置规格表
+                self._spec_refreshed_at = now
+                return
+            updated = registry.refresh_from_binance_exchange_info(payload, self.market_type)
+            if updated <= 0:
+                raise RuntimeError("exchangeInfo 中没有任何 USDT 交易对")
+            self._spec_refreshed_at = now
+            self._spec_retry_after = None
+            if registry.spec_source(self.exchange.value, self.symbol, self.market_type) == "exchange":
+                sp = registry.get_spec(self.exchange.value, self.symbol, self.market_type)
+                logger.info(
+                    "[Bot %s · 标的规格] 已从 %s 刷新 %s %s 规格：价格步长=%s 数量步长=%s 最小数量=%s 最小名义额=%s",
+                    self.bot_id, getattr(self.executor, "rest_base", "交易所"), self.symbol, self.market_type.value,
+                    sp.tick_size, sp.step_size, sp.min_qty, sp.min_notional_usd,
+                )
+            else:
+                logger.error(
+                    "[Bot %s · 标的规格] 交易所 exchangeInfo 中没有 %s %s，%s",
+                    self.bot_id, self.symbol, self.market_type.value,
+                    "暂用内置规格表" if registry.has_spec(self.exchange.value, self.symbol, self.market_type) else "该标的下单将被拒绝",
+                )
+        except Exception as exc:
+            self._spec_retry_after = now + timedelta(seconds=60)
+            known = registry.has_spec(self.exchange.value, self.symbol, self.market_type)
+            logger.warning(
+                "[Bot %s · 标的规格] 从交易所拉取 exchangeInfo 失败，%s: %s",
+                self.bot_id, "暂用内置规格表" if known else "该标的没有内置规格，下单将被拒绝", exc,
+            )
+
+    async def _refresh_exchange_mark(self, fallback_price: float) -> None:
+        """
+        独立账本的标记价格：优先读取本机器人所在交易所环境的标记价格；读不到时
+        - 测试网：保留上次从交易所拿到的价格（对账时持仓接口也会刷新），没有才用行情数据兜底；
+        - 正式网：行情数据与交易所是同一市场，可直接兜底。
+        """
+        getter = getattr(self.executor, "get_mark_price", None)
+        if getter is not None:
+            mark = None
+            try:
+                mark = await asyncio.wait_for(getter(self.symbol), timeout=6.0)
+            except Exception as exc:
+                logger.warning("[Bot %s · 标记价格] 读取交易所标记价格失败，改用兜底价格: %s", self.bot_id, exc)
+            if mark is not None and float(mark) > 0:
+                self._last_mark_price = float(mark)
+                self._mark_price_source = "exchange"
+                return
+        if fallback_price <= 0:
+            return
+        if self.execution_mode == ExecutionMode.TESTNET and self._mark_price_source == "exchange" and self._last_mark_price:
+            return
+        self._last_mark_price = float(fallback_price)
+        self._mark_price_source = "market_data"
+
+    def _exec_in_progress(self) -> bool:
+        """刚下过单（宽限期内）或本标的有状态未确认的订单"""
+        now = datetime.now(timezone.utc)
+        if self._last_exec_activity and (now - self._last_exec_activity).total_seconds() < self.coverage_grace_seconds:
+            return True
+        base = base_asset(self.symbol)
+        return any(
+            base_asset(o.symbol) == base and o.state in (OrderLifecycleState.PENDING, OrderLifecycleState.UNKNOWN)
+            for o in self.oms.orders.values()
+        )
+
+    async def _sweep_own_conditional_orders(self) -> Optional[int]:
+        """
+        P2：仓位已平时，撤销交易所上本机器人残留的条件单（订单号带本机器人前缀，或 algoId 在本机器人订单记录里）。
+        返回撤销数量；读取条件单失败返回 None（下一轮对账再试）。
+        """
+        lister = getattr(self.executor, "list_open_conditional_orders", None)
+        canceller = getattr(self.executor, "cancel_conditional_order", None)
+        if lister is None or canceller is None:
+            return 0
+        prefix = self.oms.bot_order_prefix(self.bot_id)
+        own_ids = {str(o.exchange_order_id) for o in self.oms.orders.values() if o.reduce_only and o.exchange_order_id}
+        try:
+            rows = await lister(self.symbol)
+        except Exception as exc:
+            logger.warning("[Bot %s · 平仓收尾] 读取交易所条件单失败，下轮对账再试: %s", self.bot_id, exc)
+            return None
+        canceled = 0
+        for o in rows or []:
+            cid = str(o.get("clientAlgoId") or o.get("clientOrderId") or "")
+            aid = o.get("algoId")
+            if not (cid.startswith(prefix) or (aid is not None and str(aid) in own_ids)):
+                continue
+            try:
+                await canceller(self.symbol, order_id=str(aid) if aid is not None else None, client_order_id=cid or None)
+                canceled += 1
+                logger.warning(
+                    "[Bot %s · 平仓收尾] 已撤销交易所残留条件单 algoId=%s cid=%s 类型=%s 数量=%s 触发价=%s",
+                    self.bot_id, aid, cid or "-", o.get("orderType") or o.get("type"), o.get("quantity"), o.get("triggerPrice"),
+                )
+            except Exception as exc:
+                logger.warning("[Bot %s · 平仓收尾] 撤销残留条件单失败 algoId=%s: %s", self.bot_id, aid, exc)
+        return canceled
+
+    def _log_external_cover(self, led: BotLedger, external: List[Dict[str, Any]]) -> None:
+        """P3：止损覆盖计入了非本机器人下的条件单时写日志（内容变化时才写，避免每 30 秒刷屏）"""
+        self._last_external_stops = list(external)
+        sig = tuple(sorted(f"{e['algo_id']}:{e['quantity']}:{e['trigger_price']}" for e in external))
+        if sig == (self._external_cover_sig or ()):
+            return
+        self._external_cover_sig = sig
+        if external:
+            logger.warning(
+                "[Bot %s · 止损覆盖] %s %s 持仓 %s 的止损覆盖计入了 %d 张不是本机器人下的条件单（可能是在交易所页面手动设置的）：%s",
+                self.bot_id, led.symbol, led.side, abs(led.net_qty), len(external),
+                "; ".join(f"algoId={e['algo_id']} 数量={e['quantity']} 触发价={e['trigger_price']}" for e in external),
+            )
+        else:
+            logger.info("[Bot %s · 止损覆盖] 交易所上已没有非本机器人下的止损单参与覆盖", self.bot_id)
 
     async def _ensure_stop_coverage(self, led: BotLedger):
         """检查本机器人持仓的止损覆盖，不足时自动补挂；返回 (处置动作列表, 仍未覆盖的缺口列表)"""
@@ -1246,6 +1428,7 @@ class TradingBotInstance:
                 gaps.append({"symbol": led.symbol, "position_qty": str(need), "stop_loss_qty": "unknown"})
                 return actions, gaps
             cov = self._stop_coverage_from_exchange(led, ex_orders)
+            self._log_external_cover(led, cov.get("external") or [])
             # 本地仍标记为生效、但交易所上已不存在的保护单（已触发或被手动撤销）改为结束
             live_ids = {str(o.get("algoId")) for o in ex_orders if o.get("algoId") is not None}
             for o in self.oms.active_protective_orders(self.symbol):
@@ -1253,6 +1436,10 @@ class TradingBotInstance:
                 if o.exchange_order_id and str(o.exchange_order_id) not in live_ids and age > self.coverage_grace_seconds:
                     o.transition_to(OrderLifecycleState.CANCELED, error_message="交易所上已不存在（可能已触发或被手动撤销）")
                     await self.oms._persist(o)
+                    logger.warning(
+                        "[Bot %s · 保护单失效] cid=%s | algoId=%s | %s %s 触发价=%s | 交易所上已不存在（可能已触发或被手动撤销），本地记录已结束",
+                        self.bot_id, o.client_order_id, o.exchange_order_id, o.order_type, o.requested_qty, o.trigger_price,
+                    )
                     actions.append({"action": "STALE_LOCAL_PROTECTION_CLOSED", "client_order_id": o.client_order_id})
         else:
             cov = {"cover": self.oms.stop_coverage(self.symbol), "full": False,
@@ -1263,6 +1450,7 @@ class TradingBotInstance:
             self._coverage_failures = 0
             return actions, gaps
 
+        await self._ensure_instrument_specs()
         spec = self.oms.registry.get_spec(self.exchange.value, self.symbol, self.market_type)
         gap = need - cov["cover"]
         qty = (gap / spec.step_size).to_integral_value(rounding=ROUND_FLOOR) * spec.step_size
@@ -1280,12 +1468,14 @@ class TradingBotInstance:
         trigger = (plan["price"] / spec.tick_size).to_integral_value(rounding=rounding) * spec.tick_size
 
         mark = Decimal(str(self._last_mark_price)) if self._last_mark_price else None
-        crossed = mark is not None and (
+        # P4：标记价格不是来自本机器人所在交易所时（测试网只拿到正式网 K 线价），不据此判定止损已被穿越
+        mark_trusted = self._mark_price_source == "exchange" or self.execution_mode == ExecutionMode.MAINNET
+        crossed = mark is not None and mark_trusted and (
             (position_side == PositionSide.LONG and trigger >= mark)
             or (position_side == PositionSide.SHORT and trigger <= mark)
         )
         base_info = {"gap_qty": str(qty), "trigger_price": str(trigger), "price_source": plan["source"],
-                     "mark_price": str(mark) if mark is not None else None}
+                     "mark_price": str(mark) if mark is not None else None, "mark_price_source": self._mark_price_source}
 
         if crossed:
             reason = f"止损价 {trigger} 已被行情（{mark}）穿越，未覆盖数量 {qty}"

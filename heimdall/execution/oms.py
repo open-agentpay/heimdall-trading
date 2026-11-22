@@ -265,6 +265,22 @@ class OrderManagementSystem:
         mt = getattr(self.adapter, "market_type", MarketType.USDM_FUTURES)
         return mt if isinstance(mt, MarketType) else MarketType(str(mt).upper())
 
+    def _require_known_spec(self, exchange: str, symbol: str, market_type: MarketType) -> None:
+        """
+        P1：测试网 / 正式网下单时，标的规格必须已登记（交易所 exchangeInfo 或内置规格表）。
+        找不到时不再套用保守默认精度（合约数量 0.001 一档）发单——那样要么被交易所以 -1111 拒单，要么数量不对。
+        尚未接入规格拉取的适配器（Hyperliquid / OKX）保持原有行为。
+        """
+        mode = getattr(self.adapter, "execution_mode", None)
+        mode_val = str(getattr(mode, "value", mode) or "").upper()
+        if mode_val not in ("TESTNET", "MAINNET") or not hasattr(self.adapter, "fetch_instrument_specs"):
+            return
+        if not self.registry.has_spec(exchange, symbol, market_type):
+            raise ValueError(
+                f"OMS 规格校验拦截: 未找到 {exchange}/{market_type.value}/{symbol} 的标的规格"
+                f"（交易所 exchangeInfo 未包含且无内置规格），拒绝按默认精度下单"
+            )
+
     async def _persist(self, order: ManagedOrder) -> None:
         self.orders[order.client_order_id] = order
         if self.repo is not None and hasattr(self.repo, "upsert_oms_order"):
@@ -363,6 +379,7 @@ class OrderManagementSystem:
 
         action = proposal.trade_action
         adapter_mt = self.market_type
+        self._require_known_spec(action.exchange.value, action.symbol, adapter_mt)
         spec = self.registry.get_spec(action.exchange.value, action.symbol, adapter_mt)
         norm: NormalizedOrderParams = OrderNormalizer.normalize_proposal(proposal, spec)
 

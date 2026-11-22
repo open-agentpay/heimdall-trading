@@ -243,6 +243,50 @@ class BinanceAdapterBase(BaseExecutionAdapter):
         if current_price > 0:
             self._last_prices[self._norm_base_symbol(symbol)] = float(current_price)
 
+    # --------------------------------------------------------------------------
+    # P1 / P4：标的规格与标记价格（公共接口，不签名；访问本适配器所在环境：测试网或正式网）
+    # --------------------------------------------------------------------------
+    _EXCHANGE_INFO_PATH: str = ""
+    _EXCHANGE_INFO_BY_SYMBOL: bool = False
+    _MARK_PRICE_PATH: str = ""
+    _MARK_PRICE_FIELD: str = "price"
+
+    async def _public_get(self, path: str, params: Optional[Dict[str, Any]] = None, timeout: float = 8.0) -> Any:
+        url = f"{self.rest_base}{path}"
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.get(url, params=params or None)
+        try:
+            data = resp.json()
+        except Exception:
+            data = {"msg": resp.text[:200]}
+        if resp.status_code >= 400:
+            msg = data.get("msg") if isinstance(data, dict) else str(data)[:200]
+            raise ValueError(f"Binance 公共接口错误 (HTTP {resp.status_code}) {path}: {msg}")
+        return data
+
+    async def fetch_instrument_specs(self, symbol: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """
+        P1：读取本适配器所在环境的 exchangeInfo（价格步长、数量步长、最小数量、最小名义额），
+        供 OMS 覆盖内置规格表。_signed_request 被测试替身接管时返回 None：离线测试沿用内置规格，不访问网络。
+        """
+        if not self._EXCHANGE_INFO_PATH or self._is_method_mocked(self._signed_request):
+            return None
+        params = {"symbol": self._binance_symbol(symbol)} if (symbol and self._EXCHANGE_INFO_BY_SYMBOL) else None
+        data = await self._public_get(self._EXCHANGE_INFO_PATH, params, timeout=15.0)
+        if not isinstance(data, dict) or not isinstance(data.get("symbols"), list):
+            raise RuntimeError(f"exchangeInfo 响应格式异常: {str(data)[:200]}")
+        return data
+
+    async def get_mark_price(self, symbol: str) -> Optional[float]:
+        """P4：本适配器所在环境的标记价格（合约 premiumIndex.markPrice / 现货最新价）；测试替身接管时返回 None"""
+        if not self._MARK_PRICE_PATH or self._is_method_mocked(self._signed_request):
+            return None
+        data = await self._public_get(self._MARK_PRICE_PATH, {"symbol": self._binance_symbol(symbol)}, timeout=5.0)
+        if isinstance(data, list):
+            data = data[0] if data else {}
+        px = float((data or {}).get(self._MARK_PRICE_FIELD) or 0.0)
+        return px if px > 0 else None
+
     @staticmethod
     def _dec_str(val: Decimal) -> str:
         s = format(val.normalize(), "f")
@@ -256,6 +300,11 @@ class BinanceSpotAdapter(BinanceAdapterBase):
     - 严禁 `positionSide`、`reduceOnly`、杠杆与做空；
     - 交易所为订单与余额唯一事实源，绝不补造成交或回退到本地模拟。
     """
+
+    _EXCHANGE_INFO_PATH = "/api/v3/exchangeInfo"
+    _EXCHANGE_INFO_BY_SYMBOL = True
+    _MARK_PRICE_PATH = "/api/v3/ticker/price"
+    _MARK_PRICE_FIELD = "price"
 
     def __init__(
         self,
@@ -549,6 +598,11 @@ class BinanceUSDMFuturesAdapter(BinanceAdapterBase):
     - 严禁现货路径、无凭证下单或回退到本地模拟成交；
     - configure_credentials() 重建 UMFutures 客户端并清空持仓模式缓存。
     """
+
+    _EXCHANGE_INFO_PATH = "/fapi/v1/exchangeInfo"   # 合约接口不支持按 symbol 过滤，返回全部交易对
+    _EXCHANGE_INFO_BY_SYMBOL = False
+    _MARK_PRICE_PATH = "/fapi/v1/premiumIndex"
+    _MARK_PRICE_FIELD = "markPrice"
 
     def __init__(
         self,

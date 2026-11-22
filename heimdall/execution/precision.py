@@ -162,6 +162,8 @@ class InstrumentRegistry:
 
     def __init__(self) -> None:
         self._specs: Dict[tuple[str, str, str], InstrumentSpec] = {}
+        # P1：规格来源，builtin = 代码内置规格表，exchange = 交易所 exchangeInfo
+        self._sources: Dict[tuple[str, str, str], str] = {}
         self._seed_defaults()
 
     def _seed_defaults(self) -> None:
@@ -203,14 +205,37 @@ class InstrumentRegistry:
         for sp in defaults:
             self.register(sp)
 
-    def register(self, spec: InstrumentSpec) -> None:
-        """注册或覆盖指定 (exchange, market_type, symbol) 精度规格"""
+    def register(self, spec: InstrumentSpec, source: str = "builtin") -> None:
+        """注册或覆盖指定 (exchange, market_type, symbol) 精度规格；source 记录规格来源（builtin / exchange）"""
         key = (
             spec.exchange.upper().strip(),
             _norm_market_type(spec.market_type),
             _normalize_symbol(spec.symbol),
         )
         self._specs[key] = spec
+        self._sources[key] = source
+
+    @staticmethod
+    def _key(exchange: str, symbol: str, market_type: Union[str, MarketType, None]) -> tuple:
+        return (exchange.upper().strip(), _norm_market_type(market_type), _normalize_symbol(symbol))
+
+    def has_spec(
+        self,
+        exchange: str,
+        symbol: str,
+        market_type: Union[str, MarketType] = MarketType.USDM_FUTURES,
+    ) -> bool:
+        """P1：该标的是否有已登记的规格（交易所拉取或内置规格表）；False 表示 get_spec 只能给出保守默认精度"""
+        return self._key(exchange, symbol, market_type) in self._specs
+
+    def spec_source(
+        self,
+        exchange: str,
+        symbol: str,
+        market_type: Union[str, MarketType] = MarketType.USDM_FUTURES,
+    ) -> Optional[str]:
+        """P1：规格来源 exchange / builtin；未登记返回 None（get_spec 将使用默认精度）"""
+        return self._sources.get(self._key(exchange, symbol, market_type))
 
     def get_spec(
         self,
@@ -263,7 +288,7 @@ class InstrumentRegistry:
                 step_size=step,
                 min_qty=min_q,
                 min_notional_usd=min_n,
-            ))
+            ), source="exchange")
             updated += 1
         logger.info("[标的规格注册表] 已从 Binance %s exchangeInfo 刷新 %d 个 USDT 交易对规格", mt, updated)
         return updated
