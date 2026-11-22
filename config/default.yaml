@@ -17,13 +17,15 @@ market_data:
   hyperliquid_base_url: "https://api.hyperliquid.xyz"
 
 # TODO: Bifrost 独立数据底座待正式上线接入
+# 注意：本文件已纳入 Git，严禁在此填写任何真实密钥 / 密码（M4）
 bifrost:
   base_url: "http://localhost:8080/v1"
-  api_key: "agentpay_live_secret"
+  api_key: "" # 当前未被代码读取（Bifrost 尚未接入）；接入后请通过环境变量注入
   timeout_seconds: 5.0
 
 database:
-  url: "postgresql+asyncpg://postgres:postgres@localhost:5432/heimdall"
+  # 实际连接串只从环境变量 HEIMDALL_DATABASE_URL / DATABASE_URL 读取，未设置时使用本地 SQLite data/heimdall.db
+  url: ""
   pool_size: 10
   max_overflow: 20
 
