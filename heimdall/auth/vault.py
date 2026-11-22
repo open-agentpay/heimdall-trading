@@ -378,30 +378,65 @@ async def test_key_connectivity(provider: str, credentials: Dict[str, Any]) -> T
 crypto_vault = CryptoVault()
 
 
+# 交易所凭证类型由新增密钥时选择的服务商唯一确定（前端选项文案与此一致）：
+# - binance：Binance Futures（U 本位合约），测试网 / 正式网由开关决定；
+# - binance_demo：Binance Spot Demo（现货模拟，只有测试环境）；
+# - hyperliquid：永续合约。
+# 旧版前端新增的密钥没有写入 market_type，按服务商补齐；这是服务商本身的含义，不是跨市场回退。
+PROVIDER_DEFAULT_MARKET: Dict[str, str] = {
+    "binance": "USDM_FUTURES",
+    "binance_demo": "SPOT",
+    "hyperliquid": "USDM_FUTURES",
+}
+PROVIDER_FIXED_MODE: Dict[str, str] = {"binance_demo": "TESTNET"}
+# 机器人的交易所为 BINANCE 时，现货模拟密钥以 binance_demo 服务商存储，需要一并查找
+PROVIDER_ALIASES: Dict[str, Tuple[str, ...]] = {"binance": ("binance", "binance_demo")}
+
+
 def extract_credential_scope(
     provider: str,
     creds: Dict[str, Any],
 ) -> Tuple[Optional[str], Optional[str]]:
     """
     从解密后的凭证字典中提取 `(market_type, execution_mode)`。
-    严格规则：不做现货与合约、测试网与实盘之间的隐式回退。
+    严格规则：不做现货与合约、测试网与实盘之间的隐式回退；凭证里写明的值优先，
+    没写时按服务商的固定含义补齐（见 PROVIDER_DEFAULT_MARKET）。
     """
     raw_mt = str(creds.get("market_type") or "").upper().strip()
     raw_em = str(creds.get("execution_mode") or "").upper().strip()
 
     prov = str(provider or "").lower().strip()
-    if not raw_mt and prov == "hyperliquid":
-        raw_mt = "USDM_FUTURES"
+    if not raw_mt:
+        raw_mt = PROVIDER_DEFAULT_MARKET.get(prov, "")
 
     if not raw_em:
-        if "is_testnet" in creds:
+        if prov in PROVIDER_FIXED_MODE:
+            raw_em = PROVIDER_FIXED_MODE[prov]
+        elif "is_testnet" in creds:
             raw_em = "TESTNET" if bool(creds.get("is_testnet")) else "MAINNET"
         else:
             mode_legacy = str(creds.get("mode") or "").upper().strip()
-            if mode_legacy in ("TESTNET", "MAINNET"):
-                raw_em = mode_legacy
+            if mode_legacy in ("TESTNET", "DEMO"):
+                raw_em = "TESTNET"
+            elif mode_legacy == "MAINNET":
+                raw_em = "MAINNET"
 
     return (raw_mt or None), (raw_em or None)
+
+
+def normalize_exchange_scope(provider: str, creds: Dict[str, Any]) -> Dict[str, Any]:
+    """入库前把推断出的 market_type / execution_mode 显式写入凭证，之后不再依赖推断"""
+    prov = str(provider or "").lower().strip()
+    if prov not in PROVIDER_DEFAULT_MARKET:
+        return creds
+    mt, em = extract_credential_scope(prov, creds)
+    out = dict(creds)
+    if mt:
+        out["market_type"] = mt
+    if em:
+        out["execution_mode"] = em
+        out["is_testnet"] = em == "TESTNET"
+    return out
 
 
 async def resolve_exchange_credentials(
@@ -429,11 +464,13 @@ async def resolve_exchange_credentials(
         from heimdall.database.db import db_manager
         target_db = db_manager
 
+    providers = PROVIDER_ALIASES.get(clean_provider, (clean_provider,))
+    placeholders = ",".join("?" for _ in providers)
     rows = await target_db.execute_query(
         "SELECT key_id, provider, label, encrypted_data FROM user_api_keys "
-        "WHERE LOWER(wallet_address) = ? AND is_active = 1 AND LOWER(provider) = ? "
+        f"WHERE LOWER(wallet_address) = ? AND is_active = 1 AND LOWER(provider) IN ({placeholders}) "
         "ORDER BY updated_at DESC",
-        (clean_wallet, clean_provider),
+        (clean_wallet, *providers),
     )
     for row in rows:
         enc = row.get("encrypted_data")
@@ -443,12 +480,13 @@ async def resolve_exchange_credentials(
             creds = crypto_vault.decrypt_payload(enc)
         except Exception:
             continue
-        cred_mt, cred_em = extract_credential_scope(clean_provider, creds)
+        row_provider = str(row.get("provider") or clean_provider).lower()
+        cred_mt, cred_em = extract_credential_scope(row_provider, creds)
         if cred_mt == target_mt and cred_em == target_em:
             return {
                 "key_id": row.get("key_id"),
                 "label": row.get("label"),
-                "provider": clean_provider,
+                "provider": row_provider,
                 "market_type": cred_mt,
                 "execution_mode": cred_em,
                 "credentials": creds,

@@ -9,15 +9,15 @@
  *      且多个 AI Agent（Claude/DeepSeek/GPT-4o）需要调用大模型接口做深度推理，
  *      必须持有相应的 API 凭据。
  * 2. 安全铁律：
- *    - 严禁明文裸奔！所有密钥在后端均通过银行级 AES-256-GCM 硬件认证加密入库；
+ *    - 严禁明文裸奔！所有密钥在后端均通过 AES-256-GCM 加密入库；
  *    - 前端绝不暴露完整密钥，一律采用掩码打码展示（如 sk-ant-•••••••••••4f8e）；
  *    - 针对 Hyperliquid，强烈推荐使用其官方派生的专用【Agent Wallet】私钥，而非主钱包私钥！
  */
 
 import React, { useState, useEffect } from 'react';
 import { 
-  Key, ShieldCheck, Lock, Eye, EyeOff, Plus, Trash2, CheckCircle2, 
-  AlertCircle, ExternalLink, RefreshCw, Copy, Check, Sparkles, 
+  Key, ShieldCheck, Lock, Plus, Trash2, CheckCircle2, 
+  AlertCircle, ExternalLink, RefreshCw, Sparkles, 
   Cpu, Building2, HelpCircle, Activity, ChevronRight, CheckCircle, Radio,
   Pencil, X, Save
 } from 'lucide-react';
@@ -33,8 +33,6 @@ export default function KeyVaultModal({ isOpen, onClose, walletState, onConnectW
   const [testingKeyId, setTestingKeyId] = useState(null);
   const [togglingKeyId, setTogglingKeyId] = useState(null);
   const [activatingKeyId, setActivatingKeyId] = useState(null);
-  const [revealedKeys, setRevealedKeys] = useState({});
-  const [copiedId, setCopiedId] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
 
   // 编辑已有密钥状态
@@ -64,16 +62,24 @@ export default function KeyVaultModal({ isOpen, onClose, walletState, onConnectW
     isTestnet: true,
   });
 
-  // 复制密钥掩码
-  const handleCopyKey = (id, text) => {
-    navigator.clipboard.writeText(text);
-    setCopiedId(id);
-    setTimeout(() => setCopiedId(null), 2000);
+  // 新增表单的空白初始值（关闭或提交后整体重置，避免密钥原文留在组件状态里）
+  const EMPTY_NEW_KEY_FORM = {
+    category: 'exchanges',
+    provider: 'hyperliquid',
+    label: '',
+    apiKey: '',
+    secretKey: '',
+    passphrase: '',
+    model: '',
+    baseUrl: '',
+    setActive: true,
+    isTestnet: true,
   };
 
-  // 切换明文/掩码查看
-  const toggleReveal = (id) => {
-    setRevealedKeys(prev => ({ ...prev, [id]: !prev[id] }));
+  // 关闭新增弹窗时清空已输入的密钥
+  const closeAddModal = () => {
+    setShowAddModal(false);
+    setNewKeyForm(EMPTY_NEW_KEY_FORM);
   };
 
   // 异步加载后端密钥 (严格多租户隔离)
@@ -107,13 +113,13 @@ export default function KeyVaultModal({ isOpen, onClose, walletState, onConnectW
               baseUrl: k.base_url || '',
               label: k.label,
               mask: k.key_mask || k.mask || '••••••••••••••••',
-              fullSecretMock: k.key_mask || '••••••••••••••••',
-              status: k.last_test_status || k.status || 'OK',
+              // 从未测试过的密钥标记为 UNTESTED，不再默认显示 OK / 80ms
+              status: k.last_test_status || 'UNTESTED',
               lastMessage: '',
-              latency: Math.round(k.last_test_latency_ms || k.latency || 80),
-              lastTested: k.last_tested_at ? '已校验' : '刚刚',
+              latency: Number.isFinite(Number(k.last_test_latency_ms)) && k.last_test_latency_ms !== null ? Math.round(Number(k.last_test_latency_ms)) : null,
+              lastTested: k.last_tested_at ? new Date(k.last_tested_at).toLocaleString('zh-CN', { hour12: false }) : '未测试',
               permissions: ['全权限配置'],
-              badge: '硬件认证加密',
+              badge: 'AES-256-GCM 加密',
               badgeColor: 'bg-[#EBF5EE] text-[#3D784E] border-[#D1E8D7]',
               icon: k.category === 'exchanges' ? '⚡' : '🧠',
             };
@@ -145,8 +151,8 @@ export default function KeyVaultModal({ isOpen, onClose, walletState, onConnectW
     setTestingKeyId(id);
     try {
       const res = await testVaultKey(id);
-      const actualLatency = (res && res.latency_ms) ? Math.round(res.latency_ms) : 0;
-      const resStatus = (res && res.status) || 'OK';
+      const actualLatency = (res && Number.isFinite(Number(res.latency_ms)) && res.latency_ms !== null) ? Math.round(Number(res.latency_ms)) : null;
+      const resStatus = (res && res.status) || (res && res.success === false ? 'FAILED' : 'UNKNOWN');
       const resMsg = (res && res.message) || '';
       setKeysList(prev => prev.map(k => {
         if (k.id === id || k.key_id === id) {
@@ -222,6 +228,8 @@ export default function KeyVaultModal({ isOpen, onClose, walletState, onConnectW
   // 取消编辑
   const handleCancelEdit = () => {
     setEditingKeyId(null);
+    // 取消编辑时清空输入过的新密钥
+    setEditForm({ label: '', model: '', baseUrl: '', apiKey: '' });
   };
 
   // 提交保存修改
@@ -257,12 +265,14 @@ export default function KeyVaultModal({ isOpen, onClose, walletState, onConnectW
             baseUrl: res.base_url !== undefined ? res.base_url : effectiveBaseUrl,
             mask: res.key_mask || k.mask,
             lastMessage: '配置已更新并实时生效',
-            status: 'OK',
+            // 更换了密钥就需要重新测试连通性，不再直接标记为 OK
+            ...(payload.api_key ? { status: 'UNTESTED', latency: null, lastTested: '未测试' } : {}),
           };
         }
         return k;
       }));
       setEditingKeyId(null);
+      setEditForm({ label: '', model: '', baseUrl: '', apiKey: '' });
     } catch (err) {
       alert("保存配置失败: " + (err.message || '网络或鉴权异常'));
     } finally {
@@ -334,14 +344,20 @@ export default function KeyVaultModal({ isOpen, onClose, walletState, onConnectW
       }
     }
 
-    const rawSecret = newKeyForm.apiKey || newKeyForm.secretKey;
-    const prefix = rawSecret.slice(0, Math.min(6, rawSecret.length));
-    const suffix = rawSecret.slice(-Math.min(4, rawSecret.length));
-    const generatedMask = `${prefix}••••••••••••••••••••${suffix}`;
-
+    // 脱敏值以后端返回的 key_mask 为准，前端不再自行截取密钥原文生成掩码
     let createdKeyId = null;
+    let createdKeyMask = null;
     try {
       const isBinanceTestnet = newKeyForm.provider === 'binance_demo' ? true : (newKeyForm.provider === 'binance' ? Boolean(newKeyForm.isTestnet) : false);
+      // 交易所凭证必须写明市场类型与运行环境，后端按 钱包 + 交易所 + 市场 + 环境 精确匹配
+      const EXCHANGE_MARKET = { binance: 'USDM_FUTURES', binance_demo: 'SPOT', hyperliquid: 'USDM_FUTURES' };
+      const exchangeScope = EXCHANGE_MARKET[newKeyForm.provider]
+        ? {
+            market_type: EXCHANGE_MARKET[newKeyForm.provider],
+            execution_mode: (newKeyForm.provider === 'binance_demo' || newKeyForm.isTestnet) ? 'TESTNET' : 'MAINNET',
+            is_testnet: newKeyForm.provider === 'binance_demo' || Boolean(newKeyForm.isTestnet),
+          }
+        : {};
       const isLlm = newKeyForm.category === 'llms';
       const effectiveModel = isLlm ? (newKeyForm.model.trim() || (newKeyForm.provider === 'deepseek' ? 'deepseek-chat' : newKeyForm.provider === 'anthropic' ? 'claude-3-5-sonnet-20241022' : 'gpt-4o')) : '';
       let rawBaseUrl = newKeyForm.baseUrl.trim();
@@ -371,10 +387,12 @@ export default function KeyVaultModal({ isOpen, onClose, walletState, onConnectW
           ...(newKeyForm.provider === 'binance' || newKeyForm.provider === 'binance_demo'
             ? { is_testnet: isBinanceTestnet, mode: isBinanceTestnet ? 'demo' : 'mainnet' }
             : {}),
+          ...exchangeScope,
         }
       });
       if (res && res.key_id) {
         createdKeyId = res.key_id;
+        createdKeyMask = res.key_mask || null;
       }
     } catch (err) {
       console.warn("调用后端入库凭证失败:", err);
@@ -396,11 +414,11 @@ export default function KeyVaultModal({ isOpen, onClose, walletState, onConnectW
       isActive: isNewActive,
       model: isLlm ? (newKeyForm.model.trim() || (newKeyForm.provider === 'deepseek' ? 'deepseek-chat' : newKeyForm.provider === 'anthropic' ? 'claude-3-5-sonnet-20241022' : 'gpt-4o')) : '',
       baseUrl: newKeyForm.baseUrl.trim(),
-      mask: generatedMask,
-      fullSecretMock: rawSecret,
-      status: 'OK',
-      latency: 105,
-      lastTested: '刚刚保存',
+      mask: createdKeyMask || '••••••••••••••••',
+      // 新保存的密钥尚未测试连通性
+      status: 'UNTESTED',
+      latency: null,
+      lastTested: '未测试',
       permissions: ['全权限配置'],
       badge: '新增已加密',
       badgeColor: 'bg-[#EBF5EE] text-[#3D784E] border-[#D1E8D7]',
@@ -414,19 +432,7 @@ export default function KeyVaultModal({ isOpen, onClose, walletState, onConnectW
       }
       return [newKeyObj, ...updated];
     });
-    setShowAddModal(false);
-    setNewKeyForm({
-      category: 'exchanges',
-      provider: 'hyperliquid',
-      label: '',
-      apiKey: '',
-      secretKey: '',
-      passphrase: '',
-      model: '',
-      baseUrl: '',
-      setActive: true,
-      isTestnet: true,
-    });
+    closeAddModal();
   };
 
   // 当前分类下的列表
@@ -450,7 +456,7 @@ export default function KeyVaultModal({ isOpen, onClose, walletState, onConnectW
                 <h2 className="text-sm font-bold text-[#2E2823]">密钥管理安全金库 (API Key Vault)</h2>
                 <span className="text-[10px] bg-[#EBF5EE] text-[#3D784E] border border-[#D1E8D7] px-2 py-0.5 rounded-full font-semibold flex items-center space-x-1">
                   <ShieldCheck className="w-3 h-3" />
-                  <span>AES-256-GCM 硬件认证加密</span>
+                  <span>AES-256-GCM 加密</span>
                 </span>
               </div>
               <p className="text-[11px] text-[#7E7469] mt-0.5">
@@ -649,8 +655,8 @@ export default function KeyVaultModal({ isOpen, onClose, walletState, onConnectW
           {activeCategory !== 'security' && (
             <div className="space-y-3">
               {currentFilteredKeys.map(k => {
-                const isRevealed = Boolean(revealedKeys[k.id]);
-                const displaySecret = isRevealed ? k.fullSecretMock : k.mask;
+                // 只展示后端返回的脱敏值；密钥原文不会出现在前端
+                const displaySecret = k.mask;
                 const isTesting = testingKeyId === k.id;
 
                 return (
@@ -694,8 +700,10 @@ export default function KeyVaultModal({ isOpen, onClose, walletState, onConnectW
                       {/* 连通性指示器 */}
                       <div className="flex items-center space-x-2">
                         <div className="flex items-center space-x-1.5 bg-[#F6F2EB] border border-[#E6DFD5] px-2 py-1 rounded-lg text-[11px]">
-                          <span className="w-2 h-2 rounded-full bg-[#3D784E]"></span>
-                          <span className="text-[#3D784E] font-bold">{k.latency} ms</span>
+                          <span className={`w-2 h-2 rounded-full ${k.status === 'OK' ? 'bg-[#3D784E]' : k.status === 'FAILED' ? 'bg-[#C24D4D]' : k.status === 'WARNING' ? 'bg-[#C28B38]' : 'bg-[#9E917F]'}`}></span>
+                          <span className={`font-bold ${k.status === 'OK' ? 'text-[#3D784E]' : k.status === 'FAILED' ? 'text-[#C24D4D]' : k.status === 'WARNING' ? 'text-[#C28B38]' : 'text-[#7E7469]'}`}>
+                            {k.status === 'UNTESTED' ? '未测试' : k.latency !== null && k.latency !== undefined ? `${k.latency} ms` : k.status}
+                          </span>
                           <span className="text-[#7E7469]">({k.lastTested})</span>
                         </div>
 
@@ -852,22 +860,9 @@ export default function KeyVaultModal({ isOpen, onClose, walletState, onConnectW
                         </span>
                       </div>
 
-                      <div className="flex items-center space-x-1 shrink-0 ml-2">
-                        <button
-                          onClick={() => toggleReveal(k.id)}
-                          className="p-1.5 rounded-md hover:bg-[#EDE6DA] text-[#7E7469] hover:text-[#2E2823] transition"
-                          title={isRevealed ? "隐藏明文" : "临时查看明文"}
-                        >
-                          {isRevealed ? <EyeOff className="w-3.5 h-3.5 text-[#DE6438]" /> : <Eye className="w-3.5 h-3.5" />}
-                        </button>
-                        <button
-                          onClick={() => handleCopyKey(k.id, k.fullSecretMock)}
-                          className="p-1.5 rounded-md hover:bg-[#EDE6DA] text-[#7E7469] hover:text-[#2E2823] transition"
-                          title="复制密钥内容"
-                        >
-                          {copiedId === k.id ? <Check className="w-3.5 h-3.5 text-[#3D784E]" /> : <Copy className="w-3.5 h-3.5" />}
-                        </button>
-                      </div>
+                      <span className="shrink-0 ml-2 text-[10px] text-[#9E917F]" title="密钥原文只保存在后端加密金库中，前端无法查看或复制">
+                        仅显示脱敏值
+                      </span>
                     </div>
 
                     {/* 权限清单 + 币安测试网/正式网环境开关 + 大模型激活选择 */}
@@ -919,7 +914,7 @@ export default function KeyVaultModal({ isOpen, onClose, walletState, onConnectW
                         </div>
                       )}
 
-                      {(k.provider === 'binance' || k.provider === 'binance_demo') && (
+                      {(k.provider === 'binance' || k.provider === 'hyperliquid') && (
                         <div className="flex items-center space-x-2 bg-[#FAF7F2] border border-[#E6DFD5] px-2.5 py-1 rounded-lg">
                           <span className={`font-semibold ${!k.isTestnet ? 'text-[#DE6438]' : 'text-[#9E9486]'}`}>
                             正式密钥
@@ -930,7 +925,7 @@ export default function KeyVaultModal({ isOpen, onClose, walletState, onConnectW
                             aria-checked={Boolean(k.isTestnet)}
                             disabled={togglingKeyId === k.id}
                             onClick={() => handleToggleBinanceNetwork(k)}
-                            title="切换该币安密钥为测试网/模拟盘或正式网密钥"
+                            title="切换该交易所密钥为测试网/模拟盘或正式网密钥"
                             className={`relative inline-flex h-4 w-8 items-center rounded-full transition-colors cursor-pointer disabled:opacity-50 ${
                               k.isTestnet ? 'bg-[#3D784E]' : 'bg-[#DE6438]'
                             }`}
@@ -1000,7 +995,7 @@ export default function KeyVaultModal({ isOpen, onClose, walletState, onConnectW
                 <span>登记新交易/大模型凭证</span>
               </h3>
               <button 
-                onClick={() => setShowAddModal(false)}
+                onClick={closeAddModal}
                 className="w-6 h-6 rounded-lg hover:bg-[#EDE7DC] text-[#7E7469] flex items-center justify-center text-xs"
               >
                 ✕
@@ -1109,6 +1104,33 @@ export default function KeyVaultModal({ isOpen, onClose, walletState, onConnectW
                           className="w-full p-2.5 rounded-xl bg-white border border-[#DDD5C8] text-xs text-[#2E2823] font-mono focus:outline-hidden focus:ring-2 focus:ring-[#DE6438]/20"
                         />
                       </div>
+                      {newKeyForm.provider === 'hyperliquid' && (
+                        <div className="flex items-center justify-between p-2.5 rounded-xl bg-white border border-[#DDD5C8] text-xs">
+                          <div>
+                            <div className="font-semibold text-[#2E2823]">密钥所属网络环境</div>
+                            <div className="text-[10px] text-[#7E7469]">测试网走 api.hyperliquid-testnet.xyz，正式密钥走 api.hyperliquid.xyz（测试网与正式网的 Agent 私钥不通用）</div>
+                          </div>
+                          <div className="flex items-center space-x-2 shrink-0 ml-2">
+                            <span className={`text-[11px] font-semibold ${!newKeyForm.isTestnet ? 'text-[#DE6438]' : 'text-[#9E9486]'}`}>正式</span>
+                            <button
+                              type="button"
+                              role="switch"
+                              aria-checked={Boolean(newKeyForm.isTestnet)}
+                              onClick={() => setNewKeyForm(f => ({ ...f, isTestnet: !f.isTestnet }))}
+                              className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors cursor-pointer ${
+                                newKeyForm.isTestnet ? 'bg-[#3D784E]' : 'bg-[#DE6438]'
+                              }`}
+                            >
+                              <span
+                                className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow-xs transition-transform ${
+                                  newKeyForm.isTestnet ? 'translate-x-5' : 'translate-x-0.5'
+                                }`}
+                              />
+                            </button>
+                            <span className={`text-[11px] font-semibold ${newKeyForm.isTestnet ? 'text-[#3D784E]' : 'text-[#9E9486]'}`}>测试网</span>
+                          </div>
+                        </div>
+                      )}
                     </>
                   ) : (
                     <>
@@ -1303,7 +1325,7 @@ export default function KeyVaultModal({ isOpen, onClose, walletState, onConnectW
               <div className="pt-2 flex items-center space-x-2">
                 <button
                   type="button"
-                  onClick={() => setShowAddModal(false)}
+                  onClick={closeAddModal}
                   className="w-1/2 py-2.5 rounded-xl border border-[#DCD3C5] hover:bg-[#F2ECE3] text-xs font-semibold text-[#7E7469] transition"
                 >
                   取消

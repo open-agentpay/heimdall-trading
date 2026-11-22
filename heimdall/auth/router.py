@@ -25,6 +25,7 @@ from heimdall.auth.vault import (
     verify_wallet_signature,
     test_key_connectivity,
     extract_credential_scope,
+    normalize_exchange_scope,
 )
 from heimdall.auth.dependencies import require_authenticated_wallet
 
@@ -189,10 +190,12 @@ async def list_vault_keys(
             try:
                 creds = crypto_vault.decrypt_payload(enc)
                 cred_mt, cred_em = extract_credential_scope(prov, creds)
-                if prov in ("binance", "binance_demo"):
+                if cred_em:
+                    is_testnet = cred_em == "TESTNET"
+                elif prov in ("binance", "binance_demo"):
                     if "is_testnet" in creds:
                         is_testnet = bool(creds.get("is_testnet"))
-                    elif cred_em == "TESTNET" or str(creds.get("mode", "")).lower() in ("demo", "testnet"):
+                    elif str(creds.get("mode", "")).lower() in ("demo", "testnet"):
                         is_testnet = True
                 if item.get("category") == "llms" or prov in ("custom", "openai_compatible", "deepseek", "openai", "anthropic", "gemini"):
                     item["model"] = creds.get("model") or ""
@@ -208,6 +211,25 @@ async def list_vault_keys(
     return sanitized
 
 
+def _identity_mask(payload: Dict[str, Any]) -> str:
+    """
+    生成用于列表展示的脱敏标识。
+    优先使用可公开的标识（API Key 公钥、钱包地址）；只提供了私钥时（如 Hyperliquid 未填地址），
+    由私钥推导出钱包地址再打码，绝不截取私钥本身的字符展示。
+    """
+    public_id = payload.get("api_key") or payload.get("agent_wallet") or payload.get("wallet_address")
+    if public_id:
+        return mask_secret(str(public_id))
+    private_key = payload.get("private_key") or payload.get("secret_key")
+    if private_key:
+        try:
+            from eth_account import Account
+            return mask_secret(Account.from_key(str(private_key).strip()).address)
+        except Exception:
+            return "••••••••"
+    return ""
+
+
 @auth_router.post("/vault/keys")
 async def create_vault_key(
     req: CreateKeyRequest,
@@ -220,11 +242,13 @@ async def create_vault_key(
     now_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
     # 智能提取关键识别信息并打码
-    raw_key = req.payload.get("api_key") or req.payload.get("private_key") or req.payload.get("agent_wallet") or ""
-    mask = mask_secret(str(raw_key))
+    mask = _identity_mask(req.payload)
+
+    # 交易所凭证显式写入 market_type / execution_mode（否则建机器人时精确匹配会失败）
+    payload_to_store = normalize_exchange_scope(req.provider, req.payload)
 
     # 执行 AES-256-GCM 加密
-    encrypted_str = crypto_vault.encrypt_payload(req.payload)
+    encrypted_str = crypto_vault.encrypt_payload(payload_to_store)
 
     is_active = 1
     if req.category == "llms":
@@ -314,8 +338,14 @@ async def update_vault_key_network(
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"凭证解密失败: {exc}")
 
+    prov = str(row.get("provider") or "").lower()
+    if prov == "binance_demo" and not req.is_testnet:
+        raise HTTPException(status_code=400, detail="Binance Spot Demo 只有测试环境，不能切换为正式网")
     creds["is_testnet"] = bool(req.is_testnet)
     creds["mode"] = "demo" if req.is_testnet else "mainnet"
+    # 凭证里显式写着 execution_mode 时它优先于 is_testnet，必须一起更新，否则切换不生效
+    creds["execution_mode"] = "TESTNET" if req.is_testnet else "MAINNET"
+    creds = normalize_exchange_scope(prov, creds)
     new_encrypted = crypto_vault.encrypt_payload(creds)
     now_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
@@ -594,7 +624,8 @@ async def test_saved_vault_key(
             "success": True,
             "status": status_str,
             "message": f"服务商 [{provider.upper()}] 节点探针响应: {msg}",
-            "latency_ms": latency or 85.0,
+            # 探针没有测到耗时就如实返回 None，不再填 85ms
+            "latency_ms": latency if latency else None,
             "tested_at": now_iso,
         }
 
