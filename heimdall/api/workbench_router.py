@@ -39,7 +39,8 @@ from heimdall.backtest.engine import BacktestEngine
 from heimdall.backtest.feed import HistoricalDataFeed
 from heimdall.database.db import db_manager
 from heimdall.database.repository import trading_repo
-from heimdall.models.schemas import AgentStatus, ExchangeType, StrategyType
+from heimdall.models.schemas import AgentStatus, ExchangeType, ExecutionMode, MarketType, StrategyType
+from heimdall.auth.vault import resolve_exchange_credentials
 from heimdall.strategies import MacroBias, StrategyRouter
 from heimdall.strategies.base import MacroBiasAction
 
@@ -317,18 +318,20 @@ def create_workbench_router(bot_manager: Any) -> APIRouter:
             if o.get("reduce_only") and st in ("PENDING", "SUBMITTED", "PARTIAL"):
                 active_protections += 1
 
-        spec = bot.oms.registry.get_spec(bot.exchange.value, bot.symbol)
+        spec = bot.oms.registry.get_spec(bot.exchange.value, bot.symbol, bot.market_type)
         logger.info(
-            "[OMS 查询] bot=%s | 返回订单=%d | 活动原生保护单=%d | UNKNOWN=%d",
-            bot_id, len(orders_sorted), active_protections, state_counts.get("UNKNOWN", 0),
+            "[OMS 查询] bot=%s | 市场=%s | 返回订单=%d | 活动原生保护单=%d | UNKNOWN=%d",
+            bot_id, bot.market_type.value, len(orders_sorted), active_protections, state_counts.get("UNKNOWN", 0),
         )
         return {
             "bot_id": bot_id,
             "symbol": bot.symbol,
             "exchange": bot.exchange.value,
+            "market_type": bot.market_type.value,
             "strict_sl_protection": bot.oms.strict_sl_protection,
             "instrument_spec": {
                 "exchange": spec.exchange,
+                "market_type": spec.market_type,
                 "symbol": spec.symbol,
                 "tick_size": str(spec.tick_size),
                 "step_size": str(spec.step_size),
@@ -387,7 +390,8 @@ def create_workbench_router(bot_manager: Any) -> APIRouter:
             "bot_id": bot_id,
             "symbol": bot.symbol,
             "exchange": bot.exchange.value,
-            "execution_mode": getattr(bot, "execution_mode", "PAPER"),
+            "market_type": bot.market_type.value if isinstance(getattr(bot, "market_type", None), MarketType) else str(getattr(bot, "market_type", MarketType.USDM_FUTURES.value)),
+            "execution_mode": bot.execution_mode.value if isinstance(getattr(bot, "execution_mode", None), ExecutionMode) else str(getattr(bot, "execution_mode", ExecutionMode.LOCAL_SIM.value)),
             "bot_status": bot.status.value,
             "open_positions_count": len(positions),
             "last_reconciliation": bot.last_reconciliation,
@@ -442,45 +446,46 @@ def create_workbench_router(bot_manager: Any) -> APIRouter:
     @router.get("/api/v1/system/live-readiness")
     async def check_live_readiness(
         exchange: ExchangeType = Query(default=ExchangeType.HYPERLIQUID, description="目标交易所"),
+        market_type: MarketType = Query(default=MarketType.USDM_FUTURES, description="目标市场类型"),
+        execution_mode: ExecutionMode = Query(default=ExecutionMode.TESTNET, description="目标运行模式"),
         symbol: str = Query(default="ETH", description="目标标的"),
         bot_id: Optional[str] = Query(default=None, description="可选指定机器人 ID"),
         caller_wallet: str = Depends(require_authenticated_wallet),
     ) -> Dict[str, Any]:
         """
         实盘就绪自检清单（Live Readiness Preflight）：
-        在新建或切换 Testnet / Mainnet 实盘模式前，逐项核验密钥金库、精度规格、行情守卫、
-        死信心跳与 OMS 裸仓保护开关。
+        按 `owner_wallet + provider + market_type + execution_mode + is_active` 精确校验凭证与市场精度。
         """
         clean_wallet = caller_wallet.strip().lower()
         target_exchange = exchange.value
+        target_market = market_type.value
+        target_mode = execution_mode.value
         target_symbol = symbol.upper().strip()
 
         bot = bot_manager.bots.get(bot_id) if bot_id else None
         if bot is not None:
             _assert_bot_access(bot_manager, bot_id, clean_wallet)
             target_exchange = bot.exchange.value
+            target_market = bot.market_type.value
+            target_mode = bot.execution_mode.value
             target_symbol = bot.symbol.upper().strip()
 
-        # 1. 检查当前用户在密钥金库中是否已配置目标交易所凭证（币安同时兼容 binance 与 binance_demo）
-        provider_name = target_exchange.lower()
-        if provider_name == "binance":
-            vault_rows = await db_manager.execute_query(
-                "SELECT key_id, label, provider, updated_at FROM user_api_keys WHERE LOWER(wallet_address) = ? AND is_active = 1 AND LOWER(provider) IN ('binance', 'binance_demo')",
-                (clean_wallet,),
-            )
-        else:
-            vault_rows = await db_manager.execute_query(
-                "SELECT key_id, label, provider, updated_at FROM user_api_keys WHERE LOWER(wallet_address) = ? AND is_active = 1 AND LOWER(provider) = ?",
-                (clean_wallet, provider_name),
-            )
-        has_exchange_key = len(vault_rows) > 0
+        # 1. 严格五元组精确匹配凭证（无跨市场/跨环境回退）
+        matched_cred = await resolve_exchange_credentials(
+            owner_wallet=clean_wallet,
+            provider=target_exchange.lower(),
+            market_type=target_market,
+            execution_mode=target_mode,
+        )
+        has_exchange_key = matched_cred is not None
+        vault_rows = [matched_cred] if matched_cred else []
 
-        # 2. 检查标的精度规格是否已加载
+        # 2. 按 (exchange, market_type, symbol) 检查标的精度规格
         registry = bot.oms.registry if bot else None
         if registry is None:
             from heimdall.execution.precision import InstrumentRegistry
             registry = InstrumentRegistry()
-        spec = registry.get_spec(target_exchange, target_symbol)
+        spec = registry.get_spec(target_exchange, target_symbol, target_market)
         spec_ready = spec.tick_size > 0 and spec.step_size > 0
 
         # 3. 检查跨所行情守卫是否健康（非 ISOLATED）

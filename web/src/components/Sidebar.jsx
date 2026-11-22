@@ -32,7 +32,8 @@ export default function Sidebar({
     runtime: b.runtime || b.status || '待命',
     tokens: b.tokens !== undefined && b.tokens !== null ? String(b.tokens) : '0',
     exchange: b.exchange || 'BINANCE',
-    executionMode: b.execution_mode || 'PAPER',
+    marketType: b.market_type || 'USDM_FUTURES',
+    executionMode: b.execution_mode || 'LOCAL_SIM',
     macroBias: b.macro_bias || null,
     currentEquity: Number(b.current_equity || b.allocated_capital || 0),
     cumulativeReturnPct: Number(b.cumulative_return_pct || 0),
@@ -107,7 +108,7 @@ export default function Sidebar({
                 </div>
                 <div className="mt-1.5 pt-1.5 border-t border-[#F2EDE4] flex items-center justify-between text-[10px] text-[#9E9486]">
                   <div className="flex items-center space-x-1.5">
-                    <span className="font-mono px-1 rounded bg-[#F5F0E6] text-[#6E6458]">{bot.executionMode}</span>
+                    <span className="font-mono px-1 rounded bg-[#F5F0E6] text-[#6E6458]">{bot.marketType} · {bot.executionMode}</span>
                     {bot.macroBias && (
                       <span className="text-[#C28B38] font-bold">🛡️ {bot.macroBias.action}</span>
                     )}

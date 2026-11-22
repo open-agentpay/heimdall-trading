@@ -10,8 +10,15 @@ Heimdall 交易平台 - 交易机器人调度中枢与生命周期管理器 (Bot
 import asyncio
 import logging
 from datetime import datetime, timezone
-from typing import Dict, Any, List, Optional
-from heimdall.models.schemas import AgentStatus, StrategyType, TradeProposal, ExchangeType
+from typing import Dict, Any, List, Optional, Union
+from heimdall.models.schemas import (
+    AgentStatus,
+    ExchangeType,
+    ExecutionMode,
+    MarketType,
+    StrategyType,
+    TradeProposal,
+)
 from heimdall.bifrost.client import BifrostClient
 from heimdall.risk.guard import HardRiskGuard
 from heimdall.risk.portfolio_guard import PortfolioCoordinator
@@ -21,8 +28,7 @@ from heimdall.factors.engine import FactorEngine
 from heimdall.strategies import StrategyRouter, StrategyContext, MacroBias
 from heimdall.accounting.nav import NAVEngine, EquitySnapshot
 from heimdall.execution.base import BaseExecutionAdapter, TradeExecutionResult
-from heimdall.execution.paper import PaperExecutionAdapter
-from heimdall.execution.binance import BinanceExecutionAdapter
+from heimdall.execution.factory import ExecutionAdapterFactory
 from heimdall.execution.hyperliquid import HyperliquidAdapter
 from heimdall.execution.precision import InstrumentRegistry
 from heimdall.execution.oms import OrderManagementSystem, OrderLifecycleState
@@ -58,18 +64,29 @@ class TradingBotInstance:
         strict_sl_protection: bool = True,
         instrument_registry: Optional[InstrumentRegistry] = None,
         strategy_config: Optional[Dict[str, Any]] = None,
-        execution_mode: str = "PAPER",
+        execution_mode: Union[ExecutionMode, str] = ExecutionMode.LOCAL_SIM,
+        market_type: Union[MarketType, str] = MarketType.USDM_FUTURES,
     ):
+        ex, mt, em = ExecutionAdapterFactory.validate_route(exchange, market_type, execution_mode)
+        ExecutionAdapterFactory.validate_strategy_market(strategy_type, mt)
+
         self.bot_id: str = bot_id
         self.name: str = name
         self.symbol: str = symbol
         self.strategy_type: StrategyType = strategy_type
         self.strategy_config: Dict[str, Any] = dict(strategy_config or {})
-        self.execution_mode: str = (execution_mode or "PAPER").upper().strip()
+        self.exchange: ExchangeType = ex
+        self.market_type: MarketType = mt
+        self.execution_mode: ExecutionMode = em
+        self.config: Dict[str, Any] = {
+            "exchange": ex.value,
+            "market_type": mt.value,
+            "execution_mode": em.value,
+            "strategy_config": self.strategy_config,
+        }
         self.status: AgentStatus = AgentStatus.STOPPED
         self.allocated_capital: float = allocated_capital
         self.max_drawdown_limit: float = max_drawdown_limit
-        self.exchange: ExchangeType = exchange
         self.owner_wallet: str = (owner_wallet or "system").strip().lower()
         self.llm_service = llm_service or LLMService(owner_wallet=self.owner_wallet)
         self.portfolio_coordinator: Optional[PortfolioCoordinator] = portfolio_coordinator
@@ -84,21 +101,16 @@ class TradingBotInstance:
             initial_shares=allocated_capital,
         )
 
-        # 挂载执行驱动：按交易所与运行模式（PAPER/DEMO/TESTNET/MAINNET）自动装配适配器
-        is_mainnet = self.execution_mode == "MAINNET"
-        is_demo = self.execution_mode == "DEMO"
+        # 统一通过 ExecutionAdapterFactory 路由装配适配器，禁止自行推断市场
         if execution_adapter:
             self.executor = execution_adapter
-        elif exchange == ExchangeType.HYPERLIQUID and self.execution_mode in ("TESTNET", "MAINNET"):
-            self.executor = HyperliquidAdapter(testnet=not is_mainnet)
-        elif exchange == ExchangeType.BINANCE:
-            self.executor = BinanceExecutionAdapter(
-                initial_cash=allocated_capital,
-                testnet=(not is_mainnet and not is_demo),
-                demo_mode=is_demo,
-            )
         else:
-            self.executor = PaperExecutionAdapter(initial_cash=allocated_capital)
+            self.executor = ExecutionAdapterFactory.create(
+                exchange=self.exchange,
+                market_type=self.market_type,
+                execution_mode=self.execution_mode,
+                initial_cash=allocated_capital,
+            )
         self._exchange_creds_hydrated: bool = False
 
         # 挂载 OMS 订单状态机（含精度归一化与原生条件止损）及交易所对账引擎
@@ -140,34 +152,36 @@ class TradingBotInstance:
         self.decision_history: List[Dict[str, Any]] = []
         self.executed_trades: List[TradeExecutionResult] = []
 
-    async def hydrate_exchange_credentials_from_vault(self) -> bool:
+    async def hydrate_exchange_credentials_from_vault(self, force_refresh: bool = False) -> bool:
         """
-        在 DEMO / TESTNET / MAINNET 模式下，严格按当前机器人所有者钱包（owner_wallet）
-        从安全金库检索并解密对应交易所凭证，注入 HyperliquidAdapter / BinanceExecutionAdapter。
-        币安 DEMO 模式优先匹配 binance_demo，未单独配置时自动回退匹配 binance 凭证。
+        在 TESTNET / MAINNET 模式下，严格按
+        `owner_wallet + provider + market_type + execution_mode + is_active`
+        精确匹配凭证，并通过 `configure_credentials()` 重建适配器 SDK 客户端与清空账户缓存。
         """
-        if self.execution_mode not in ("DEMO", "TESTNET", "MAINNET") or self._exchange_creds_hydrated:
-            return self._exchange_creds_hydrated
+        if self.execution_mode == ExecutionMode.LOCAL_SIM:
+            return True
+        if self._exchange_creds_hydrated and not force_refresh:
+            return True
         if not self.owner_wallet or self.owner_wallet == "system":
             return False
         try:
-            from heimdall.database.db import db_manager
-            from heimdall.auth.vault import crypto_vault
+            from heimdall.auth.vault import resolve_exchange_credentials
 
             provider = self.exchange.value.lower()
-            candidates = ["binance_demo", "binance"] if (provider == "binance" and self.execution_mode == "DEMO") else [provider]
-            rows = []
-            for cand in candidates:
-                rows = await db_manager.execute_query(
-                    "SELECT encrypted_data FROM user_api_keys WHERE LOWER(wallet_address) = ? AND is_active = 1 AND LOWER(provider) = ? ORDER BY updated_at DESC LIMIT 1",
-                    (self.owner_wallet, cand),
+            matched = await resolve_exchange_credentials(
+                owner_wallet=self.owner_wallet,
+                provider=provider,
+                market_type=self.market_type.value,
+                execution_mode=self.execution_mode.value,
+            )
+            if not matched:
+                logger.warning(
+                    "[Bot %s] 未找到精确匹配的交易凭证 (wallet=%s, provider=%s, market=%s, mode=%s)",
+                    self.bot_id, self.owner_wallet, provider, self.market_type.value, self.execution_mode.value,
                 )
-                if rows:
-                    break
-            if not rows:
-                logger.warning("[Bot %s] 未在钱包 %s 金库中找到 %s 有效交易凭证", self.bot_id, self.owner_wallet, provider)
                 return False
-            creds = crypto_vault.decrypt_payload(rows[0]["encrypted_data"])
+
+            creds = matched["credentials"]
             if isinstance(self.executor, HyperliquidAdapter):
                 pk = str(creds.get("private_key") or creds.get("secret_key") or "").strip()
                 addr = str(creds.get("wallet_address") or creds.get("api_key") or "").strip()
@@ -179,15 +193,25 @@ class TradingBotInstance:
                         from eth_account import Account
                         self.executor.wallet_address = Account.from_key(pk).address
                     self._exchange_creds_hydrated = True
-                    logger.info("[Bot %s] 已从安全金库注入 Hyperliquid 实盘签名凭证 (mode=%s)", self.bot_id, self.execution_mode)
-            elif isinstance(self.executor, BinanceExecutionAdapter):
+                    logger.info(
+                        "[Bot %s] 已从安全金库注入 Hyperliquid 凭证 (market=%s, mode=%s)",
+                        self.bot_id, self.market_type.value, self.execution_mode.value,
+                    )
+            else:
                 ak = str(creds.get("api_key") or "").strip()
                 sk = str(creds.get("secret_key") or "").strip()
                 if ak and sk:
-                    self.executor.api_key = ak
-                    self.executor.secret_key = sk
+                    self.executor.configure_credentials(
+                        api_key=ak,
+                        secret_key=sk,
+                        market_type=self.market_type,
+                        execution_mode=self.execution_mode,
+                    )
                     self._exchange_creds_hydrated = True
-                    logger.info("[Bot %s] 已从安全金库注入 Binance 交易凭证 (mode=%s)", self.bot_id, self.execution_mode)
+                    logger.info(
+                        "[Bot %s] 已通过 configure_credentials 注入并重建 %s 客户端 (market=%s, mode=%s)",
+                        self.bot_id, self.exchange.value, self.market_type.value, self.execution_mode.value,
+                    )
             return self._exchange_creds_hydrated
         except Exception as exc:
             logger.warning("[Bot %s] 从金库注入交易所凭证失败: %s", self.bot_id, exc)
@@ -278,8 +302,8 @@ class TradingBotInstance:
                 "reason": f"Circuit broken: drawdown {current_dd:.2%} >= limit {self.max_drawdown_limit:.2%}",
             }
 
-        # 6. 计算多维因子并通过 StrategyRouter 路由的独立策略模块推演（DEMO/测试网/实盘按需注入金库交易凭证）
-        if self.execution_mode in ("DEMO", "TESTNET", "MAINNET") and not self._exchange_creds_hydrated:
+        # 6. 计算多维因子并通过 StrategyRouter 路由的独立策略模块推演（TESTNET/MAINNET 必须注入精确匹配凭证）
+        if self.execution_mode in (ExecutionMode.TESTNET, ExecutionMode.MAINNET) and not self._exchange_creds_hydrated:
             await self.hydrate_exchange_credentials_from_vault()
         if getattr(self.strategy, "requires_llm", False):
             await self.llm_service.ensure_credentials(owner_wallet=self.owner_wallet)
@@ -361,13 +385,15 @@ class TradingBotInstance:
             self.total_tokens_used += int(tok or 0)
 
         if approved_proposals:
-            logger.info("[Bot %s] %d 笔提案通过风控审核，提交执行链路下单 (use_oms=%s)...", self.bot_id, len(approved_proposals), self.use_oms)
+            for prop in approved_proposals:
+                prop.trade_action.market_type = self.market_type
+            logger.info("[Bot %s] %d 笔提案通过风控审核，提交执行链路下单 (market=%s, use_oms=%s)...", self.bot_id, len(approved_proposals), self.market_type.value, self.use_oms)
             if decision.action_type == "HEDGE_PAIR" and len(approved_proposals) == 2:
                 executed_batch = await self.executor.execute_atomic_pair(
                     approved_proposals[0], approved_proposals[1]
                 )
             elif self.use_oms:
-                # 通过 OMS 状态机执行：精度对齐 -> Write-Ahead 落库 -> 成交回报 -> 自动挂载原生条件止损/止盈
+                # 通过 OMS 状态机执行：市场校验 -> 精度对齐 -> Write-Ahead 落库 -> 订单事实映射 -> 仅按真实成交量挂载保护单
                 for prop in approved_proposals:
                     managed_order, exec_res = await self.oms.submit_proposal(
                         bot_id=self.bot_id,
@@ -535,9 +561,10 @@ class BotManager:
         llm_service: Optional[LLMService] = None,
         owner_wallet: Optional[str] = "system",
         strategy_config: Optional[Dict[str, Any]] = None,
-        execution_mode: str = "PAPER",
+        execution_mode: Union[ExecutionMode, str] = ExecutionMode.LOCAL_SIM,
+        market_type: Union[MarketType, str] = MarketType.USDM_FUTURES,
     ) -> TradingBotInstance:
-        """注册并创建新的交易机器人实例 (支持多租户所有者隔离、策略自定义参数与运行模式)"""
+        """注册并创建新的交易机器人实例（强制校验 exchange + market_type + execution_mode 路由）"""
         if bot_id in self.bots:
             raise ValueError(f"机器人 ID '{bot_id}' 已存在，不可重复创建")
 
@@ -556,9 +583,13 @@ class BotManager:
             portfolio_coordinator=self.portfolio_coordinator,
             strategy_config=strategy_config,
             execution_mode=execution_mode,
+            market_type=market_type,
         )
         self.bots[bot_id] = bot
-        logger.info("[BotManager] 成功创建机器人: %s (%s) | 标的: %s | 交易所: %s | 归属: %s", bot_id, name, symbol, exchange.value, bot.owner_wallet)
+        logger.info(
+            "[BotManager] 成功创建机器人: %s (%s) | 标的: %s | 路由: %s/%s/%s | 归属: %s",
+            bot_id, name, symbol, bot.exchange.value, bot.market_type.value, bot.execution_mode.value, bot.owner_wallet,
+        )
         return bot
 
     async def reallocate_capital(self, bot_id: str, new_capital: float) -> Dict[str, Any]:
@@ -842,8 +873,22 @@ class BotManager:
             dd_limit = float(row.get("max_drawdown_limit") or 0.05)
             owner = (row.get("owner_wallet") or "system").strip().lower()
             row_cfg = row.get("config") if isinstance(row.get("config"), dict) else {}
-            restored_mode = str(row_cfg.get("execution_mode") or "PAPER").upper()
+            raw_mode = str(row_cfg.get("execution_mode") or "").upper().strip()
+            raw_market = str(row_cfg.get("market_type") or MarketType.USDM_FUTURES.value).upper().strip()
+            raw_exchange = str(row_cfg.get("exchange") or ExchangeType.BINANCE.value).upper().strip()
             restored_strategy_cfg = row_cfg.get("strategy_config") if isinstance(row_cfg.get("strategy_config"), dict) else {}
+
+            # 严格不恢复历史 PAPER / DEMO 或缺少合法三元组的旧机器人记录
+            try:
+                restored_ex, restored_mt, restored_em = ExecutionAdapterFactory.validate_route(
+                    raw_exchange, raw_market, raw_mode
+                )
+            except ValueError as skip_err:
+                logger.warning(
+                    "[BotManager 重启恢复] 跳过历史/不兼容配置 Bot=%s (raw_mode=%s, raw_market=%s): %s",
+                    agent_id, raw_mode or "<empty>", raw_market, skip_err,
+                )
+                continue
 
             bot = self.create_bot(
                 bot_id=agent_id,
@@ -852,9 +897,11 @@ class BotManager:
                 strategy_type=stype,
                 allocated_capital=cap,
                 max_drawdown_limit=dd_limit,
+                exchange=restored_ex,
                 owner_wallet=owner,
                 strategy_config=restored_strategy_cfg,
-                execution_mode=restored_mode,
+                execution_mode=restored_em,
+                market_type=restored_mt,
             )
             bot.status = status_enum
 
@@ -917,7 +964,8 @@ class BotManager:
                 "strategy": b.strategy_type.value,
                 "strategy_config": getattr(b, "strategy_config", {}),
                 "exchange": getattr(b, "exchange", ExchangeType.BINANCE).value,
-                "execution_mode": getattr(b, "execution_mode", "PAPER"),
+                "market_type": b.market_type.value if isinstance(getattr(b, "market_type", None), MarketType) else str(getattr(b, "market_type", MarketType.USDM_FUTURES.value)),
+                "execution_mode": b.execution_mode.value if isinstance(getattr(b, "execution_mode", None), ExecutionMode) else str(getattr(b, "execution_mode", ExecutionMode.LOCAL_SIM.value)),
                 "macro_bias": (
                     b.macro_bias.model_dump(mode="json")
                     if getattr(b, "macro_bias", None) and b.macro_bias.is_active()

@@ -233,9 +233,20 @@ export async function triggerBotReconcile(botId, resumeIfClean = false) {
   });
 }
 
-/** 实盘就绪 5 项预检清单查询 */
-export async function checkLiveReadiness({ exchange = 'HYPERLIQUID', symbol = 'ETH', botId = null } = {}) {
-  const params = new URLSearchParams({ exchange, symbol });
+/** 实盘就绪 5 项预检清单查询（传递 exchange / market_type / execution_mode） */
+export async function checkLiveReadiness({
+  exchange = 'BINANCE',
+  marketType = 'USDM_FUTURES',
+  executionMode = 'TESTNET',
+  symbol = 'ETH',
+  botId = null,
+} = {}) {
+  const params = new URLSearchParams({
+    exchange,
+    market_type: marketType,
+    execution_mode: executionMode,
+    symbol,
+  });
   if (botId) params.append('bot_id', botId);
   return apiRequest(`/api/v1/system/live-readiness?${params.toString()}`, { method: 'GET' });
 }

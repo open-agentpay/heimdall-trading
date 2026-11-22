@@ -294,9 +294,9 @@ export default function SwarmView({
                         </div>
                       </div>
                       <div>
-                        <span className="text-[10px] text-[#8C8275]">交易所 · 运行模式</span>
+                        <span className="text-[10px] text-[#8C8275]">交易所 · 市场 · 模式</span>
                         <div className="font-semibold text-[#2E2823] mt-0.5 text-[11px] font-mono">
-                          {bot.exchange || 'BINANCE'} · {bot.execution_mode || 'PAPER'}
+                          {bot.exchange || 'BINANCE'} · {bot.market_type || 'USDM_FUTURES'} · {bot.execution_mode || 'LOCAL_SIM'}
                         </div>
                       </div>
                       <div>

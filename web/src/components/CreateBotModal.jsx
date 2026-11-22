@@ -3,15 +3,15 @@
  * Heimdall 交易平台 - 新建策略机器人弹窗 (CreateBotModal)
  * ================================================================================
  *
- * 【阶段 C 升级】：
- * 1. 动态对接 `/api/v1/strategies/catalog`，支持 4 类 StrategyRouter 策略及专属超参表单；
- * 2. 支持 PAPER 模拟盘 / TESTNET 测试网 / MAINNET 实盘模式切换，切到非模拟盘时自动执行
- *    `/api/v1/system/live-readiness` 5 项实盘就绪预检（未就绪禁止强开实盘）；
- * 3. 支持从「回测实验室」一键带参预填（prefill）。
+ * 统一三元组路由契约：
+ * - 交易所：BINANCE / HYPERLIQUID / OKX
+ * - 市场类型：SPOT (现货) / USDM_FUTURES (U 本位合约)
+ * - 运行模式：LOCAL_SIM (本地模拟) / TESTNET (测试网) / MAINNET (实盘)
+ * 不再展示历史 PAPER 或 DEMO 选项。
  */
 
 import React, { useState, useEffect } from 'react';
-import { X, Bot, ShieldCheck, ArrowRight, CheckCircle2, XCircle, DollarSign } from 'lucide-react';
+import { X, Bot, ShieldCheck, ArrowRight, CheckCircle2, XCircle } from 'lucide-react';
 import { createBot, getStrategiesCatalog, checkLiveReadiness } from '../api/endpoints';
 import { MAINSTREAM_SYMBOLS } from '../data/symbols';
 
@@ -23,7 +23,8 @@ export default function CreateBotModal({ isOpen, onClose, onCreated, prefill = n
     symbol: 'ETH',
     strategy_type: 'BULL_BEAR_DEBATE',
     exchange: 'BINANCE',
-    execution_mode: 'PAPER',
+    market_type: 'USDM_FUTURES',
+    execution_mode: 'LOCAL_SIM',
     allocated_capital: 10000.0,
     max_drawdown_limit: 0.05,
   });
@@ -56,24 +57,29 @@ export default function CreateBotModal({ isOpen, onClose, onCreated, prefill = n
     }
   }, [isOpen, prefill]);
 
-  // 当选择 DEMO / TESTNET / MAINNET 时实时触发 5 项实盘就绪预检
+  // 当选择 TESTNET / MAINNET 时实时触发按市场与环境精确匹配的实盘就绪预检
   useEffect(() => {
-    if (!isOpen || formData.execution_mode === 'PAPER') {
+    if (!isOpen || formData.execution_mode === 'LOCAL_SIM') {
       setReadiness(null);
       return;
     }
     setCheckingReadiness(true);
-    checkLiveReadiness({ exchange: formData.exchange, symbol: formData.symbol })
+    checkLiveReadiness({
+      exchange: formData.exchange,
+      marketType: formData.market_type,
+      executionMode: formData.execution_mode,
+      symbol: formData.symbol,
+    })
       .then((res) => setReadiness(res))
       .catch((err) => setReadiness({ error: err.message, checks: [] }))
       .finally(() => setCheckingReadiness(false));
-  }, [isOpen, formData.execution_mode, formData.exchange, formData.symbol]);
+  }, [isOpen, formData.execution_mode, formData.exchange, formData.market_type, formData.symbol]);
 
   if (!isOpen) return null;
 
   const activeMeta = catalog.find((s) => s.strategy_type === formData.strategy_type);
   const blockedByReadiness =
-    ((formData.execution_mode === 'TESTNET' || formData.execution_mode === 'DEMO') && readiness && !readiness.ready_for_testnet) ||
+    (formData.execution_mode === 'TESTNET' && readiness && !readiness.ready_for_testnet) ||
     (formData.execution_mode === 'MAINNET' && readiness && !readiness.ready_for_mainnet);
 
   const handleSubmit = async (e) => {
@@ -87,6 +93,7 @@ export default function CreateBotModal({ isOpen, onClose, onCreated, prefill = n
         symbol: formData.symbol.toUpperCase().trim(),
         strategy_type: formData.strategy_type,
         exchange: formData.exchange,
+        market_type: formData.market_type,
         execution_mode: formData.execution_mode,
         strategy_config: strategyConfig,
         allocated_capital: Number(formData.allocated_capital),
@@ -111,7 +118,7 @@ export default function CreateBotModal({ isOpen, onClose, onCreated, prefill = n
             </div>
             <div>
               <h3 className="text-sm font-bold text-[#2E2823]">新建交易机器人 (StrategyRouter)</h3>
-              <p className="text-[11px] text-[#8C8276]">支持独立策略超参配置、OMS 原生止损与实盘就绪门禁</p>
+              <p className="text-[11px] text-[#8C8276]">交易所、市场类型与运行模式独立建模，严禁跨市场误路由</p>
             </div>
           </div>
           <button
@@ -152,7 +159,7 @@ export default function CreateBotModal({ isOpen, onClose, onCreated, prefill = n
             </div>
           </div>
 
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-2 gap-3">
             <div>
               <div className="flex items-center justify-between mb-1">
                 <label className="block text-[11px] font-semibold text-[#665E54]">交易标的</label>
@@ -184,9 +191,23 @@ export default function CreateBotModal({ isOpen, onClose, onCreated, prefill = n
                 onChange={(e) => setFormData({ ...formData, exchange: e.target.value })}
                 className="w-full px-3 py-2 bg-white border border-[#D8CEBE] rounded-xl text-xs font-mono font-bold"
               >
-                <option value="BINANCE">BINANCE</option>
+                <option value="BINANCE">BINANCE (币安)</option>
                 <option value="HYPERLIQUID">HYPERLIQUID</option>
                 <option value="OKX">OKX</option>
+              </select>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-[11px] font-semibold text-[#665E54] mb-1">交易市场</label>
+              <select
+                value={formData.market_type}
+                onChange={(e) => setFormData({ ...formData, market_type: e.target.value })}
+                className="w-full px-3 py-2 bg-white border border-[#D8CEBE] rounded-xl text-xs font-mono font-bold"
+              >
+                <option value="SPOT">SPOT 现货</option>
+                <option value="USDM_FUTURES">USDM_FUTURES U 本位合约</option>
               </select>
             </div>
             <div>
@@ -196,13 +217,23 @@ export default function CreateBotModal({ isOpen, onClose, onCreated, prefill = n
                 onChange={(e) => setFormData({ ...formData, execution_mode: e.target.value })}
                 className="w-full px-3 py-2 bg-white border border-[#D8CEBE] rounded-xl text-xs font-mono font-bold"
               >
-                <option value="PAPER">PAPER 本地沙盒</option>
-                <option value="DEMO">DEMO 币安现货模拟交易</option>
+                <option value="LOCAL_SIM">LOCAL_SIM 本地模拟</option>
                 <option value="TESTNET">TESTNET 测试网</option>
                 <option value="MAINNET">MAINNET 实盘</option>
               </select>
             </div>
           </div>
+
+          {/* 市场规则提示 */}
+          {formData.market_type === 'SPOT' ? (
+            <div className="px-3 py-2 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-[11px]">
+              ℹ️ 现货市场提示：<strong>不可开空</strong>，不支持杠杆与 reduceOnly；仅允许买入现货及卖出已有持仓。
+            </div>
+          ) : (
+            <div className="px-3 py-2 rounded-xl bg-[#F4EFE6] border border-[#E6DFD5] text-[#5A5046] text-[11px]">
+              ℹ️ U 本位合约说明：支持多空双向开平仓与杠杆配置；系统将自动探测账户单向/双向持仓模式（Hedge / One-way），并仅按真实成交数量挂载原生条件止损止盈。
+            </div>
+          )}
 
           {/* StrategyRouter 4 大核心策略 */}
           <div>
@@ -212,7 +243,7 @@ export default function CreateBotModal({ isOpen, onClose, onCreated, prefill = n
                 { id: 'BULL_BEAR_DEBATE', label: '⚔️ 多空博弈激辩', badge: 'LLM Multi-Agent' },
                 { id: 'TREND_FOLLOW', label: '📈 趋势突破跟踪', badge: '0 Token · 纯算法' },
                 { id: 'GRID', label: '🔲 动态区间网格', badge: '0 Token · 纯算法' },
-                { id: 'FUNDING_ARB', label: '⚖️ 资金费率套利', badge: '0 Token · 纯算法' },
+                { id: 'FUNDING_ARB', label: '⚖️ 资金费率套利', badge: '0 Token · 仅合约' },
               ].map((strat) => (
                 <div
                   key={strat.id}
@@ -256,7 +287,7 @@ export default function CreateBotModal({ isOpen, onClose, onCreated, prefill = n
           )}
 
           {/* 实盘就绪 5 项预检清单（TESTNET / MAINNET 模式自动展示） */}
-          {formData.execution_mode !== 'PAPER' && (
+          {formData.execution_mode !== 'LOCAL_SIM' && (
             <div className="p-3.5 rounded-xl bg-white border border-[#DFD6C7] space-y-2">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-bold text-[#2E2823] flex items-center space-x-1.5">
@@ -264,7 +295,7 @@ export default function CreateBotModal({ isOpen, onClose, onCreated, prefill = n
                   <span>实盘就绪预检清单 (Live Readiness Preflight)</span>
                 </span>
                 <span className="text-[10px] font-mono text-[#7E7469]">
-                  {checkingReadiness ? '检测中...' : formData.execution_mode}
+                  {checkingReadiness ? '检测中...' : `${formData.market_type} · ${formData.execution_mode}`}
                 </span>
               </div>
               {readiness?.error ? (

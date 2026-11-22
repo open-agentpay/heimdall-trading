@@ -65,7 +65,7 @@ def test_stage_a_strategies_catalog_and_macro_bias():
             exchange=ExchangeType.BINANCE,
             owner_wallet=wallet,
             strategy_config={"leverage": 2.0},
-            execution_mode="PAPER",
+            execution_mode="LOCAL_SIM",
         )
 
     client = TestClient(app)

@@ -71,6 +71,8 @@ def test_authenticated_write_operations_allowed():
                 "bot_id": bot_id,
                 "name": "已授权测试机器人",
                 "symbol": "ETH",
+                "market_type": "USDM_FUTURES",
+                "execution_mode": "LOCAL_SIM",
                 "allocated_capital": 10000.0,
             },
         )

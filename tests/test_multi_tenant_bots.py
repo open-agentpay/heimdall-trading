@@ -39,6 +39,8 @@ def test_multi_tenant_bot_ownership_and_isolation():
                 "bot_id": bot_a_id,
                 "name": "用户A的专享策略",
                 "symbol": "BTC",
+                "market_type": "USDM_FUTURES",
+                "execution_mode": "LOCAL_SIM",
                 "allocated_capital": 30000.0,
             },
         )

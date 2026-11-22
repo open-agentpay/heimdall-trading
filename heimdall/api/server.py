@@ -40,15 +40,19 @@ from heimdall.engine.scheduler import scheduler
 from heimdall.database.db import db_manager
 from heimdall.database.repository import trading_repo
 from heimdall.models.schemas import (
-    StrategyType, 
-    AgentStatus, 
-    OrderSide, 
-    PositionSide, 
-    ExchangeType, 
+    StrategyType,
+    AgentStatus,
+    OrderSide,
+    PositionSide,
+    ExchangeType,
+    ExecutionMode,
+    MarketType,
     MarketContext,
-    TradeAction, 
-    TradeProposal
+    TradeAction,
+    TradeProposal,
 )
+from heimdall.execution.factory import ExecutionAdapterFactory
+from heimdall.auth.vault import resolve_exchange_credentials
 from heimdall.alert.notifier import alert_gateway
 from heimdall.alert.heartbeat import dead_man_switch
 from heimdall.auth.router import auth_router
@@ -111,7 +115,7 @@ app.include_router(create_workbench_router(bot_manager))
 
 
 class CreateBotRequest(BaseModel):
-    """创建交易机器人请求参数"""
+    """创建交易机器人请求参数（market_type 与 execution_mode 均为必填）"""
     bot_id: str = Field(..., description="机器人唯一标识符", example="bot_eth_debate_01")
     name: str = Field(..., description="机器人显示名称", example="ETH 多空对抗自适应智能体")
     symbol: str = Field(default="ETH", description="交易标的代码", example="ETH")
@@ -119,10 +123,13 @@ class CreateBotRequest(BaseModel):
         default=StrategyType.BULL_BEAR_DEBATE, description="策略类型"
     )
     exchange: ExchangeType = Field(
-        default=ExchangeType.BINANCE, description="执行交易所: BINANCE (币安模拟/测试网) 或 HYPERLIQUID"
+        default=ExchangeType.BINANCE, description="执行交易所: BINANCE / HYPERLIQUID / OKX"
     )
-    execution_mode: str = Field(
-        default="PAPER", description="运行模式: PAPER (模拟盘) | TESTNET (测试网) | MAINNET (实盘)"
+    market_type: MarketType = Field(
+        ..., description="交易市场类型（必填）: SPOT | USDM_FUTURES"
+    )
+    execution_mode: ExecutionMode = Field(
+        ..., description="运行模式（必填，不再兼容 PAPER/DEMO）: LOCAL_SIM | TESTNET | MAINNET"
     )
     strategy_config: Optional[Dict[str, Any]] = Field(
         default=None, description="策略专属可调参数字典（透传至 StrategyRouter）"
@@ -164,8 +171,30 @@ async def create_bot(
     req: CreateBotRequest,
     caller_wallet: str = Depends(require_authenticated_wallet),
 ) -> Dict[str, Any]:
-    """注册创建新的交易机器人，并自动持久化写入数据库 (需钱包鉴权并绑定归属)"""
+    """注册创建新的交易机器人：严格按 枚举 -> 路由支持 -> 策略市场兼容性 -> 凭证精确匹配 顺序校验并持久化三元组"""
     try:
+        # 1 & 2. 校验枚举与交易所/市场/环境路由组合
+        ex, mt, em = ExecutionAdapterFactory.validate_route(req.exchange, req.market_type, req.execution_mode)
+        # 3. 校验策略在该市场是否允许运行
+        ExecutionAdapterFactory.validate_strategy_market(req.strategy_type, mt)
+        # 4. 非 LOCAL_SIM 必须校验当前钱包拥有精确匹配的活动凭证
+        if em != ExecutionMode.LOCAL_SIM:
+            matched_cred = await resolve_exchange_credentials(
+                owner_wallet=caller_wallet,
+                provider=ex.value.lower(),
+                market_type=mt.value,
+                execution_mode=em.value,
+            )
+            if not matched_cred:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"缺少精确匹配的交易凭证：请先在安全金库配置 "
+                        f"{ex.value} / {mt.value} / {em.value} 的有效活动密钥（禁止跨市场或跨环境回退）"
+                    ),
+                )
+
+        # 5. 创建机器人并持久化完整三元组
         bot = bot_manager.create_bot(
             bot_id=req.bot_id,
             name=req.name,
@@ -173,13 +202,13 @@ async def create_bot(
             strategy_type=req.strategy_type,
             allocated_capital=req.allocated_capital,
             max_drawdown_limit=req.max_drawdown_limit,
-            exchange=req.exchange,
+            exchange=ex,
             owner_wallet=caller_wallet,
             strategy_config=req.strategy_config,
-            execution_mode=req.execution_mode,
+            execution_mode=em,
+            market_type=mt,
         )
 
-        # 异步持久化写入数据库 (记录 owner_wallet 租户归属与策略参数)
         await trading_repo.upsert_agent(
             agent_id=bot.bot_id,
             name=bot.name,
@@ -188,11 +217,15 @@ async def create_bot(
             status=bot.status.value,
             allocated_capital=bot.allocated_capital,
             max_drawdown_limit=bot.max_drawdown_limit,
-            config={"execution_mode": bot.execution_mode, "strategy_config": bot.strategy_config},
+            config={
+                "exchange": bot.exchange.value,
+                "market_type": bot.market_type.value,
+                "execution_mode": bot.execution_mode.value,
+                "strategy_config": bot.strategy_config,
+            },
             owner_wallet=caller_wallet,
         )
 
-        # 确保初始净值基准切片入库
         try:
             init_snap = bot.nav_engine.record_snapshot(
                 total_equity=bot.allocated_capital,
@@ -211,9 +244,11 @@ async def create_bot(
             "name": bot.name,
             "symbol": bot.symbol,
             "owner_wallet": bot.owner_wallet,
-            "exchange": getattr(bot, "exchange", req.exchange).value,
+            "exchange": bot.exchange.value,
+            "market_type": bot.market_type.value,
+            "execution_mode": bot.execution_mode.value,
             "allocated_capital": bot.allocated_capital,
-            "message": f"机器人 '{bot.name}' 创建成功，挂载 {getattr(bot, 'exchange', req.exchange).value} 撮合执行引擎！",
+            "message": f"机器人 '{bot.name}' 创建成功，路由={bot.exchange.value}/{bot.market_type.value}/{bot.execution_mode.value}",
         }
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -276,6 +311,18 @@ async def start_bot(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=f"越权操作被拒绝：机器人 '{bot_id}' 归属于其他钱包用户，您无权启动",
         )
+
+    # 启动前凭证校验：TESTNET / MAINNET 必须拥有精确匹配的有效凭证
+    if bot.execution_mode != ExecutionMode.LOCAL_SIM:
+        hydrated = await bot.hydrate_exchange_credentials_from_vault()
+        if not hydrated:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"启动被拒绝：未找到与 {bot.exchange.value}/{bot.market_type.value}/{bot.execution_mode.value} "
+                    "精确匹配的有效活动凭证"
+                ),
+            )
 
     interval = req.interval_seconds if req else 60
 
@@ -705,15 +752,17 @@ async def place_paper_order(
                     ),
                 )
 
+    eff_leverage = 1.0 if bot.market_type == MarketType.SPOT else req.leverage
     trade_action = TradeAction(
-        exchange=ExchangeType.HYPERLIQUID,
+        exchange=bot.exchange,
+        market_type=bot.market_type,
         symbol=bot.symbol,
         position_side=pos_side,
         order_side=order_side,
         order_type=req.order_type,
         target_price=fill_price,
         size_in_usd=size_usd,
-        leverage=req.leverage,
+        leverage=eff_leverage,
         stop_loss_price=round(fill_price * 0.95, 2) if order_side == OrderSide.BUY else round(fill_price * 1.05, 2),
         take_profit_price=round(fill_price * 1.10, 2) if order_side == OrderSide.BUY else round(fill_price * 0.90, 2),
     )

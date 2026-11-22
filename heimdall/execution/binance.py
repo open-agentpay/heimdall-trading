@@ -1,25 +1,36 @@
 """
 ================================================================================
-Heimdall 交易平台 - 币安官方 SDK 执行适配器 (Binance Futures Execution Adapter)
+Heimdall 交易平台 - 币安市场隔离执行适配器 (Binance Spot & USDM Futures Adapters)
 ================================================================================
 
-本模块基于币安官方 Python SDK (binance-futures-connector) 实现：
-1. 币安 U 本位合约主网 (Binance Futures Mainnet):
-   直连 https://fapi.binance.com，由官方 SDK 管理签名与请求。
-2. 币安 U 本位合约测试网 (Binance Futures Testnet):
-   直连 https://testnet.binancefuture.com，支持双向对冲与单向持仓模式自动适配。
-3. 币安现货模拟交易 (Spot Demo 兼容模式):
-   若显式配置 demo_mode=True，连接现货模拟端点（仅支持现货买卖，禁止非法做空）。
-4. 本地高精度沙盒模拟盘 (Binance Live Paper Engine):
-   若未配置 API Key / Secret Key，自动在本地进行零滑点/微滑点沙盒撮合。
+严格按市场类型与运行环境拆分：
+1. BinanceAdapterBase: 共享签名、请求封装、符号清洗、异常映射与 configure_credentials() 重建逻辑。
+2. BinanceSpotAdapter (SPOT):
+   - 仅访问币安现货 API (/api/v3/order, /api/v3/account, /api/v3/openOrders)；
+   - 严禁 positionSide、reduceOnly、杠杆与做空 (SHORT)；
+   - 严禁无凭证下单或回退到本地模拟成交。
+3. BinanceUSDMFuturesAdapter (USDM_FUTURES):
+   - 仅访问币安 U 本位合约 API/官方 SDK (UMFutures / /fapi/v1/order, /fapi/v2/account, /fapi/v2/positionRisk)；
+   - 严禁现货订单路径、无凭证下单或回退到本地模拟成交；
+   - configure_credentials() 必须重建 UMFutures SDK 客户端并清空持仓模式缓存。
+4. 订单事实一致性：
+   - submit_order() 返回 ExchangeOrderResult；
+   - 缺 orderId 直接抛错，绝不伪造本地订单号；
+   - executedQty == 0 或 status == NEW 时绝不生成成交。
 """
+from __future__ import annotations
 
 import asyncio
+import hashlib
+import hmac
 import logging
 import time
 import uuid
 from datetime import datetime, timezone
+from decimal import Decimal
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlencode
+
 import httpx
 
 try:
@@ -30,131 +41,127 @@ except ImportError:
     ClientError = Exception
     ServerError = Exception
 
-from heimdall.execution.base import BaseExecutionAdapter, TradeExecutionResult
-from heimdall.execution.paper import PaperPosition
-from heimdall.models.schemas import ExchangeType, OrderSide, PositionSide, TradeProposal
+from heimdall.execution.base import (
+    BaseExecutionAdapter,
+    ExchangeOrderResult,
+    TradeExecutionResult,
+)
+from heimdall.models.schemas import (
+    ExchangeType,
+    ExecutionMode,
+    MarketType,
+    OrderSide,
+    PositionSide,
+    TradeProposal,
+)
 
 logger = logging.getLogger(__name__)
 
 # 币安官方端点常量
-BINANCE_SPOT_DEMO_REST = "https://demo-api.binance.com"
-BINANCE_SPOT_DEMO_WS_API = "wss://demo-ws-api.binance.com/ws-api/v3"
-BINANCE_SPOT_DEMO_WS_STREAM = "wss://demo-stream.binance.com/ws"
+BINANCE_SPOT_TESTNET_REST = "https://demo-api.binance.com"
+BINANCE_SPOT_MAINNET_REST = "https://api.binance.com"
 BINANCE_FUTURES_TESTNET_REST = "https://testnet.binancefuture.com"
 BINANCE_FUTURES_MAINNET_REST = "https://fapi.binance.com"
 
 
-class BinanceExecutionAdapter(BaseExecutionAdapter):
-    """
-    基于币安官方 SDK (binance-futures-connector) 的专业多模式执行适配器
-    """
+class BinanceAdapterBase(BaseExecutionAdapter):
+    """币安现货与合约适配器共享基类"""
 
     def __init__(
         self,
+        *,
+        market_type: MarketType,
+        execution_mode: ExecutionMode,
+        rest_base: str,
         api_key: str = "",
         secret_key: str = "",
-        initial_cash: float = 10000.0,
-        testnet: bool = True,
-        demo_mode: bool = False,
-        taker_fee_rate: Optional[float] = None,
-        maker_fee_rate: Optional[float] = None,
+        initial_cash: float = 0.0,
     ):
-        self.api_key = api_key.strip()
-        self.secret_key = secret_key.strip()
-        self.demo_mode = bool(demo_mode)
-        self.testnet = False if self.demo_mode else bool(testnet)
-        self.cash_balance = initial_cash
-        self.taker_fee_rate = taker_fee_rate if taker_fee_rate is not None else (0.001 if self.demo_mode else 0.0004)
-        self.maker_fee_rate = maker_fee_rate if maker_fee_rate is not None else (0.001 if self.demo_mode else 0.0002)
-        self.cum_realized_pnl = 0.0
-        self.positions: Dict[str, PaperPosition] = {}
-        self.trade_history: List[TradeExecutionResult] = []
-        self.conditional_orders: Dict[str, Dict[str, Any]] = {}
-        self._orders_by_client_id: Dict[str, Dict[str, Any]] = {}
+        if execution_mode not in (ExecutionMode.TESTNET, ExecutionMode.MAINNET):
+            raise ValueError(
+                f"币安远端适配器仅允许 TESTNET 或 MAINNET 模式，收到: {execution_mode.value}"
+            )
+        self.exchange: ExchangeType = ExchangeType.BINANCE
+        self.market_type: MarketType = market_type
+        self.execution_mode: ExecutionMode = execution_mode
+        self.rest_base: str = rest_base.rstrip("/")
+        self.api_key: str = api_key.strip()
+        self.secret_key: str = secret_key.strip()
+        self.cash_balance: float = float(initial_cash)
+        self.cum_realized_pnl: float = 0.0
         self._last_prices: Dict[str, float] = {}
+        self.trade_history: List[TradeExecutionResult] = []
+        self._rebuild_client()
 
-        # 持仓模式缓存 (True: Hedge 双向对冲; False: One-way 单向持仓)
-        self._dual_side_position: Optional[bool] = None
+    @staticmethod
+    def _norm_base_symbol(symbol: str) -> str:
+        s = symbol.upper().strip()
+        if s.endswith("USDT") and len(s) > 4:
+            return s[:-4]
+        return s
 
-        if self.demo_mode:
-            self.rest_base = BINANCE_SPOT_DEMO_REST
-            self.ws_api_url = BINANCE_SPOT_DEMO_WS_API
-            self.ws_stream_url = BINANCE_SPOT_DEMO_WS_STREAM
-            mode_label = "SPOT_DEMO"
-            self.um_client: Optional[Any] = None
-        elif self.testnet:
-            self.rest_base = BINANCE_FUTURES_TESTNET_REST
-            self.ws_api_url = "wss://stream.binancefuture.com/ws"
-            self.ws_stream_url = "wss://stream.binancefuture.com/ws"
-            mode_label = "FUTURES_TESTNET"
-            self.um_client = self._init_official_sdk(self.rest_base)
-        else:
-            self.rest_base = BINANCE_FUTURES_MAINNET_REST
-            self.ws_api_url = "wss://fstream.binance.com/ws"
-            self.ws_stream_url = "wss://fstream.binance.com/ws"
-            mode_label = "FUTURES_MAINNET"
-            self.um_client = self._init_official_sdk(self.rest_base)
+    @classmethod
+    def _binance_symbol(cls, symbol: str) -> str:
+        return f"{cls._norm_base_symbol(symbol)}USDT"
 
+    @staticmethod
+    def _is_method_mocked(method: Any) -> bool:
+        return hasattr(method, "assert_awaited") or hasattr(method, "side_effect") or hasattr(method, "return_value")
+
+    def _require_credentials(self) -> None:
+        if not self.api_key or not self.secret_key:
+            raise RuntimeError(
+                f"Binance {self.market_type.value}/{self.execution_mode.value} 缺少有效 API 凭证，拒绝发单且禁止回退到本地模拟"
+            )
+
+    def _rebuild_client(self) -> None:
+        """子类覆写以重建 SDK/HTTP 客户端"""
+        pass
+
+    def _reset_account_caches(self) -> None:
+        """子类覆写以清空依赖账户状态的缓存"""
+        pass
+
+    def configure_credentials(
+        self,
+        *,
+        api_key: str = "",
+        secret_key: str = "",
+        market_type: Optional[MarketType] = None,
+        execution_mode: Optional[ExecutionMode] = None,
+        **kwargs: Any,
+    ) -> None:
+        """
+        金库注入/轮换凭证的标准入口：
+        1. 校验凭证市场与环境与当前适配器完全一致；
+        2. 重建 SDK/HTTP 客户端；
+        3. 清空账户状态缓存；
+        4. 写入脱敏审计日志（绝不打印密钥明文）。
+        """
+        super().configure_credentials(
+            api_key=api_key,
+            secret_key=secret_key,
+            market_type=market_type,
+            execution_mode=execution_mode,
+        )
+        clean_ak = api_key.strip()
+        clean_sk = secret_key.strip()
+        if not clean_ak or not clean_sk:
+            raise ValueError("configure_credentials 必须提供非空 api_key 与 secret_key")
+        self.api_key = clean_ak
+        self.secret_key = clean_sk
+        self._reset_account_caches()
+        self._rebuild_client()
+        masked = f"{clean_ak[:4]}***{clean_ak[-4:]}" if len(clean_ak) > 8 else "****"
         logger.info(
-            "[BinanceExecutionAdapter] 币安官方 SDK 适配器就绪 | 模式=%s | 端点=%s | 密钥绑定=%s",
-            mode_label,
+            "[Binance凭证重建] 市场=%s | 环境=%s | 端点=%s | api_key=%s | 已重建客户端并清空账户缓存",
+            self.market_type.value,
+            self.execution_mode.value,
             self.rest_base,
-            "已配置" if bool(self.api_key and self.secret_key) else "待注入/沙盒自撮合",
+            masked,
         )
 
-    def _init_official_sdk(self, base_url: str) -> Optional[Any]:
-        """初始化币安官方 U 本位合约 SDK 客户端"""
-        if not UMFutures:
-            return None
-        if self.api_key and self.secret_key:
-            return UMFutures(key=self.api_key, secret=self.secret_key, base_url=base_url)
-        return UMFutures(base_url=base_url)
-
-    async def _run_sdk(self, func, *args, **kwargs) -> Any:
-        """将官方 SDK 的同步网络调用封装为非阻塞异步执行"""
-        return await asyncio.to_thread(func, *args, **kwargs)
-
-    async def get_dual_side_position(self) -> bool:
-        """
-        探测并返回用户合约账户持仓模式：
-        True: 双向对冲持仓模式 (Hedge Mode, 开多 LONG, 开空 SHORT)
-        False: 单向持仓模式 (One-way Mode, 仓位方向统一为 BOTH)
-        """
-        if self._dual_side_position is not None:
-            return self._dual_side_position
-
-        if not self.demo_mode and self.um_client and self.api_key and self.secret_key:
-            try:
-                # 若被 mock 或测试环境
-                if self._is_method_mocked(self._signed_request):
-                    self._dual_side_position = False
-                    return False
-                res = await self._run_sdk(self.um_client.get_position_mode)
-                self._dual_side_position = bool(res.get("dualSidePosition", False))
-                logger.info(
-                    "[Binance Futures SDK] 探测到用户合约持仓模式: %s",
-                    "双向对冲(Hedge)" if self._dual_side_position else "单向(One-way)",
-                )
-                return self._dual_side_position
-            except Exception as exc:
-                logger.warning("[Binance Futures SDK] 探测持仓模式失败，默认采用单向持仓 (One-way): %s", exc)
-                self._dual_side_position = False
-                return False
-
-        self._dual_side_position = False
-        return False
-
-    def _get_position(self, symbol: str) -> PaperPosition:
-        norm_sym = symbol.upper().replace("USDT", "")
-        if norm_sym not in self.positions:
-            self.positions[norm_sym] = PaperPosition(norm_sym)
-        return self.positions[norm_sym]
-
     def _generate_signature(self, query_string: str) -> str:
-        """计算签名"""
-        import hashlib
-        import hmac
-
         if not self.secret_key:
             return ""
         return hmac.new(
@@ -163,23 +170,14 @@ class BinanceExecutionAdapter(BaseExecutionAdapter):
             hashlib.sha256,
         ).hexdigest()
 
-    @staticmethod
-    def _is_method_mocked(method) -> bool:
-        """辅助判定一个方法是否在单元测试中被 mock"""
-        return hasattr(method, "assert_awaited") or hasattr(method, "side_effect") or hasattr(method, "return_value")
-
     async def _signed_request(
         self,
         method: str,
         path: str,
         params: Optional[Dict[str, Any]] = None,
         timeout: float = 6.0,
-    ) -> Dict[str, Any]:
-        """兼容 /api/v3 与 /fapi/v1 请求及单元测试 mock"""
-        from urllib.parse import urlencode
-
-        if not self.api_key or not self.secret_key:
-            raise RuntimeError("未配置币安 API Key / Secret Key")
+    ) -> Any:
+        self._require_credentials()
         req_params: Dict[str, Any] = dict(params or {})
         req_params["timestamp"] = int(time.time() * 1000)
         req_params.setdefault("recvWindow", 5000)
@@ -189,48 +187,171 @@ class BinanceExecutionAdapter(BaseExecutionAdapter):
         headers = {"X-MBX-APIKEY": self.api_key}
         async with httpx.AsyncClient(timeout=timeout) as client:
             resp = await client.request(method.upper(), url, headers=headers)
-            data = resp.json()
+            try:
+                data = resp.json()
+            except Exception:
+                data = {"msg": resp.text}
+            if resp.status_code >= 500:
+                raise httpx.HTTPStatusError(
+                    f"Binance 5xx 异常 (HTTP {resp.status_code})",
+                    request=resp.request,
+                    response=resp,
+                )
             if resp.status_code >= 400:
                 code = data.get("code", resp.status_code) if isinstance(data, dict) else resp.status_code
                 msg = data.get("msg", resp.text) if isinstance(data, dict) else resp.text
-                raise RuntimeError(f"Binance API 错误 (HTTP {resp.status_code}, code={code}): {msg}")
+                raise ValueError(f"Binance API 拒单/错误 (HTTP {resp.status_code}, code={code}): {msg}")
             return data
 
-    async def _send_futures_order(
+    def update_market_price(self, symbol: str, current_price: float) -> None:
+        if current_price > 0:
+            self._last_prices[self._norm_base_symbol(symbol)] = float(current_price)
+
+    @staticmethod
+    def _dec_str(val: Decimal) -> str:
+        s = format(val.normalize(), "f")
+        return s.rstrip("0").rstrip(".") if "." in s else s
+
+
+class BinanceSpotAdapter(BinanceAdapterBase):
+    """
+    币安现货执行适配器 (SPOT · TESTNET / MAINNET)：
+    - 仅调用 `/api/v3/*` 现货端点；
+    - 严禁 `positionSide`、`reduceOnly`、杠杆与做空；
+    - 交易所为订单与余额唯一事实源，绝不补造成交或回退到本地模拟。
+    """
+
+    def __init__(
         self,
-        symbol: str,
-        side: str,
-        position_side: str,
-        quantity: float,
-        price: float,
-        order_type: str = "MARKET",
-        client_order_id: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        """优先使用官方 SDK 发送合约报单，在 mock 场景下回落至 _signed_request"""
+        *,
+        execution_mode: ExecutionMode = ExecutionMode.TESTNET,
+        api_key: str = "",
+        secret_key: str = "",
+        initial_cash: float = 0.0,
+        rest_base: Optional[str] = None,
+    ):
+        resolved_base = rest_base or (
+            BINANCE_SPOT_TESTNET_REST if execution_mode == ExecutionMode.TESTNET else BINANCE_SPOT_MAINNET_REST
+        )
+        super().__init__(
+            market_type=MarketType.SPOT,
+            execution_mode=execution_mode,
+            rest_base=resolved_base,
+            api_key=api_key,
+            secret_key=secret_key,
+            initial_cash=initial_cash,
+        )
+
+    @property
+    def supports_native_conditional_orders(self) -> bool:
+        return False
+
+    def _validate_spot_proposal(self, proposal: TradeProposal) -> None:
+        action = proposal.trade_action
+        if action.market_type != MarketType.SPOT:
+            raise ValueError(
+                f"市场路由不匹配: BinanceSpotAdapter 仅接受 SPOT，收到 {action.market_type.value}"
+            )
+        if action.position_side == PositionSide.SHORT:
+            raise ValueError("币安现货 (SPOT) 严禁开空 (SHORT) 操作")
+        if action.reduce_only:
+            raise ValueError("币安现货 (SPOT) 禁止传递 reduceOnly 字段")
+        if action.leverage > 1.0 + 1e-9:
+            raise ValueError(f"币安现货 (SPOT) 禁止使用杠杆 (leverage={action.leverage})")
+
+    async def submit_order(
+        self,
+        proposal: TradeProposal,
+        client_order_id: str,
+        requested_qty: Optional[Decimal] = None,
+    ) -> ExchangeOrderResult:
+        self._require_credentials()
+        self._validate_spot_proposal(proposal)
+
+        action = proposal.trade_action
+        binance_sym = self._binance_symbol(action.symbol)
+        req_qty = (
+            requested_qty
+            if requested_qty is not None
+            else Decimal(str(round(action.size_in_usd / action.target_price, 6)))
+        )
+        order_type = action.order_type.upper()
+        if order_type not in ("MARKET", "LIMIT"):
+            order_type = "LIMIT"
+
+        # 严格只构造现货合法字段：严禁 positionSide / reduceOnly / leverage
         params: Dict[str, Any] = {
-            "symbol": symbol,
-            "side": side,
-            "positionSide": position_side,
+            "symbol": binance_sym,
+            "side": "BUY" if action.order_side == OrderSide.BUY else "SELL",
             "type": order_type,
-            "quantity": quantity,
+            "quantity": self._dec_str(req_qty),
+            "newClientOrderId": client_order_id[:32],
         }
-        if client_order_id:
-            params["newClientOrderId"] = client_order_id
         if order_type == "LIMIT":
-            params["price"] = price
+            params["price"] = self._dec_str(Decimal(str(action.target_price)))
             params["timeInForce"] = "GTC"
 
-        # 单元测试若 mock 了 _signed_request，则优先调用它
-        if self._is_method_mocked(self._signed_request):
-            return await self._signed_request("POST", "/fapi/v1/order", params, timeout=5.0)
+        resp = await self._signed_request("POST", "/api/v3/order", params)
+        if not isinstance(resp, dict) or not resp.get("orderId"):
+            raise RuntimeError(f"币安现货下单响应缺少 orderId，拒绝伪造本地订单号: {resp}")
 
-        if self.um_client:
-            return await self._run_sdk(self.um_client.new_order, **params)
+        ex_order_id = str(resp["orderId"])
+        status_str = str(resp.get("status") or "NEW").upper()
+        filled_qty = Decimal(str(resp.get("executedQty") or "0"))
+        cum_quote = Decimal(str(resp.get("cummulativeQuoteQty") or "0"))
+        avg_fill_price: Optional[Decimal] = None
+        if filled_qty > 0 and cum_quote > 0:
+            avg_fill_price = (cum_quote / filled_qty).quantize(Decimal("0.00000001"))
 
-        return await self._signed_request("POST", "/fapi/v1/order", params, timeout=5.0)
+        fee_total = Decimal("0")
+        fee_asset: Optional[str] = None
+        for fill in resp.get("fills") or []:
+            fee_total += Decimal(str(fill.get("commission") or "0"))
+            if not fee_asset and fill.get("commissionAsset"):
+                fee_asset = str(fill["commissionAsset"])
 
-    async def _fetch_demo_ticker_prices(self) -> Dict[str, float]:
-        """从币安现货模拟盘拉取最新现货报价"""
+        return ExchangeOrderResult(
+            client_order_id=str(resp.get("clientOrderId") or client_order_id),
+            exchange_order_id=ex_order_id,
+            status=status_str,
+            requested_qty=req_qty,
+            filled_qty=filled_qty,
+            avg_fill_price=avg_fill_price,
+            cumulative_quote_qty=cum_quote,
+            fee=fee_total if fee_total > 0 else None,
+            fee_asset=fee_asset,
+            raw_response=resp,
+            is_simulated=False,
+            market_type=MarketType.SPOT,
+        )
+
+    async def execute_proposal(self, proposal: TradeProposal) -> TradeExecutionResult:
+        cid = (proposal.idempotency_key or f"hd_sp_{uuid.uuid4().hex[:14]}")[:32]
+        order_res = await self.submit_order(proposal, client_order_id=cid)
+        if order_res.filled_qty <= 0 or order_res.avg_fill_price is None:
+            raise RuntimeError(
+                f"币安现货订单尚未成交 (orderId={order_res.exchange_order_id}, status={order_res.status}, filled_qty={order_res.filled_qty})"
+            )
+        trade = TradeExecutionResult(
+            trade_id=f"bn_spot_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}_{uuid.uuid4().hex[:6]}",
+            order_id=order_res.exchange_order_id or cid,
+            proposal_id=proposal.proposal_id,
+            exchange=ExchangeType.BINANCE,
+            market_type=MarketType.SPOT,
+            symbol=self._binance_symbol(proposal.trade_action.symbol),
+            order_side=proposal.trade_action.order_side,
+            position_side=PositionSide.LONG,
+            executed_price=float(order_res.avg_fill_price),
+            executed_quantity=float(order_res.filled_qty),
+            executed_size_usd=float(order_res.cumulative_quote_qty or (order_res.filled_qty * order_res.avg_fill_price)),
+            fee_usd=float(order_res.fee or Decimal("0")),
+            realized_pnl=0.0,
+            raw_response=order_res.raw_response,
+        )
+        self.trade_history.append(trade)
+        return trade
+
+    async def _fetch_ticker_prices(self) -> Dict[str, float]:
         try:
             async with httpx.AsyncClient(timeout=4.0) as client:
                 resp = await client.get(f"{self.rest_base}/api/v3/ticker/price")
@@ -244,377 +365,351 @@ class BinanceExecutionAdapter(BaseExecutionAdapter):
             pass
         return dict(self._last_prices)
 
-    async def execute_proposal(self, proposal: TradeProposal) -> TradeExecutionResult:
-        """撮合订单提案并更新持仓、资金与对账流水"""
-        action = proposal.trade_action
-        raw_symbol = action.symbol.upper()
-        symbol = raw_symbol.replace("USDT", "")
-        target_price = action.target_price
-        size_usd = action.size_in_usd
-        order_side = action.order_side
-        requested_pos_side = action.position_side
-        leverage = max(1.0, action.leverage)
-
-        # 现货 Demo 模式坚决拦截做空
-        if self.demo_mode and requested_pos_side == PositionSide.SHORT:
-            raise ValueError(
-                "【安全拦截】币安现货模拟交易 (Spot Demo) 不支持做空 (SHORT) 操作！"
-                "如需进行做空策略，请切换至币安 U 本位合约环境 (Binance Futures Testnet / Mainnet)。"
-            )
-
-        remote_order_id: Optional[str] = None
-        remote_filled_price: Optional[float] = None
-        remote_filled_qty: Optional[float] = None
-        remote_raw: Optional[Dict[str, Any]] = None
-        client_oid = (getattr(proposal, "idempotency_key", None) or f"hd_{uuid.uuid4().hex[:16]}")[:32]
-
-        # 1. 主网合约实盘模式 (MAINNET)
-        if not self.demo_mode and not self.testnet:
-            if not self.api_key or not self.secret_key:
-                raise RuntimeError(
-                    "Binance MAINNET 实盘交易模式必须配置有效 api_key 与 secret_key，拒绝在未授权状态下执行或静默模拟"
-                )
-            try:
-                is_dual = await self.get_dual_side_position()
-                pos_side_param = ("LONG" if requested_pos_side == PositionSide.LONG else "SHORT") if is_dual else "BOTH"
-                futures_qty = round(size_usd / target_price, 3)
-
-                mainnet_result = await self._send_futures_order(
-                    symbol=f"{symbol}USDT",
-                    side="BUY" if order_side == OrderSide.BUY else "SELL",
-                    position_side=pos_side_param,
-                    quantity=futures_qty,
-                    price=target_price,
-                    order_type=action.order_type,
-                    client_order_id=client_oid,
-                )
-                if not mainnet_result or not mainnet_result.get("orderId"):
-                    raise RuntimeError(f"币安合约主网返回异常，缺少 orderId: {mainnet_result}")
-                remote_order_id = str(mainnet_result.get("orderId"))
-                remote_raw = mainnet_result
-                exec_qty = float(mainnet_result.get("executedQty") or 0.0)
-                avg_px = float(mainnet_result.get("avgPrice") or 0.0)
-                cum_quote = float(mainnet_result.get("cumQuote") or 0.0)
-                if exec_qty > 0:
-                    remote_filled_qty = exec_qty
-                    remote_filled_price = avg_px if avg_px > 0 else (cum_quote / exec_qty if cum_quote > 0 else target_price)
-                logger.info("[Binance Mainnet] 官方主网报单成功: orderId=%s, status=%s", remote_order_id, mainnet_result.get("status"))
-            except Exception as exc:
-                logger.error("[Binance Mainnet] 主网发单失败，坚决拒绝回退至本地沙盒模拟: %s", exc)
-                raise RuntimeError(f"Binance MAINNET 实盘发单失败: {exc}") from exc
-
-        # 2. 现货 Demo 兼容报单
-        elif self.demo_mode and self.api_key and self.secret_key:
-            try:
-                qty_str = f"{round(size_usd / target_price, 5):.5f}".rstrip("0").rstrip(".")
-                demo_params: Dict[str, Any] = {
-                    "symbol": f"{symbol}USDT",
-                    "side": "BUY" if order_side == OrderSide.BUY else "SELL",
-                    "type": action.order_type if action.order_type in ("MARKET", "LIMIT") else "MARKET",
-                    "quantity": qty_str,
-                    "newClientOrderId": client_oid,
-                }
-                if demo_params["type"] == "LIMIT":
-                    demo_params["price"] = f"{round(target_price, 2):.2f}"
-                    demo_params["timeInForce"] = "GTC"
-                demo_resp = await self._signed_request("POST", "/api/v3/order", demo_params)
-                remote_raw = demo_resp
-                if demo_resp.get("orderId"):
-                    remote_order_id = str(demo_resp["orderId"])
-                    exec_qty = float(demo_resp.get("executedQty") or 0.0)
-                    cum_quote = float(demo_resp.get("cummulativeQuoteQty") or 0.0)
-                    if exec_qty > 0 and cum_quote > 0:
-                        remote_filled_qty = exec_qty
-                        remote_filled_price = cum_quote / exec_qty
-            except Exception as exc:
-                logger.error("[Binance Spot Demo] 模拟盘报单失败: %s", exc)
-                raise RuntimeError(f"Binance Spot Demo 报单失败: {exc}") from exc
-
-        # 3. 合约测试网报单 (官方 SDK)
-        elif self.api_key and self.secret_key and self.testnet:
-            try:
-                is_dual = await self.get_dual_side_position()
-                pos_side_param = ("LONG" if requested_pos_side == PositionSide.LONG else "SHORT") if is_dual else "BOTH"
-                futures_qty = round(size_usd / target_price, 3)
-
-                testnet_result = await self._send_futures_order(
-                    symbol=f"{symbol}USDT",
-                    side="BUY" if order_side == OrderSide.BUY else "SELL",
-                    position_side=pos_side_param,
-                    quantity=futures_qty,
-                    price=target_price,
-                    order_type=action.order_type,
-                    client_order_id=client_oid,
-                )
-                if testnet_result and testnet_result.get("orderId"):
-                    remote_order_id = str(testnet_result.get("orderId"))
-                    remote_raw = testnet_result
-                    exec_qty = float(testnet_result.get("executedQty") or 0.0)
-                    avg_px = float(testnet_result.get("avgPrice") or 0.0)
-                    cum_quote = float(testnet_result.get("cumQuote") or 0.0)
-                    if exec_qty > 0:
-                        remote_filled_qty = exec_qty
-                        remote_filled_price = avg_px if avg_px > 0 else (cum_quote / exec_qty if cum_quote > 0 else target_price)
-                    logger.info("[Binance Testnet] 官方测试网报单成功: orderId=%s", remote_order_id)
-            except Exception as exc:
-                logger.error("[Binance Testnet] 测试网报单失败: %s", exc)
-                raise RuntimeError(f"Binance Futures 报单失败: {exc}") from exc
-
-        # 4. 本地结算 (以真实成交优先)
-        fill_price = remote_filled_price or target_price
-        quantity = remote_filled_qty or (size_usd / fill_price)
-        size_usd = quantity * fill_price
-        fee_rate = self.maker_fee_rate if action.order_type == "LIMIT" else self.taker_fee_rate
-        fee_usd = size_usd * fee_rate
-
-        pos = self._get_position(symbol)
-        realized_pnl = 0.0
-
-        if pos.side == PositionSide.FLAT or pos.quantity <= 0:
-            required_margin = size_usd / leverage
-            if (required_margin + fee_usd) > (self.cash_balance + 1e-6):
-                raise ValueError(
-                    f"账户资金不足: 当前可用现金 ${self.cash_balance:.2f}, "
-                    f"开仓所需保证金 ${required_margin:.2f} + 手续费 ${fee_usd:.2f}"
-                )
-            pos.side = requested_pos_side
-            pos.quantity = quantity
-            pos.entry_price = fill_price
-            pos.leverage = leverage
-            pos.margin_used = required_margin
-            self.cash_balance -= (required_margin + fee_usd)
-
-        elif pos.side == requested_pos_side:
-            additional_margin = size_usd / leverage
-            if (additional_margin + fee_usd) > (self.cash_balance + 1e-6):
-                raise ValueError(
-                    f"账户资金不足: 当前可用现金 ${self.cash_balance:.2f}, "
-                    f"加仓所需保证金 ${additional_margin:.2f} + 手续费 ${fee_usd:.2f}"
-                )
-            old_notional = pos.quantity * pos.entry_price
-            new_notional = quantity * fill_price
-            pos.quantity += quantity
-            pos.entry_price = (old_notional + new_notional) / pos.quantity
-            pos.margin_used += additional_margin
-            self.cash_balance -= (additional_margin + fee_usd)
-
-        else:
-            close_qty = min(pos.quantity, quantity)
-            if pos.side == PositionSide.LONG:
-                realized_pnl = (fill_price - pos.entry_price) * close_qty
-            else:
-                realized_pnl = (pos.entry_price - fill_price) * close_qty
-
-            margin_released = pos.margin_used * (close_qty / pos.quantity)
-            pos.margin_used -= margin_released
-            pos.quantity -= close_qty
-
-            self.cash_balance += (margin_released + realized_pnl - fee_usd)
-            self.cum_realized_pnl += realized_pnl
-
-            if pos.quantity <= 1e-8:
-                pos.side = PositionSide.FLAT
-                pos.quantity = 0.0
-                pos.entry_price = 0.0
-                pos.margin_used = 0.0
-
-        now_utc = datetime.now(timezone.utc)
-        trade_id = f"binance_trd_{now_utc.strftime('%Y%m%d%H%M%S')}_{uuid.uuid4().hex[:6]}"
-        order_id = remote_order_id or f"binance_ord_{uuid.uuid4().hex[:8]}"
-        self._orders_by_client_id[client_oid] = {
-            "order_id": order_id,
-            "client_order_id": client_oid,
-            "symbol": f"{symbol}USDT",
-            "side": order_side.value,
-            "status": (remote_raw or {}).get("status", "FILLED"),
-            "filled_qty": round(quantity, 6),
-            "avg_fill_price": round(fill_price, 4),
-        }
-
-        result = TradeExecutionResult(
-            trade_id=trade_id,
-            order_id=order_id,
-            proposal_id=proposal.proposal_id,
-            exchange=ExchangeType.BINANCE,
-            symbol=f"{symbol}USDT",
-            order_side=order_side,
-            position_side=requested_pos_side,
-            executed_price=round(fill_price, 4),
-            executed_quantity=round(quantity, 6),
-            executed_size_usd=round(size_usd, 2),
-            fee_usd=round(fee_usd, 4),
-            realized_pnl=round(realized_pnl, 4),
-            executed_at=now_utc,
-            raw_response={
-                "exchange": "BINANCE",
-                "mode": "SPOT_DEMO" if self.demo_mode else ("TESTNET" if self.testnet else "MAINNET"),
-                "sdk": "binance-futures-connector",
-                "simulated": not bool(remote_order_id),
-                "remote_order_id": remote_order_id,
-                "order_type": action.order_type,
-            },
-        )
-
-        self.trade_history.append(result)
-        logger.info(
-            "[Binance Adapter] 结算回报: %s, 标的=%s, 均价=$%.2f, 盈亏=$%.2f, 余额=$%.2f",
-            trade_id,
-            f"{symbol}USDT",
-            fill_price,
-            realized_pnl,
-            self.cash_balance,
-        )
-        return result
-
-    def update_market_price(self, symbol: str, current_price: float):
-        norm_sym = symbol.upper().replace("USDT", "")
-        if current_price > 0:
-            self._last_prices[norm_sym] = float(current_price)
-        pos = self._get_position(norm_sym)
-        if pos.side == PositionSide.FLAT or pos.quantity <= 0:
-            pos.unrealized_pnl = 0.0
-            return
-        if pos.side == PositionSide.LONG:
-            pos.unrealized_pnl = (current_price - pos.entry_price) * pos.quantity
-        elif pos.side == PositionSide.SHORT:
-            pos.unrealized_pnl = (pos.entry_price - current_price) * pos.quantity
-
     async def get_account_balance(self) -> Dict[str, float]:
-        """获取账户余额与总权益"""
-        if self.demo_mode and self.api_key and self.secret_key:
-            try:
-                acct = await self._signed_request("GET", "/api/v3/account", timeout=5.0)
-                usdt_free, usdt_locked, holdings = 0.0, 0.0, []
-                for b in acct.get("balances") or []:
-                    asset = str(b.get("asset") or "").upper()
-                    free_v, lock_v = float(b.get("free") or 0.0), float(b.get("locked") or 0.0)
-                    if asset == "USDT":
-                        usdt_free, usdt_locked = free_v, lock_v
-                    elif (free_v + lock_v) > 1e-6:
-                        holdings.append((asset, free_v + lock_v))
-                spot_val = 0.0
-                if holdings:
-                    prices = await self._fetch_demo_ticker_prices()
-                    spot_val = sum(amt * (prices.get(a) or self._last_prices.get(a) or 0.0) for a, amt in holdings)
-                total_eq = usdt_free + usdt_locked + spot_val
-                self.cash_balance = usdt_free
-                return {
-                    "total_equity": round(total_eq, 2),
-                    "cash_balance": round(usdt_free, 2),
-                    "margin_used": round(usdt_locked + spot_val, 2),
-                    "unrealized_pnl": 0.0,
-                    "realized_pnl_cum": round(self.cum_realized_pnl, 2),
-                }
-            except Exception as exc:
-                logger.warning("[Binance Spot Demo] 查询模拟盘余额失败，回落本地账本: %s", exc)
-
-        elif not self.demo_mode and bool(self.api_key and self.secret_key):
-            try:
-                if self._is_method_mocked(self._signed_request):
-                    acct = await self._signed_request("GET", "/fapi/v2/account", timeout=5.0)
-                elif self.um_client:
-                    acct = await self._run_sdk(self.um_client.account)
-                else:
-                    acct = await self._signed_request("GET", "/fapi/v2/account", timeout=5.0)
-
-                tot_equity = float(acct.get("totalMarginBalance") or acct.get("totalWalletBalance") or 0.0)
-                avail_cash = float(acct.get("availableBalance") or 0.0)
-                init_margin = float(acct.get("totalInitialMargin") or 0.0)
-                unrealized = float(acct.get("totalUnrealizedProfit") or 0.0)
-                self.cash_balance = avail_cash
-                return {
-                    "total_equity": round(tot_equity, 2),
-                    "cash_balance": round(avail_cash, 2),
-                    "margin_used": round(init_margin, 2),
-                    "unrealized_pnl": round(unrealized, 2),
-                    "realized_pnl_cum": round(self.cum_realized_pnl, 2),
-                }
-            except Exception as exc:
-                logger.warning("[Binance Futures] 获取合约余额异常，回落本地账本: %s", exc)
-
-        total_margin = sum(p.margin_used for p in self.positions.values())
-        total_unrealized = sum(p.unrealized_pnl for p in self.positions.values())
-        total_equity = self.cash_balance + total_margin + total_unrealized
+        self._require_credentials()
+        acct = await self._signed_request("GET", "/api/v3/account", timeout=5.0)
+        usdt_free, usdt_locked, holdings = 0.0, 0.0, []
+        for b in acct.get("balances") or []:
+            asset = str(b.get("asset") or "").upper()
+            free_v, lock_v = float(b.get("free") or 0.0), float(b.get("locked") or 0.0)
+            if asset == "USDT":
+                usdt_free, usdt_locked = free_v, lock_v
+            elif (free_v + lock_v) > 1e-8:
+                holdings.append((asset, free_v + lock_v))
+        spot_val = 0.0
+        if holdings:
+            prices = await self._fetch_ticker_prices()
+            spot_val = sum(amt * (prices.get(a) or self._last_prices.get(a) or 0.0) for a, amt in holdings)
+        total_eq = usdt_free + usdt_locked + spot_val
+        self.cash_balance = usdt_free
         return {
-            "total_equity": round(total_equity, 2),
-            "cash_balance": round(self.cash_balance, 2),
-            "margin_used": round(total_margin, 2),
-            "unrealized_pnl": round(total_unrealized, 2),
+            "total_equity": round(total_eq, 2),
+            "cash_balance": round(usdt_free, 2),
+            "margin_used": round(usdt_locked + spot_val, 2),
+            "unrealized_pnl": 0.0,
             "realized_pnl_cum": round(self.cum_realized_pnl, 2),
         }
 
     async def get_open_positions(self) -> List[Dict[str, Any]]:
-        """获取持仓风险列表"""
-        if self.demo_mode and self.api_key and self.secret_key:
+        self._require_credentials()
+        acct = await self._signed_request("GET", "/api/v3/account", timeout=5.0)
+        prices = await self._fetch_ticker_prices()
+        positions = []
+        for b in acct.get("balances") or []:
+            asset = str(b.get("asset") or "").upper()
+            if asset in ("USDT", "BUSD", "USDC", "FDUSD"):
+                continue
+            qty = float(b.get("free") or 0.0) + float(b.get("locked") or 0.0)
+            if qty <= 1e-8:
+                continue
+            px = prices.get(asset) or self._last_prices.get(asset) or 0.0
+            positions.append({
+                "symbol": f"{asset}USDT",
+                "side": "LONG",
+                "quantity": round(qty, 8),
+                "entry_price": round(px, 6),
+                "margin_used": round(qty * px, 2),
+                "unrealized_pnl": 0.0,
+                "leverage": 1.0,
+                "market_type": MarketType.SPOT.value,
+            })
+        return positions
+
+    async def query_order(
+        self,
+        symbol: str,
+        client_order_id: Optional[str] = None,
+        order_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        self._require_credentials()
+        norm_sym = self._binance_symbol(symbol)
+        params: Dict[str, Any] = {"symbol": norm_sym}
+        if order_id and str(order_id).isdigit():
+            params["orderId"] = int(order_id)
+        elif client_order_id:
+            params["origClientOrderId"] = client_order_id
+        else:
+            return {"found": False, "status": "NOT_FOUND", "client_order_id": client_order_id, "order_id": order_id}
+
+        try:
+            data = await self._signed_request("GET", "/api/v3/order", params, timeout=5.0)
+        except ValueError as err:
+            if "-2013" in str(err):
+                return {"found": False, "status": "NOT_FOUND", "client_order_id": client_order_id, "order_id": order_id}
+            raise
+
+        exec_qty = Decimal(str(data.get("executedQty") or "0"))
+        cum_quote = Decimal(str(data.get("cummulativeQuoteQty") or "0"))
+        avg_px = (cum_quote / exec_qty) if exec_qty > 0 and cum_quote > 0 else None
+        return {
+            "found": True,
+            "order_id": str(data.get("orderId", "")),
+            "client_order_id": data.get("clientOrderId", client_order_id),
+            "symbol": data.get("symbol", norm_sym),
+            "status": str(data.get("status", "UNKNOWN")).upper(),
+            "filled_qty": str(exec_qty),
+            "avg_fill_price": str(avg_px) if avg_px is not None else None,
+            "market_type": MarketType.SPOT.value,
+        }
+
+    async def cancel_order(
+        self,
+        symbol: str,
+        order_id: Optional[str] = None,
+        client_order_id: Optional[str] = None,
+    ) -> bool:
+        self._require_credentials()
+        norm_sym = self._binance_symbol(symbol)
+        params: Dict[str, Any] = {"symbol": norm_sym}
+        if order_id and str(order_id).isdigit():
+            params["orderId"] = int(order_id)
+        elif client_order_id:
+            params["origClientOrderId"] = client_order_id
+        else:
+            return False
+        await self._signed_request("DELETE", "/api/v3/order", params, timeout=5.0)
+        return True
+
+    async def cancel_all_orders(self, symbol: Optional[str] = None) -> bool:
+        self._require_credentials()
+        if not symbol:
+            return True
+        norm_sym = self._binance_symbol(symbol)
+        await self._signed_request("DELETE", "/api/v3/openOrders", {"symbol": norm_sym}, timeout=5.0)
+        return True
+
+    async def place_conditional_order(self, *args: Any, **kwargs: Any) -> Dict[str, Any]:
+        raise NotImplementedError("币安现货适配器不支持 U 本位合约原生 STOP_MARKET / reduceOnly 条件单")
+
+
+class BinanceUSDMFuturesAdapter(BinanceAdapterBase):
+    """
+    币安 U 本位永续合约执行适配器 (USDM_FUTURES · TESTNET / MAINNET)：
+    - 仅调用币安 U 本位合约官方 SDK (UMFutures) / `/fapi/v1/*`；
+    - 严禁现货路径、无凭证下单或回退到本地模拟成交；
+    - configure_credentials() 重建 UMFutures 客户端并清空持仓模式缓存。
+    """
+
+    def __init__(
+        self,
+        *,
+        execution_mode: ExecutionMode = ExecutionMode.TESTNET,
+        api_key: str = "",
+        secret_key: str = "",
+        initial_cash: float = 0.0,
+        rest_base: Optional[str] = None,
+    ):
+        self._dual_side_position: Optional[bool] = None
+        self.um_client: Optional[Any] = None
+        resolved_base = rest_base or (
+            BINANCE_FUTURES_TESTNET_REST
+            if execution_mode == ExecutionMode.TESTNET
+            else BINANCE_FUTURES_MAINNET_REST
+        )
+        super().__init__(
+            market_type=MarketType.USDM_FUTURES,
+            execution_mode=execution_mode,
+            rest_base=resolved_base,
+            api_key=api_key,
+            secret_key=secret_key,
+            initial_cash=initial_cash,
+        )
+
+    @property
+    def supports_native_conditional_orders(self) -> bool:
+        return True
+
+    def _reset_account_caches(self) -> None:
+        self._dual_side_position = None
+
+    def _rebuild_client(self) -> None:
+        if not UMFutures:
+            self.um_client = None
+            return
+        if self.api_key and self.secret_key:
+            self.um_client = UMFutures(key=self.api_key, secret=self.secret_key, base_url=self.rest_base)
+        else:
+            self.um_client = UMFutures(base_url=self.rest_base)
+
+    async def _run_sdk(self, func: Any, *args: Any, **kwargs: Any) -> Any:
+        try:
+            return await asyncio.to_thread(func, *args, **kwargs)
+        except ClientError as ce:
+            raise ValueError(f"Binance Futures SDK 拒单/客户端错误: {ce}") from ce
+        except ServerError as se:
+            raise httpx.ConnectError(f"Binance Futures SDK 服务端 5xx 异常: {se}") from se
+
+    async def get_dual_side_position(self) -> bool:
+        if self._dual_side_position is not None:
+            return self._dual_side_position
+        self._require_credentials()
+        if self._is_method_mocked(self._signed_request):
+            self._dual_side_position = False
+            return False
+        if self.um_client is not None:
             try:
-                acct = await self._signed_request("GET", "/api/v3/account", timeout=5.0)
-                prices = await self._fetch_demo_ticker_prices()
-                demo_pos = []
-                for b in acct.get("balances") or []:
-                    asset = str(b.get("asset") or "").upper()
-                    if asset in ("USDT", "BUSD", "USDC", "FDUSD"):
-                        continue
-                    qty = float(b.get("free") or 0.0) + float(b.get("locked") or 0.0)
-                    if qty <= 1e-6:
-                        continue
-                    px = prices.get(asset) or self._last_prices.get(asset) or 0.0
-                    lp = self.positions.get(asset)
-                    entry_px = lp.entry_price if (lp and lp.entry_price > 0) else px
-                    demo_pos.append({
-                        "symbol": f"{asset}USDT",
-                        "side": "LONG",
-                        "quantity": round(qty, 6),
-                        "entry_price": round(entry_px, 4),
-                        "margin_used": round(qty * px, 2),
-                        "unrealized_pnl": round((px - entry_px) * qty, 4) if (px > 0 and entry_px > 0) else 0.0,
-                        "leverage": 1.0,
-                    })
-                return demo_pos
+                res = await self._run_sdk(self.um_client.get_position_mode)
+                self._dual_side_position = bool(res.get("dualSidePosition", False))
+                return self._dual_side_position
             except Exception as exc:
-                logger.warning("[Binance Spot Demo] 查询现货模拟持仓失败: %s", exc)
+                logger.warning("[BinanceUSDMFutures] 探测持仓模式失败，默认单向模式(One-way): %s", exc)
+                self._dual_side_position = False
+                return False
+        self._dual_side_position = False
+        return False
 
-        elif not self.demo_mode and bool(self.api_key and self.secret_key):
-            try:
-                if self._is_method_mocked(self._signed_request):
-                    data = await self._signed_request("GET", "/fapi/v2/positionRisk", timeout=5.0)
-                elif self.um_client:
-                    data = await self._run_sdk(self.um_client.get_position_risk)
-                else:
-                    data = await self._signed_request("GET", "/fapi/v2/positionRisk", timeout=5.0)
+    async def _send_futures_order(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        if self._is_method_mocked(self._signed_request):
+            return await self._signed_request("POST", "/fapi/v1/order", params, timeout=5.0)
+        if self.um_client is not None:
+            return await self._run_sdk(self.um_client.new_order, **params)
+        return await self._signed_request("POST", "/fapi/v1/order", params, timeout=5.0)
 
-                fapi_pos = []
-                for p in (data or []):
-                    amt = float(p.get("positionAmt") or 0.0)
-                    if abs(amt) <= 1e-6:
-                        continue
-                    sym = str(p.get("symbol", "")).upper()
-                    entry_px = float(p.get("entryPrice") or 0.0)
-                    fapi_pos.append({
-                        "symbol": sym,
-                        "side": "LONG" if amt > 0 else "SHORT",
-                        "quantity": abs(amt),
-                        "entry_price": round(entry_px, 4),
-                        "margin_used": round(abs(amt) * entry_px / max(1.0, float(p.get("leverage") or 1.0)), 2),
-                        "unrealized_pnl": round(float(p.get("unRealizedProfit") or 0.0), 4),
-                        "leverage": float(p.get("leverage") or 1.0),
-                    })
-                return fapi_pos
-            except Exception as exc:
-                logger.warning("[Binance Futures] 查询合约持仓失败，回落本地账本: %s", exc)
+    async def submit_order(
+        self,
+        proposal: TradeProposal,
+        client_order_id: str,
+        requested_qty: Optional[Decimal] = None,
+    ) -> ExchangeOrderResult:
+        self._require_credentials()
+        action = proposal.trade_action
+        if action.market_type != MarketType.USDM_FUTURES:
+            raise ValueError(
+                f"市场路由不匹配: BinanceUSDMFuturesAdapter 仅接受 USDM_FUTURES，收到 {action.market_type.value}"
+            )
 
-        res = []
-        for p in self.positions.values():
-            if p.side != PositionSide.FLAT and p.quantity > 0:
-                res.append({
-                    "symbol": f"{p.symbol}USDT",
-                    "side": p.side.value,
-                    "quantity": p.quantity,
-                    "entry_price": p.entry_price,
-                    "margin_used": p.margin_used,
-                    "unrealized_pnl": p.unrealized_pnl,
-                    "leverage": p.leverage,
-                })
-        return res
+        binance_sym = self._binance_symbol(action.symbol)
+        req_qty = (
+            requested_qty
+            if requested_qty is not None
+            else Decimal(str(round(action.size_in_usd / action.target_price, 3)))
+        )
+        is_dual = await self.get_dual_side_position()
+        pos_side_param = ("LONG" if action.position_side == PositionSide.LONG else "SHORT") if is_dual else "BOTH"
+        order_type = action.order_type.upper()
+
+        params: Dict[str, Any] = {
+            "symbol": binance_sym,
+            "side": "BUY" if action.order_side == OrderSide.BUY else "SELL",
+            "positionSide": pos_side_param,
+            "type": order_type,
+            "quantity": self._dec_str(req_qty),
+            "newClientOrderId": client_order_id[:32],
+        }
+        if order_type == "LIMIT":
+            params["price"] = self._dec_str(Decimal(str(action.target_price)))
+            params["timeInForce"] = "GTC"
+        if not is_dual and action.reduce_only:
+            params["reduceOnly"] = "true"
+
+        resp = await self._send_futures_order(params)
+        if not isinstance(resp, dict) or not resp.get("orderId"):
+            raise RuntimeError(f"币安 U 本位合约下单响应缺少 orderId，拒绝伪造本地订单号: {resp}")
+
+        ex_order_id = str(resp["orderId"])
+        status_str = str(resp.get("status") or "NEW").upper()
+        filled_qty = Decimal(str(resp.get("executedQty") or "0"))
+        avg_px_raw = Decimal(str(resp.get("avgPrice") or "0"))
+        cum_quote = Decimal(str(resp.get("cumQuote") or "0"))
+
+        avg_fill_price: Optional[Decimal] = None
+        if filled_qty > 0:
+            if avg_px_raw > 0:
+                avg_fill_price = avg_px_raw
+            elif cum_quote > 0:
+                avg_fill_price = (cum_quote / filled_qty).quantize(Decimal("0.00000001"))
+
+        return ExchangeOrderResult(
+            client_order_id=str(resp.get("clientOrderId") or client_order_id),
+            exchange_order_id=ex_order_id,
+            status=status_str,
+            requested_qty=req_qty,
+            filled_qty=filled_qty,
+            avg_fill_price=avg_fill_price,
+            cumulative_quote_qty=cum_quote,
+            fee=None,
+            fee_asset="USDT",
+            raw_response=resp,
+            is_simulated=False,
+            market_type=MarketType.USDM_FUTURES,
+        )
+
+    async def execute_proposal(self, proposal: TradeProposal) -> TradeExecutionResult:
+        cid = (proposal.idempotency_key or f"hd_fu_{uuid.uuid4().hex[:14]}")[:32]
+        order_res = await self.submit_order(proposal, client_order_id=cid)
+        if order_res.filled_qty <= 0 or order_res.avg_fill_price is None:
+            raise RuntimeError(
+                f"币安合约订单尚未成交 (orderId={order_res.exchange_order_id}, status={order_res.status}, filled_qty={order_res.filled_qty})"
+            )
+        trade = TradeExecutionResult(
+            trade_id=f"bn_fut_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}_{uuid.uuid4().hex[:6]}",
+            order_id=order_res.exchange_order_id or cid,
+            proposal_id=proposal.proposal_id,
+            exchange=ExchangeType.BINANCE,
+            market_type=MarketType.USDM_FUTURES,
+            symbol=self._binance_symbol(proposal.trade_action.symbol),
+            order_side=proposal.trade_action.order_side,
+            position_side=proposal.trade_action.position_side,
+            executed_price=float(order_res.avg_fill_price),
+            executed_quantity=float(order_res.filled_qty),
+            executed_size_usd=float(order_res.cumulative_quote_qty or (order_res.filled_qty * order_res.avg_fill_price)),
+            fee_usd=float(order_res.fee or Decimal("0")),
+            realized_pnl=0.0,
+            raw_response=order_res.raw_response,
+        )
+        self.trade_history.append(trade)
+        return trade
+
+    async def get_account_balance(self) -> Dict[str, float]:
+        self._require_credentials()
+        if self._is_method_mocked(self._signed_request):
+            acct = await self._signed_request("GET", "/fapi/v2/account", timeout=5.0)
+        elif self.um_client is not None:
+            acct = await self._run_sdk(self.um_client.account)
+        else:
+            acct = await self._signed_request("GET", "/fapi/v2/account", timeout=5.0)
+
+        tot_equity = float(acct.get("totalMarginBalance") or acct.get("totalWalletBalance") or 0.0)
+        avail_cash = float(acct.get("availableBalance") or 0.0)
+        init_margin = float(acct.get("totalInitialMargin") or 0.0)
+        unrealized = float(acct.get("totalUnrealizedProfit") or 0.0)
+        self.cash_balance = avail_cash
+        return {
+            "total_equity": round(tot_equity, 2),
+            "cash_balance": round(avail_cash, 2),
+            "margin_used": round(init_margin, 2),
+            "unrealized_pnl": round(unrealized, 2),
+            "realized_pnl_cum": round(self.cum_realized_pnl, 2),
+        }
+
+    async def get_open_positions(self) -> List[Dict[str, Any]]:
+        self._require_credentials()
+        if self._is_method_mocked(self._signed_request):
+            data = await self._signed_request("GET", "/fapi/v2/positionRisk", timeout=5.0)
+        elif self.um_client is not None:
+            data = await self._run_sdk(self.um_client.get_position_risk)
+        else:
+            data = await self._signed_request("GET", "/fapi/v2/positionRisk", timeout=5.0)
+
+        fapi_pos = []
+        for p in data or []:
+            amt = float(p.get("positionAmt") or 0.0)
+            if abs(amt) <= 1e-8:
+                continue
+            sym = str(p.get("symbol", "")).upper()
+            entry_px = float(p.get("entryPrice") or 0.0)
+            lev = max(1.0, float(p.get("leverage") or 1.0))
+            fapi_pos.append({
+                "symbol": sym,
+                "side": "LONG" if amt > 0 else "SHORT",
+                "quantity": abs(amt),
+                "entry_price": round(entry_px, 6),
+                "margin_used": round(abs(amt) * entry_px / lev, 2),
+                "unrealized_pnl": round(float(p.get("unRealizedProfit") or 0.0), 4),
+                "leverage": lev,
+                "market_type": MarketType.USDM_FUTURES.value,
+            })
+        return fapi_pos
 
     async def place_conditional_order(
         self,
@@ -628,179 +723,44 @@ class BinanceExecutionAdapter(BaseExecutionAdapter):
         working_type: str = "MARK_PRICE",
         client_order_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """挂载原生条件止损/止盈单"""
-        norm_sym = symbol.upper().replace("USDT", "")
-        binance_sym = f"{norm_sym}USDT"
-        cid = client_order_id or f"bn_cond_{uuid.uuid4().hex[:10]}"
-        ex_order_id = f"binance_cond_{uuid.uuid4().hex[:8]}"
+        self._require_credentials()
+        binance_sym = self._binance_symbol(symbol)
+        cid = (client_order_id or f"bn_cond_{uuid.uuid4().hex[:10]}")[:32]
+        futures_type = "STOP_MARKET" if "STOP" in order_type.upper() else "TAKE_PROFIT_MARKET"
+        is_dual = await self.get_dual_side_position()
+        pos_side_param = ("LONG" if position_side == PositionSide.LONG else "SHORT") if is_dual else "BOTH"
 
-        # 主网实盘条件单挂单
-        if not self.demo_mode and not self.testnet:
-            if not self.api_key or not self.secret_key:
-                raise RuntimeError("Binance MAINNET 实盘交易模式必须配置有效 api_key 与 secret_key，拒绝提交未授权条件单")
-            try:
-                futures_type = "STOP_MARKET" if "STOP" in order_type.upper() else "TAKE_PROFIT_MARKET"
-                is_dual = await self.get_dual_side_position()
-                pos_side_param = ("LONG" if position_side == PositionSide.LONG else "SHORT") if is_dual else "BOTH"
+        cond_params: Dict[str, Any] = {
+            "symbol": binance_sym,
+            "side": side.value,
+            "positionSide": pos_side_param,
+            "type": futures_type,
+            "stopPrice": self._dec_str(Decimal(str(trigger_price))),
+            "quantity": self._dec_str(Decimal(str(quantity))),
+            "workingType": working_type,
+            "newClientOrderId": cid,
+        }
+        if not is_dual and reduce_only:
+            cond_params["reduceOnly"] = "true"
 
-                cond_params: Dict[str, Any] = {
-                    "symbol": binance_sym,
-                    "side": side.value,
-                    "positionSide": pos_side_param,
-                    "type": futures_type,
-                    "stopPrice": round(trigger_price, 2),
-                    "quantity": round(quantity, 3),
-                    "workingType": working_type,
-                    "newClientOrderId": cid[:32],
-                }
-                if not is_dual and reduce_only:
-                    cond_params["reduceOnly"] = "true"
+        data = await self._send_futures_order(cond_params)
+        if not isinstance(data, dict) or not data.get("orderId"):
+            raise RuntimeError(f"币安合约条件单响应缺少 orderId: {data}")
 
-                if self._is_method_mocked(self._signed_request):
-                    data = await self._signed_request("POST", "/fapi/v1/order", cond_params, timeout=5.0)
-                elif self.um_client:
-                    data = await self._run_sdk(self.um_client.new_order, **cond_params)
-                else:
-                    data = await self._signed_request("POST", "/fapi/v1/order", cond_params, timeout=5.0)
-
-                if data and data.get("orderId"):
-                    ex_order_id = str(data["orderId"])
-                logger.info("[Binance Mainnet] 官方主网条件单挂单成功: orderId=%s", ex_order_id)
-            except Exception as exc:
-                logger.error("[Binance Mainnet] 官方主网条件单挂单失败: %s", exc)
-                raise RuntimeError(f"Binance MAINNET 条件单挂单失败: {exc}") from exc
-
-        # 现货 Demo
-        elif self.demo_mode and self.api_key and self.secret_key:
-            try:
-                spot_type = "STOP_LOSS_LIMIT" if "STOP" in order_type.upper() else "TAKE_PROFIT_LIMIT"
-                limit_px = round(trigger_price * (0.998 if side == OrderSide.SELL else 1.002), 2)
-                qty_str = f"{round(quantity, 5):.5f}".rstrip("0").rstrip(".")
-                data = await self._signed_request(
-                    "POST",
-                    "/api/v3/order",
-                    {
-                        "symbol": binance_sym,
-                        "side": side.value,
-                        "type": spot_type,
-                        "timeInForce": "GTC",
-                        "quantity": qty_str,
-                        "price": f"{limit_px:.2f}",
-                        "stopPrice": f"{round(trigger_price, 2):.2f}",
-                        "newClientOrderId": cid[:32],
-                    },
-                    timeout=5.0,
-                )
-                if data.get("orderId"):
-                    ex_order_id = str(data["orderId"])
-            except Exception as exc:
-                logger.warning("[Binance Spot Demo] 条件保护单提交告警: %s", exc)
-
-        # 合约测试网
-        elif self.api_key and self.secret_key and self.testnet:
-            try:
-                futures_type = "STOP_MARKET" if "STOP" in order_type.upper() else "TAKE_PROFIT_MARKET"
-                is_dual = await self.get_dual_side_position()
-                pos_side_param = ("LONG" if position_side == PositionSide.LONG else "SHORT") if is_dual else "BOTH"
-
-                cond_params = {
-                    "symbol": binance_sym,
-                    "side": side.value,
-                    "positionSide": pos_side_param,
-                    "type": futures_type,
-                    "stopPrice": round(trigger_price, 2),
-                    "quantity": round(quantity, 3),
-                    "workingType": working_type,
-                    "newClientOrderId": cid[:32],
-                }
-                if not is_dual and reduce_only:
-                    cond_params["reduceOnly"] = "true"
-
-                if self._is_method_mocked(self._signed_request):
-                    data = await self._signed_request("POST", "/fapi/v1/order", cond_params, timeout=5.0)
-                elif self.um_client:
-                    data = await self._run_sdk(self.um_client.new_order, **cond_params)
-                else:
-                    data = await self._signed_request("POST", "/fapi/v1/order", cond_params, timeout=5.0)
-
-                if data and data.get("orderId"):
-                    ex_order_id = str(data["orderId"])
-            except Exception as exc:
-                logger.error("[Binance Testnet] 条件保护单提交失败: %s", exc)
-                raise RuntimeError(f"Binance Futures 条件保护单挂载失败: {exc}") from exc
-
-        rec = {
-            "order_id": ex_order_id,
-            "client_order_id": cid,
+        return {
+            "order_id": str(data["orderId"]),
+            "client_order_id": str(data.get("clientOrderId") or cid),
             "symbol": binance_sym,
             "side": side.value,
             "position_side": position_side.value,
-            "order_type": order_type,
+            "order_type": futures_type,
             "trigger_price": float(trigger_price),
             "quantity": float(quantity),
             "reduce_only": bool(reduce_only),
             "working_type": working_type,
-            "status": "SUBMITTED",
+            "status": str(data.get("status") or "NEW").upper(),
+            "market_type": MarketType.USDM_FUTURES.value,
         }
-        self.conditional_orders[cid] = rec
-        self._orders_by_client_id[cid] = rec
-        return rec
-
-    async def cancel_order(
-        self,
-        symbol: str,
-        order_id: Optional[str] = None,
-        client_order_id: Optional[str] = None,
-    ) -> bool:
-        """撤销指定订单"""
-        norm_sym = f"{symbol.upper().replace('USDT', '')}USDT"
-        if self.demo_mode and self.api_key and self.secret_key and (order_id or client_order_id):
-            try:
-                params: Dict[str, Any] = {"symbol": norm_sym}
-                if order_id and str(order_id).isdigit():
-                    params["orderId"] = int(order_id)
-                elif client_order_id:
-                    params["origClientOrderId"] = client_order_id
-                await self._signed_request("DELETE", "/api/v3/order", params, timeout=5.0)
-            except Exception as exc:
-                logger.warning("[Binance Spot Demo] 远程撤单告警: %s", exc)
-
-        elif not self.demo_mode and self.api_key and self.secret_key and (order_id or client_order_id):
-            try:
-                params = {"symbol": norm_sym}
-                if order_id and str(order_id).isdigit():
-                    params["orderId"] = int(order_id)
-                elif client_order_id:
-                    params["origClientOrderId"] = client_order_id
-
-                if self._is_method_mocked(self._signed_request):
-                    await self._signed_request("DELETE", "/fapi/v1/order", params, timeout=5.0)
-                elif self.um_client:
-                    kwargs = {"symbol": norm_sym}
-                    if order_id and str(order_id).isdigit():
-                        kwargs["orderId"] = int(order_id)
-                    elif client_order_id:
-                        kwargs["origClientOrderId"] = client_order_id
-                    await self._run_sdk(self.um_client.cancel_order, **kwargs)
-                else:
-                    await self._signed_request("DELETE", "/fapi/v1/order", params, timeout=5.0)
-                logger.info("[Binance Futures] 远程撤单成功: %s", order_id or client_order_id)
-            except Exception as exc:
-                if not self.testnet:
-                    raise RuntimeError(f"Binance MAINNET 撤单失败: {exc}") from exc
-                logger.warning("[Binance Futures Testnet] 远程撤单告警: %s", exc)
-
-        if client_order_id and client_order_id in self.conditional_orders:
-            self.conditional_orders[client_order_id]["status"] = "CANCELED"
-            self.conditional_orders.pop(client_order_id, None)
-            return True
-        if order_id:
-            for cid, rec in list(self.conditional_orders.items()):
-                if rec.get("order_id") == order_id:
-                    rec["status"] = "CANCELED"
-                    self.conditional_orders.pop(cid, None)
-                    return True
-        return True
 
     async def query_order(
         self,
@@ -808,106 +768,79 @@ class BinanceExecutionAdapter(BaseExecutionAdapter):
         client_order_id: Optional[str] = None,
         order_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """查询订单状态"""
-        norm_sym = f"{symbol.upper().replace('USDT', '')}USDT"
-        if self.demo_mode and self.api_key and self.secret_key and (order_id or client_order_id):
-            try:
-                params: Dict[str, Any] = {"symbol": norm_sym}
-                if order_id and str(order_id).isdigit():
-                    params["orderId"] = int(order_id)
-                elif client_order_id:
-                    params["origClientOrderId"] = client_order_id
-                data = await self._signed_request("GET", "/api/v3/order", params, timeout=5.0)
-                exec_qty = float(data.get("executedQty") or 0.0)
-                cum_quote = float(data.get("cummulativeQuoteQty") or 0.0)
-                avg_px = (cum_quote / exec_qty) if exec_qty > 0 else float(data.get("price") or 0.0)
-                return {
-                    "found": True,
-                    "order_id": str(data.get("orderId", "")),
-                    "client_order_id": data.get("clientOrderId", client_order_id),
-                    "symbol": data.get("symbol", norm_sym),
-                    "status": str(data.get("status", "UNKNOWN")).upper(),
-                    "filled_qty": str(exec_qty),
-                    "avg_fill_price": str(round(avg_px, 4)),
-                }
-            except Exception as exc:
-                logger.warning("[Binance Spot Demo] 查询远程订单状态失败: %s", exc)
+        self._require_credentials()
+        norm_sym = self._binance_symbol(symbol)
+        params: Dict[str, Any] = {"symbol": norm_sym}
+        if order_id and str(order_id).isdigit():
+            params["orderId"] = int(order_id)
+        elif client_order_id:
+            params["origClientOrderId"] = client_order_id
+        else:
+            return {"found": False, "status": "NOT_FOUND", "client_order_id": client_order_id, "order_id": order_id}
 
-        elif not self.demo_mode and self.api_key and self.secret_key and (order_id or client_order_id):
-            try:
-                params = {"symbol": norm_sym}
-                if order_id and str(order_id).isdigit():
-                    params["orderId"] = int(order_id)
-                elif client_order_id:
-                    params["origClientOrderId"] = client_order_id
+        try:
+            if self._is_method_mocked(self._signed_request):
+                data = await self._signed_request("GET", "/fapi/v1/order", params, timeout=5.0)
+            elif self.um_client is not None:
+                data = await self._run_sdk(self.um_client.query_order, **params)
+            else:
+                data = await self._signed_request("GET", "/fapi/v1/order", params, timeout=5.0)
+        except ValueError as err:
+            if "-2013" in str(err):
+                return {"found": False, "status": "NOT_FOUND", "client_order_id": client_order_id, "order_id": order_id}
+            raise
 
-                if self._is_method_mocked(self._signed_request):
-                    data = await self._signed_request("GET", "/fapi/v1/order", params, timeout=5.0)
-                elif self.um_client:
-                    kwargs = {"symbol": norm_sym}
-                    if order_id and str(order_id).isdigit():
-                        kwargs["orderId"] = int(order_id)
-                    elif client_order_id:
-                        kwargs["origClientOrderId"] = client_order_id
-                    data = await self._run_sdk(self.um_client.query_order, **kwargs)
-                else:
-                    data = await self._signed_request("GET", "/fapi/v1/order", params, timeout=5.0)
+        exec_qty = Decimal(str(data.get("executedQty") or "0"))
+        avg_px = Decimal(str(data.get("avgPrice") or "0"))
+        cum_quote = Decimal(str(data.get("cumQuote") or "0"))
+        fill_px: Optional[Decimal] = None
+        if exec_qty > 0:
+            fill_px = avg_px if avg_px > 0 else ((cum_quote / exec_qty) if cum_quote > 0 else None)
 
-                exec_qty = float(data.get("executedQty") or 0.0)
-                avg_px = float(data.get("avgPrice") or 0.0)
-                cum_quote = float(data.get("cumQuote") or 0.0)
-                fill_px = avg_px if avg_px > 0 else ((cum_quote / exec_qty) if exec_qty > 0 else float(data.get("price") or 0.0))
-                return {
-                    "found": True,
-                    "order_id": str(data.get("orderId", "")),
-                    "client_order_id": data.get("clientOrderId", client_order_id),
-                    "symbol": data.get("symbol", norm_sym),
-                    "status": str(data.get("status", "UNKNOWN")).upper(),
-                    "filled_qty": str(exec_qty),
-                    "avg_fill_price": str(round(fill_px, 4)),
-                }
-            except Exception as exc:
-                logger.warning("[Binance Futures] 查询远程订单异常: %s", exc)
+        return {
+            "found": True,
+            "order_id": str(data.get("orderId", "")),
+            "client_order_id": data.get("clientOrderId", client_order_id),
+            "symbol": data.get("symbol", norm_sym),
+            "status": str(data.get("status", "UNKNOWN")).upper(),
+            "filled_qty": str(exec_qty),
+            "avg_fill_price": str(fill_px) if fill_px is not None else None,
+            "market_type": MarketType.USDM_FUTURES.value,
+        }
 
-        if client_order_id and client_order_id in self._orders_by_client_id:
-            return {"found": True, **self._orders_by_client_id[client_order_id]}
-        if order_id:
-            for rec in self._orders_by_client_id.values():
-                if rec.get("order_id") == order_id:
-                    return {"found": True, **rec}
-        return {"found": False, "status": "NOT_FOUND", "client_order_id": client_order_id, "order_id": order_id}
+    async def cancel_order(
+        self,
+        symbol: str,
+        order_id: Optional[str] = None,
+        client_order_id: Optional[str] = None,
+    ) -> bool:
+        self._require_credentials()
+        norm_sym = self._binance_symbol(symbol)
+        params: Dict[str, Any] = {"symbol": norm_sym}
+        if order_id and str(order_id).isdigit():
+            params["orderId"] = int(order_id)
+        elif client_order_id:
+            params["origClientOrderId"] = client_order_id
+        else:
+            return False
+
+        if self._is_method_mocked(self._signed_request):
+            await self._signed_request("DELETE", "/fapi/v1/order", params, timeout=5.0)
+        elif self.um_client is not None:
+            await self._run_sdk(self.um_client.cancel_order, **params)
+        else:
+            await self._signed_request("DELETE", "/fapi/v1/order", params, timeout=5.0)
+        return True
 
     async def cancel_all_orders(self, symbol: Optional[str] = None) -> bool:
-        """撤销指定或所有挂单"""
-        norm_sym = f"{symbol.upper().replace('USDT', '')}USDT" if symbol else None
-        if self.demo_mode and self.api_key and self.secret_key and norm_sym:
-            try:
-                await self._signed_request("DELETE", "/api/v3/openOrders", {"symbol": norm_sym}, timeout=5.0)
-            except Exception as exc:
-                logger.warning("[Binance Spot Demo] 远程全撤单告警: %s", exc)
-
-        elif not self.demo_mode and self.api_key and self.secret_key and norm_sym:
-            try:
-                if self._is_method_mocked(self._signed_request):
-                    await self._signed_request("DELETE", "/fapi/v1/allOpenOrders", {"symbol": norm_sym}, timeout=5.0)
-                elif self.um_client:
-                    await self._run_sdk(self.um_client.cancel_open_orders, symbol=norm_sym)
-                else:
-                    await self._signed_request("DELETE", "/fapi/v1/allOpenOrders", {"symbol": norm_sym}, timeout=5.0)
-                logger.info("[Binance Futures] 远程全撤单成功: %s", norm_sym)
-            except Exception as exc:
-                if not self.testnet:
-                    raise RuntimeError(f"Binance MAINNET 全撤单失败: {exc}") from exc
-                logger.warning("[Binance Futures Testnet] 远程全撤单告警: %s", exc)
-
-        if symbol:
-            norm = f"{symbol.upper().replace('USDT', '')}USDT"
-            for cid, rec in list(self.conditional_orders.items()):
-                if rec.get("symbol") == norm:
-                    rec["status"] = "CANCELED"
-                    self.conditional_orders.pop(cid, None)
+        self._require_credentials()
+        if not symbol:
+            return True
+        norm_sym = self._binance_symbol(symbol)
+        if self._is_method_mocked(self._signed_request):
+            await self._signed_request("DELETE", "/fapi/v1/allOpenOrders", {"symbol": norm_sym}, timeout=5.0)
+        elif self.um_client is not None:
+            await self._run_sdk(self.um_client.cancel_open_orders, symbol=norm_sym)
         else:
-            for rec in self.conditional_orders.values():
-                rec["status"] = "CANCELED"
-            self.conditional_orders.clear()
+            await self._signed_request("DELETE", "/fapi/v1/allOpenOrders", {"symbol": norm_sym}, timeout=5.0)
         return True

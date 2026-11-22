@@ -23,13 +23,15 @@ from datetime import datetime, timezone
 from unittest.mock import AsyncMock, patch
 
 from heimdall.execution.binance import (
-    BinanceExecutionAdapter,
+    BinanceUSDMFuturesAdapter,
     BINANCE_FUTURES_MAINNET_REST,
 )
 from heimdall.backtest import BacktestBroker, HistoricalDataFeed
 from heimdall.models.schemas import (
     ExchangeType,
+    ExecutionMode,
     MarketContext,
+    MarketType,
     OrderSide,
     PositionSide,
     TradeAction,
@@ -44,11 +46,10 @@ from heimdall.models.schemas import (
 @pytest.mark.asyncio
 async def test_binance_mainnet_requires_api_keys():
     """验证 MAINNET 模式在未注入密钥时必须拒绝执行，防止伪装实盘成交"""
-    adapter = BinanceExecutionAdapter(
+    adapter = BinanceUSDMFuturesAdapter(
+        execution_mode=ExecutionMode.MAINNET,
         api_key="",
         secret_key="",
-        testnet=False,
-        demo_mode=False,
     )
     assert adapter.rest_base == BINANCE_FUTURES_MAINNET_REST
 
@@ -58,6 +59,7 @@ async def test_binance_mainnet_requires_api_keys():
         market_context=MarketContext(regime="TREND_UP"),
         trade_action=TradeAction(
             exchange=ExchangeType.BINANCE,
+            market_type=MarketType.USDM_FUTURES,
             symbol="BTC",
             position_side=PositionSide.LONG,
             order_side=OrderSide.BUY,
@@ -68,11 +70,10 @@ async def test_binance_mainnet_requires_api_keys():
         ),
     )
 
-    # 未配置 API Key 时必须抛出 RuntimeError，禁止静默模拟
-    with pytest.raises(RuntimeError, match="Binance MAINNET 实盘交易模式必须配置有效 api_key"):
-        await adapter.execute_proposal(prop)
+    with pytest.raises(RuntimeError, match="缺少有效 API 凭证"):
+        await adapter.submit_order(prop, client_order_id="cid_mn_fail")
 
-    with pytest.raises(RuntimeError, match="Binance MAINNET 实盘交易模式必须配置有效 api_key"):
+    with pytest.raises(RuntimeError, match="缺少有效 API 凭证"):
         await adapter.place_conditional_order(
             symbol="BTCUSDT",
             side=OrderSide.SELL,
@@ -86,11 +87,10 @@ async def test_binance_mainnet_requires_api_keys():
 @pytest.mark.asyncio
 async def test_binance_mainnet_remote_failure_never_falls_back_to_paper():
     """验证 MAINNET 模式发单遇到远程网络或 API 错误时，严禁静默回退为本地撮合"""
-    adapter = BinanceExecutionAdapter(
+    adapter = BinanceUSDMFuturesAdapter(
+        execution_mode=ExecutionMode.MAINNET,
         api_key="real_key_mock",
         secret_key="real_secret_mock",
-        testnet=False,
-        demo_mode=False,
     )
 
     prop = TradeProposal(
@@ -99,6 +99,7 @@ async def test_binance_mainnet_remote_failure_never_falls_back_to_paper():
         market_context=MarketContext(regime="TREND_UP"),
         trade_action=TradeAction(
             exchange=ExchangeType.BINANCE,
+            market_type=MarketType.USDM_FUTURES,
             symbol="BTC",
             position_side=PositionSide.LONG,
             order_side=OrderSide.BUY,
@@ -109,24 +110,20 @@ async def test_binance_mainnet_remote_failure_never_falls_back_to_paper():
         ),
     )
 
-    with patch.object(adapter, "_signed_request", side_effect=RuntimeError("Binance API 错误 (HTTP 400, code=-2010): Account has insufficient balance")):
-        with pytest.raises(RuntimeError, match="Binance MAINNET 实盘发单失败"):
-            await adapter.execute_proposal(prop)
+    with patch.object(adapter, "_signed_request", side_effect=ValueError("Binance API 拒单/错误 (HTTP 400, code=-2010): Account has insufficient balance")):
+        with pytest.raises(ValueError, match="insufficient balance"):
+            await adapter.submit_order(prop, client_order_id="cid_mn_err")
 
-    # 验证本地账本未被错误记为已成交
     assert len(adapter.trade_history) == 0
-    pos = adapter.positions.get("BTC")
-    assert pos is None or pos.side == PositionSide.FLAT
 
 
 @pytest.mark.asyncio
 async def test_binance_mainnet_order_submission_success():
     """验证 MAINNET 模式正常发单对接 /fapi/v1/order 并确认成交数据"""
-    adapter = BinanceExecutionAdapter(
+    adapter = BinanceUSDMFuturesAdapter(
+        execution_mode=ExecutionMode.MAINNET,
         api_key="real_key_mock",
         secret_key="real_secret_mock",
-        testnet=False,
-        demo_mode=False,
     )
 
     mock_resp = {
@@ -147,6 +144,7 @@ async def test_binance_mainnet_order_submission_success():
         market_context=MarketContext(regime="TREND_UP"),
         trade_action=TradeAction(
             exchange=ExchangeType.BINANCE,
+            market_type=MarketType.USDM_FUTURES,
             symbol="BTC",
             position_side=PositionSide.LONG,
             order_side=OrderSide.BUY,
@@ -162,8 +160,6 @@ async def test_binance_mainnet_order_submission_success():
         assert result.order_id == "987654321"
         assert result.executed_price == 65120.50
         assert result.executed_quantity == 0.015
-        assert result.raw_response["simulated"] is False
-        assert result.raw_response["mode"] == "MAINNET"
         mock_api.assert_called_once()
         args, kwargs = mock_api.call_args
         assert args[0] == "POST"

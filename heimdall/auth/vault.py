@@ -376,3 +376,82 @@ async def test_key_connectivity(provider: str, credentials: Dict[str, Any]) -> T
 
 # 全局单例金库实例
 crypto_vault = CryptoVault()
+
+
+def extract_credential_scope(
+    provider: str,
+    creds: Dict[str, Any],
+) -> Tuple[Optional[str], Optional[str]]:
+    """
+    从解密后的凭证字典中提取 `(market_type, execution_mode)`。
+    严格规则：不做现货与合约、测试网与实盘之间的隐式回退。
+    """
+    raw_mt = str(creds.get("market_type") or "").upper().strip()
+    raw_em = str(creds.get("execution_mode") or "").upper().strip()
+
+    prov = str(provider or "").lower().strip()
+    if not raw_mt and prov == "hyperliquid":
+        raw_mt = "USDM_FUTURES"
+
+    if not raw_em:
+        if "is_testnet" in creds:
+            raw_em = "TESTNET" if bool(creds.get("is_testnet")) else "MAINNET"
+        else:
+            mode_legacy = str(creds.get("mode") or "").upper().strip()
+            if mode_legacy in ("TESTNET", "MAINNET"):
+                raw_em = mode_legacy
+
+    return (raw_mt or None), (raw_em or None)
+
+
+async def resolve_exchange_credentials(
+    *,
+    owner_wallet: str,
+    provider: str,
+    market_type: str,
+    execution_mode: str,
+    db: Optional[Any] = None,
+) -> Optional[Dict[str, Any]]:
+    """
+    严格按 `owner_wallet + provider + market_type + execution_mode + is_active` 精确匹配交易所凭证。
+    找不到精确匹配项时返回 None，严禁从现货凭证回退到合约凭证，或从测试网回退到实盘。
+    """
+    clean_wallet = (owner_wallet or "").strip().lower()
+    clean_provider = (provider or "").strip().lower()
+    target_mt = str(market_type or "").upper().strip()
+    target_em = str(execution_mode or "").upper().strip()
+
+    if not clean_wallet or clean_wallet == "system" or target_em not in ("TESTNET", "MAINNET"):
+        return None
+
+    target_db = db
+    if target_db is None:
+        from heimdall.database.db import db_manager
+        target_db = db_manager
+
+    rows = await target_db.execute_query(
+        "SELECT key_id, provider, label, encrypted_data FROM user_api_keys "
+        "WHERE LOWER(wallet_address) = ? AND is_active = 1 AND LOWER(provider) = ? "
+        "ORDER BY updated_at DESC",
+        (clean_wallet, clean_provider),
+    )
+    for row in rows:
+        enc = row.get("encrypted_data")
+        if not enc:
+            continue
+        try:
+            creds = crypto_vault.decrypt_payload(enc)
+        except Exception:
+            continue
+        cred_mt, cred_em = extract_credential_scope(clean_provider, creds)
+        if cred_mt == target_mt and cred_em == target_em:
+            return {
+                "key_id": row.get("key_id"),
+                "label": row.get("label"),
+                "provider": clean_provider,
+                "market_type": cred_mt,
+                "execution_mode": cred_em,
+                "credentials": creds,
+            }
+    return None
+

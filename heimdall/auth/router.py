@@ -24,6 +24,7 @@ from heimdall.auth.vault import (
     generate_siwe_message,
     verify_wallet_signature,
     test_key_connectivity,
+    extract_credential_scope,
 )
 from heimdall.auth.dependencies import require_authenticated_wallet
 
@@ -183,19 +184,23 @@ async def list_vault_keys(
         enc = item.pop("encrypted_data", None)
         prov = str(item.get("provider") or "").lower()
         is_testnet = prov == "binance_demo"
+        cred_mt, cred_em = None, None
         if enc:
             try:
                 creds = crypto_vault.decrypt_payload(enc)
+                cred_mt, cred_em = extract_credential_scope(prov, creds)
                 if prov in ("binance", "binance_demo"):
                     if "is_testnet" in creds:
                         is_testnet = bool(creds.get("is_testnet"))
-                    elif str(creds.get("mode", "")).lower() in ("demo", "testnet"):
+                    elif cred_em == "TESTNET" or str(creds.get("mode", "")).lower() in ("demo", "testnet"):
                         is_testnet = True
                 if item.get("category") == "llms" or prov in ("custom", "openai_compatible", "deepseek", "openai", "anthropic", "gemini"):
                     item["model"] = creds.get("model") or ""
                     item["base_url"] = creds.get("base_url") or ""
             except Exception:
                 pass
+        item["market_type"] = cred_mt
+        item["execution_mode"] = cred_em
         item["is_testnet"] = is_testnet
         item["is_active"] = bool(item.get("is_active", 1))
         sanitized.append(item)
@@ -392,17 +397,18 @@ async def update_vault_key(
         (new_label, new_mask, new_encrypted, now_iso, key_id),
     )
 
-    # 若当前密钥处于激活生效状态，触发热重载
+    # 若当前密钥处于激活生效状态，触发热重载（同时通过 configure_credentials 重建交易所 SDK 客户端）
     if bool(row.get("is_active")):
         try:
-            from heimdall.engine.bot_manager import bot_manager
-            if hasattr(bot_manager, "llm_service") and bot_manager.llm_service:
-                await bot_manager.llm_service.ensure_credentials(force_refresh=True, owner_wallet=caller_wallet)
-            for bot in bot_manager.active_bots.values():
-                if hasattr(bot, "pipeline") and hasattr(bot.pipeline, "llm"):
-                    await bot.pipeline.llm.ensure_credentials(force_refresh=True, owner_wallet=caller_wallet)
+            from heimdall.api.server import bot_manager
+            for bot in bot_manager.bots.values():
+                if bot.owner_wallet == caller_wallet:
+                    if hasattr(bot, "llm_service") and bot.llm_service:
+                        await bot.llm_service.ensure_credentials(force_refresh=True, owner_wallet=caller_wallet)
+                    if bot.exchange.value.lower() == str(row.get("provider") or "").lower():
+                        await bot.hydrate_exchange_credentials_from_vault(force_refresh=True)
         except Exception as e:
-            logger.debug("动态热重载活跃 Bot 的 LLM 凭证告警: %s", e)
+            logger.debug("动态热重载活跃 Bot 凭证告警: %s", e)
 
     logger.info(
         "[密钥配置更新] 钱包=%s | key_id=%s | model=%s | base_url=%s",

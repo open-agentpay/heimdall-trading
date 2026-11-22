@@ -249,7 +249,7 @@ export default function RiskRadarView({
                 交易所持仓对账引擎 (ExchangeReconciler) &amp; 外部死信心跳
               </h2>
               <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-[#EFE9DF] text-[#5C5549]">
-                Bot: {activeBotId} ({reconcileData?.execution_mode || 'PAPER'})
+                Bot: {activeBotId} ({reconcileData?.market_type || 'USDM_FUTURES'} · {reconcileData?.execution_mode || 'LOCAL_SIM'})
               </span>
             </div>
 

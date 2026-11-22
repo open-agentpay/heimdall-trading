@@ -43,8 +43,29 @@ class OrderSide(str, Enum):
 class ExchangeType(str, Enum):
     """支持的目标交易所枚举"""
     HYPERLIQUID = "HYPERLIQUID"          # Hyperliquid L1 去中心化永续合约
-    BINANCE = "BINANCE"                  # 币安中心化衍生品
+    BINANCE = "BINANCE"                  # 币安交易所
     OKX = "OKX"                          # OKX 交易所
+
+
+class ExecutionMode(str, Enum):
+    """统一运行模式枚举（不再兼容历史 PAPER / DEMO）"""
+    LOCAL_SIM = "LOCAL_SIM"              # 本地模拟撮合（不发送交易所请求）
+    TESTNET = "TESTNET"                  # 交易所测试环境
+    MAINNET = "MAINNET"                  # 交易所实盘
+
+
+class MarketType(str, Enum):
+    """交易市场类型枚举"""
+    SPOT = "SPOT"                        # 现货市场
+    USDM_FUTURES = "USDM_FUTURES"        # U 本位永续合约市场
+
+
+class OrderIntent(str, Enum):
+    """订单开平仓显式意图枚举"""
+    OPEN = "OPEN"
+    CLOSE = "CLOSE"
+    INCREASE = "INCREASE"
+    REDUCE = "REDUCE"
 
 
 class MarketContext(BaseModel):
@@ -69,21 +90,27 @@ class TradeAction(BaseModel):
     具体交易动作计划
     包含标的、方向、价格、仓位规模与保护性止盈止损点位
     """
-    # 交易目标市场
+    # 交易目标交易所
     exchange: ExchangeType
+    # 交易目标市场类型（现货 / U 本位合约）
+    market_type: MarketType = MarketType.USDM_FUTURES
     # 交易标的代码，例如 "ETH"、"BTC"
     symbol: str
     # 预期的持仓方向：LONG 多，SHORT 空
     position_side: PositionSide
     # 报单买卖方向：BUY 买入，SELL 卖出
     order_side: OrderSide
+    # 显式开平仓意图（可选，供 OMS 校验开平语义）
+    intent: Optional[OrderIntent] = None
+    # 是否只减仓（仅合约市场允许）
+    reduce_only: bool = False
     # 订单类型：LIMIT（限价单，降低吃单费率与滑点）、MARKET（市价单，紧急成交）
     order_type: str = "LIMIT"
     # 目标委托价格（USD计价）
     target_price: float
     # 计划下单名义价值金额（USD计价）
     size_in_usd: float
-    # 申请使用的杠杆倍数（例如 2.0 代表 2 倍杠杆）
+    # 申请使用的杠杆倍数（例如 2.0 代表 2 倍杠杆；现货必须为 1.0）
     leverage: float = 1.0
     # 建议硬止损触发价格（USD计价，跌破/涨破立即平仓止损）
     stop_loss_price: Optional[float] = None

@@ -1,19 +1,52 @@
 """
 Heimdall 交易平台 - 交易所执行适配器抽象基类 (Execution Adapter Base)
-定义所有实盘与模拟盘执行器必须遵循的标准契约：
-包括执行订单提案、查询账户余额、查询活动持仓以及一键急停全撤单。
+定义所有实盘、测试网与本地模拟执行器必须遵循的标准契约：
+- ExchangeOrderResult: 订单事实回报（不将未成交/受理态伪装为成交）；
+- TradeExecutionResult: 仅代表真实已发生的成交；
+- BaseExecutionAdapter: 统一执行、查单、撤单、凭证重建与市场边界接口。
 """
 
 from abc import ABC, abstractmethod
-from typing import Dict, Any, List, Optional
-from pydantic import BaseModel, Field
 from datetime import datetime, timezone
-from heimdall.models.schemas import TradeProposal, ExchangeType, PositionSide, OrderSide
+from decimal import Decimal
+from typing import Any, Dict, List, Optional
+from pydantic import BaseModel, Field
+
+from heimdall.models.schemas import (
+    ExchangeType,
+    ExecutionMode,
+    MarketType,
+    OrderSide,
+    PositionSide,
+    TradeProposal,
+)
+
+
+class ExchangeOrderResult(BaseModel):
+    """
+    交易所或本地撮合器返回的订单事实契约。
+    只描述订单真实状态与已成交数量，绝不将“已受理未成交”伪装成“已成交”。
+    """
+    client_order_id: str
+    exchange_order_id: Optional[str] = None
+    status: str  # NEW / OPEN / PARTIALLY_FILLED / FILLED / REJECTED / CANCELED / UNKNOWN
+    requested_qty: Decimal
+    filled_qty: Decimal = Decimal("0")
+    avg_fill_price: Optional[Decimal] = None
+    cumulative_quote_qty: Optional[Decimal] = None
+    fee: Optional[Decimal] = None
+    fee_asset: Optional[str] = None
+    raw_response: Dict[str, Any] = Field(default_factory=dict)
+    is_simulated: bool = False
+    market_type: MarketType = MarketType.USDM_FUTURES
+    realized_pnl: Decimal = Decimal("0")
+    error_message: Optional[str] = None
 
 
 class TradeExecutionResult(BaseModel):
     """
-    单笔订单执行回报对象 (Execution Report)
+    单笔已发生成交的执行回报对象 (Execution Report)。
+    仅在订单存在真实 filled_qty > 0 时生成。
     """
     # 执行流水编号
     trade_id: str
@@ -23,6 +56,8 @@ class TradeExecutionResult(BaseModel):
     proposal_id: str
     # 执行目标交易所
     exchange: ExchangeType
+    # 交易市场类型
+    market_type: MarketType = MarketType.USDM_FUTURES
     # 标的代码
     symbol: str
     # 买卖方向
@@ -49,6 +84,66 @@ class BaseExecutionAdapter(ABC):
     """
     交易所底层执行驱动接口规范
     """
+    exchange: ExchangeType = ExchangeType.BINANCE
+    market_type: MarketType = MarketType.USDM_FUTURES
+    execution_mode: ExecutionMode = ExecutionMode.LOCAL_SIM
+
+    @property
+    def supports_native_conditional_orders(self) -> bool:
+        """当前适配器市场是否支持原生条件止损/止盈单"""
+        return self.market_type == MarketType.USDM_FUTURES
+
+    def configure_credentials(
+        self,
+        *,
+        api_key: str = "",
+        secret_key: str = "",
+        market_type: Optional[MarketType] = None,
+        execution_mode: Optional[ExecutionMode] = None,
+        **kwargs: Any,
+    ) -> None:
+        """
+        注入/更新交易所凭证并重建客户端（实盘与测试网适配器必须覆写实现 SDK 重建与缓存清理）。
+        """
+        if market_type is not None and market_type != self.market_type:
+            raise ValueError(
+                f"凭证市场类型不匹配: 适配器={self.market_type.value}, 凭证={market_type.value}"
+            )
+        if execution_mode is not None and execution_mode != self.execution_mode:
+            raise ValueError(
+                f"凭证运行环境不匹配: 适配器={self.execution_mode.value}, 凭证={execution_mode.value}"
+            )
+
+    async def submit_order(
+        self,
+        proposal: TradeProposal,
+        client_order_id: str,
+        requested_qty: Optional[Decimal] = None,
+    ) -> ExchangeOrderResult:
+        """
+        向交易所或本地撮合器提交订单并返回真实订单事实 (ExchangeOrderResult)。
+        默认桥接旧式 execute_proposal，所有新一代适配器应直接覆写本方法。
+        """
+        res = await self.execute_proposal(proposal)
+        req_q = requested_qty if requested_qty is not None else Decimal(str(res.executed_quantity))
+        filled_q = Decimal(str(res.executed_quantity))
+        avg_px = Decimal(str(res.executed_price)) if res.executed_price else None
+        status = "FILLED" if filled_q >= req_q * Decimal("0.999") else ("PARTIALLY_FILLED" if filled_q > 0 else "NEW")
+        return ExchangeOrderResult(
+            client_order_id=client_order_id,
+            exchange_order_id=res.order_id,
+            status=status,
+            requested_qty=req_q,
+            filled_qty=filled_q,
+            avg_fill_price=avg_px,
+            cumulative_quote_qty=Decimal(str(res.executed_size_usd)),
+            fee=Decimal(str(res.fee_usd)),
+            fee_asset="USDT",
+            raw_response=res.raw_response or {},
+            is_simulated=bool((res.raw_response or {}).get("is_simulated") or (res.raw_response or {}).get("simulated")),
+            market_type=getattr(res, "market_type", self.market_type),
+            realized_pnl=Decimal(str(res.realized_pnl)),
+        )
 
     @abstractmethod
     async def execute_proposal(self, proposal: TradeProposal) -> TradeExecutionResult:
@@ -74,7 +169,7 @@ class BaseExecutionAdapter(ABC):
         """
         获取当前存续的活动持仓列表。
 
-        :return: 持仓字典列表，包含 symbol, side, size, entry_price, unrealized_pnl, liquidation_price
+        :return: 持仓字典列表，包含 symbol, side, quantity, entry_price, unrealized_pnl
         """
         pass
 
@@ -163,7 +258,7 @@ class BaseExecutionAdapter(ABC):
         client_order_id: Optional[str] = None,
         order_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """查询交易所订单状态（用于 OMS UNKNOWN 状态对账恢复）"""
+        """查询交易所订单状态（用于 OMS UNKNOWN / SUBMITTED 状态对账恢复）"""
         return {
             "found": False,
             "status": "NOT_FOUND",
