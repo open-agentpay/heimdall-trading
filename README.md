@@ -198,6 +198,23 @@ python3 -m heimdall.cli serve --host 0.0.0.0 --port 8000
 
 Access the interactive OpenAPI / Swagger console at `http://localhost:8000/docs`.
 
+### Docker Deployment & Ports
+
+```bash
+./deploy.sh up      # or: docker compose up -d
+```
+
+| Container | Service | Container port | Notes |
+| :--- | :--- | :---: | :--- |
+| `heimdall-web` | Nginx + static frontend | 80 | Internal entry (behind a reverse proxy); proxies `/api/`, `/v1/`, `/ws/`, `/health` to `backend:8000` |
+| `heimdall-backend` | FastAPI (uvicorn, `--workers 1`) | 8000 | Reachable only inside the Compose network `heimdall-network` |
+| `heimdall-postgres` | PostgreSQL 16 | 5432 | Used by the backend only |
+
+- No container publishes a host port. For public access, attach a reverse proxy (or gateway) container to `heimdall-network`, forward to `heimdall-web:80`, and add the public origin to `HEIMDALL_CORS_ORIGINS`.
+- Health check after deployment (through the frontend Nginx to the backend): `docker exec heimdall-backend python -c "import urllib.request;print(urllib.request.urlopen('http://web/health').read().decode())"`.
+- Local development: the backend (`heimdall.cli serve`) listens on 8000; the frontend (`cd web && npm run dev`) listens on 3000 and proxies `/api` and `/ws` to 8000.
+- The Bifrost URL `localhost:8080` in `config/default.yaml` is a placeholder (Bifrost is not integrated yet) and is unrelated to the ports above.
+
 ### Run the Automated Test Suite
 
 ```bash

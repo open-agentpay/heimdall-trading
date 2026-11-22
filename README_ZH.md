@@ -198,6 +198,23 @@ python3 -m heimdall.cli serve --host 0.0.0.0 --port 8000
 
 访问 `http://localhost:8000/docs` 查看交互式 Swagger API 文档。
 
+### Docker 部署与端口
+
+```bash
+./deploy.sh up      # 或 docker compose up -d
+```
+
+| 容器 | 服务 | 容器内端口 | 说明 |
+| :--- | :--- | :---: | :--- |
+| `heimdall-web` | Nginx + 前端静态资源 | 80 | 内网入口（由反代转发）；`/api/`、`/v1/`、`/ws/`、`/health` 反代到 `backend:8000` |
+| `heimdall-backend` | FastAPI（uvicorn，`--workers 1`） | 8000 | 仅在 Compose 内网 `heimdall-network` 中访问 |
+| `heimdall-postgres` | PostgreSQL 16 | 5432 | 仅供后端连接 |
+
+- 三个容器都不映射宿主机端口。对外访问需让反向代理（或网关）容器加入 `heimdall-network`，转发到 `heimdall-web:80`，并把对外域名加入 `HEIMDALL_CORS_ORIGINS`。
+- 部署后健康检查（经前端 Nginx 转发到后端）：`docker exec heimdall-backend python -c "import urllib.request;print(urllib.request.urlopen('http://web/health').read().decode())"`。
+- 本地开发：后端 `heimdall.cli serve` 监听 8000，前端 `cd web && npm run dev` 监听 3000，并把 `/api`、`/ws` 代理到 8000。
+- `config/default.yaml` 中的 Bifrost 地址 `localhost:8080` 为预留项（Bifrost 尚未接入），与上述端口无关。
+
 ### 运行自动化单元测试
 
 ```bash

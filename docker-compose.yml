@@ -58,8 +58,10 @@ services:
     depends_on:
       backend:
         condition: service_healthy
-    ports:
-      - "${HOST_BIND_IP:-127.0.0.1}:${WEB_PORT:-3005}:80"
+    # 不映射宿主机端口：前端只在 Compose 内网 heimdall-network 中以 web:80 / heimdall-web:80 提供服务，
+    # 对外访问由加入该网络的反向代理（或网关）转发；需要直连调试时可临时加回 ports
+    expose:
+      - "80"
     networks:
       - heimdall-net
 
