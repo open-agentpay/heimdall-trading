@@ -1,0 +1,149 @@
+# ==============================================================================
+# Heimdall 宏观重大事件避险日历（第 6 条硬风控铁律：宏观静默期）
+# ==============================================================================
+# - 所有 event_time 均为 UTC（已由美东时间换算并考虑夏令时），行尾注释为美东原始时间；
+# - cool_off_pre/post_minutes：事件前后禁止新开仓的静默窗口（分钟）；
+# - 实盘（MAINNET）模式下若本文件无任何未来事件，机器人将拒绝执行决策周期（失败即关闭），
+#   请在最后一条事件到期前补充新日程；修改后重启服务生效。
+# - 可通过环境变量 HEIMDALL_MACRO_EVENTS_FILE 指定其他路径。
+#
+# 数据来源（录入日期 2026-11-21）：
+# - FOMC：federalreserve.gov 2025/2026 会议日程，及 2026-11-12 公布的 2027 年修订暂定日程；
+#   政策声明于会议第二天 14:00 ET 发布。2027-10-26/27 会议为货币政策框架讨论、不公布利率决议，故未列入。
+#   2027 年日程为“暂定”，请留意美联储后续调整。
+# - US CPI：BLS 发布日程（经 usinflationcalculator.com 汇总，08:30 ET 发布），建议上线前对照 bls.gov/schedule 复核。
+# - 非农（NFP）等其他事件未录入，可按相同格式追加（category 可选值见 heimdall/risk/macro_guard.py::MacroEventType）。
+
+events:
+  - event_id: "fomc_2026_12"
+    name: "美联储 12 月利率决议"
+    category: "FOMC_RATE_DECISION"
+    event_time: "2026-12-09T19:00:00Z"   # 2026-12-09 14:00 ET
+    cool_off_pre_minutes: 30
+    cool_off_post_minutes: 60
+  - event_id: "fomc_2027_01"
+    name: "美联储 1 月利率决议"
+    category: "FOMC_RATE_DECISION"
+    event_time: "2027-01-27T19:00:00Z"   # 2027-01-27 14:00 ET
+    cool_off_pre_minutes: 30
+    cool_off_post_minutes: 60
+  - event_id: "fomc_2027_03"
+    name: "美联储 3 月利率决议"
+    category: "FOMC_RATE_DECISION"
+    event_time: "2027-03-17T18:00:00Z"   # 2027-03-17 14:00 ET
+    cool_off_pre_minutes: 30
+    cool_off_post_minutes: 60
+  - event_id: "fomc_2027_04"
+    name: "美联储 4 月利率决议"
+    category: "FOMC_RATE_DECISION"
+    event_time: "2027-04-28T18:00:00Z"   # 2027-04-28 14:00 ET
+    cool_off_pre_minutes: 30
+    cool_off_post_minutes: 60
+  - event_id: "fomc_2027_06"
+    name: "美联储 6 月利率决议"
+    category: "FOMC_RATE_DECISION"
+    event_time: "2027-06-09T18:00:00Z"   # 2027-06-09 14:00 ET
+    cool_off_pre_minutes: 30
+    cool_off_post_minutes: 60
+  - event_id: "fomc_2027_07"
+    name: "美联储 7 月利率决议"
+    category: "FOMC_RATE_DECISION"
+    event_time: "2027-07-28T18:00:00Z"   # 2027-07-28 14:00 ET
+    cool_off_pre_minutes: 30
+    cool_off_post_minutes: 60
+  - event_id: "fomc_2027_09"
+    name: "美联储 9 月利率决议"
+    category: "FOMC_RATE_DECISION"
+    event_time: "2027-09-15T18:00:00Z"   # 2027-09-15 14:00 ET
+    cool_off_pre_minutes: 30
+    cool_off_post_minutes: 60
+  - event_id: "fomc_2027_11"
+    name: "美联储 11 月利率决议"
+    category: "FOMC_RATE_DECISION"
+    event_time: "2027-11-17T19:00:00Z"   # 2027-11-17 14:00 ET
+    cool_off_pre_minutes: 30
+    cool_off_post_minutes: 60
+  - event_id: "fomc_2028_01"
+    name: "美联储 1 月利率决议"
+    category: "FOMC_RATE_DECISION"
+    event_time: "2028-01-26T19:00:00Z"   # 2028-01-26 14:00 ET
+    cool_off_pre_minutes: 30
+    cool_off_post_minutes: 60
+  - event_id: "us_cpi_2026_11"
+    name: "美国 2026 年 11 月 CPI"
+    category: "US_CPI"
+    event_time: "2026-12-10T13:30:00Z"   # 2026-12-10 08:30 ET
+    cool_off_pre_minutes: 15
+    cool_off_post_minutes: 30
+  - event_id: "us_cpi_2026_12"
+    name: "美国 2026 年 12 月 CPI"
+    category: "US_CPI"
+    event_time: "2027-01-13T13:30:00Z"   # 2027-01-13 08:30 ET
+    cool_off_pre_minutes: 15
+    cool_off_post_minutes: 30
+  - event_id: "us_cpi_2027_01"
+    name: "美国 2027 年 1 月 CPI"
+    category: "US_CPI"
+    event_time: "2027-02-11T13:30:00Z"   # 2027-02-11 08:30 ET
+    cool_off_pre_minutes: 15
+    cool_off_post_minutes: 30
+  - event_id: "us_cpi_2027_02"
+    name: "美国 2027 年 2 月 CPI"
+    category: "US_CPI"
+    event_time: "2027-03-10T13:30:00Z"   # 2027-03-10 08:30 ET
+    cool_off_pre_minutes: 15
+    cool_off_post_minutes: 30
+  - event_id: "us_cpi_2027_03"
+    name: "美国 2027 年 3 月 CPI"
+    category: "US_CPI"
+    event_time: "2027-04-13T12:30:00Z"   # 2027-04-13 08:30 ET
+    cool_off_pre_minutes: 15
+    cool_off_post_minutes: 30
+  - event_id: "us_cpi_2027_04"
+    name: "美国 2027 年 4 月 CPI"
+    category: "US_CPI"
+    event_time: "2027-05-12T12:30:00Z"   # 2027-05-12 08:30 ET
+    cool_off_pre_minutes: 15
+    cool_off_post_minutes: 30
+  - event_id: "us_cpi_2027_05"
+    name: "美国 2027 年 5 月 CPI"
+    category: "US_CPI"
+    event_time: "2027-06-10T12:30:00Z"   # 2027-06-10 08:30 ET
+    cool_off_pre_minutes: 15
+    cool_off_post_minutes: 30
+  - event_id: "us_cpi_2027_06"
+    name: "美国 2027 年 6 月 CPI"
+    category: "US_CPI"
+    event_time: "2027-07-14T12:30:00Z"   # 2027-07-14 08:30 ET
+    cool_off_pre_minutes: 15
+    cool_off_post_minutes: 30
+  - event_id: "us_cpi_2027_07"
+    name: "美国 2027 年 7 月 CPI"
+    category: "US_CPI"
+    event_time: "2027-08-11T12:30:00Z"   # 2027-08-11 08:30 ET
+    cool_off_pre_minutes: 15
+    cool_off_post_minutes: 30
+  - event_id: "us_cpi_2027_08"
+    name: "美国 2027 年 8 月 CPI"
+    category: "US_CPI"
+    event_time: "2027-09-14T12:30:00Z"   # 2027-09-14 08:30 ET
+    cool_off_pre_minutes: 15
+    cool_off_post_minutes: 30
+  - event_id: "us_cpi_2027_09"
+    name: "美国 2027 年 9 月 CPI"
+    category: "US_CPI"
+    event_time: "2027-10-14T12:30:00Z"   # 2027-10-14 08:30 ET
+    cool_off_pre_minutes: 15
+    cool_off_post_minutes: 30
+  - event_id: "us_cpi_2027_10"
+    name: "美国 2027 年 10 月 CPI"
+    category: "US_CPI"
+    event_time: "2027-11-10T13:30:00Z"   # 2027-11-10 08:30 ET
+    cool_off_pre_minutes: 15
+    cool_off_post_minutes: 30
+  - event_id: "us_cpi_2027_11"
+    name: "美国 2027 年 11 月 CPI"
+    category: "US_CPI"
+    event_time: "2027-12-10T13:30:00Z"   # 2027-12-10 08:30 ET
+    cool_off_pre_minutes: 15
+    cool_off_post_minutes: 30

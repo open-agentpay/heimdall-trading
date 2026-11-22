@@ -67,7 +67,8 @@ class BacktestEngine:
                 timeframe=feed.timeframe,
                 exchange=ExchangeType.BINANCE,
                 account_equity=bal["total_equity"],
-                current_daily_drawdown_pct=snap.drawdown_pct,
+                # 日内熔断口径：相对当日基准净值（UTC 日切），而非历史峰值回撤
+                current_daily_drawdown_pct=snap.daily_drawdown_pct,
                 klines=window_klines,
                 factors=factors,
                 funding=funding,
@@ -88,7 +89,7 @@ class BacktestEngine:
                 review = guard.review_proposal(
                     proposal=prop,
                     account_equity=bal["total_equity"],
-                    current_daily_drawdown_pct=snap.drawdown_pct,
+                    current_daily_drawdown_pct=snap.daily_drawdown_pct,
                     bifrost_status=ctx.guard_status,
                     market_klines=window_klines,
                     as_of_time=as_of_dt,

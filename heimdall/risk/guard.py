@@ -22,7 +22,7 @@ import logging
 from datetime import datetime
 from typing import Dict, Any, Optional, List
 from heimdall.models.schemas import TradeProposal, RiskReviewResult, VetoSeverity
-from heimdall.risk.macro_guard import MacroEventCalendar
+from heimdall.risk.macro_guard import MacroEventCalendar, get_global_macro_calendar
 from heimdall.risk.flash_guard import FlashCrashDetector
 
 logger = logging.getLogger(__name__)
@@ -63,7 +63,9 @@ class HardRiskGuard:
         self.max_slippage_pct = max_slippage_pct
 
         # 极端行情避险扩展组件
-        self.macro_calendar = macro_calendar or MacroEventCalendar()
+        # 未显式注入时复用全局共享日历（config/macro_events.yaml），
+        # 避免每个实例各自持有一个空日历导致第 6 条铁律永远放行
+        self.macro_calendar = macro_calendar if macro_calendar is not None else get_global_macro_calendar()
         self.enable_macro_guard = enable_macro_guard
         self.flash_detector = flash_detector or FlashCrashDetector()
         self.enable_flash_guard = enable_flash_guard

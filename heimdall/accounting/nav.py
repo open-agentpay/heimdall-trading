@@ -24,12 +24,19 @@ class EquitySnapshot(BaseModel):
     total_shares: float
     nav: float
     peak_nav: float
+    # 相对历史最高净值的回撤（最大回撤统计口径，不用于日内熔断）
     drawdown_pct: float
+    # 当日（UTC 自然日）基准净值：取前一交易日最后一条快照净值；首条快照取自身净值
+    day_start_nav: float = 1.0
+    # 当日回撤：相对 day_start_nav 的跌幅，每个 UTC 自然日自动重置，供日内熔断与 HardRiskGuard 使用
+    daily_drawdown_pct: float = 0.0
 
 
 class NAVEngine:
     """
     单位净值法 (NAV) 计算与投资组合统计引擎
+    - drawdown_pct：相对历史峰值的回撤，用于最大回撤 / 卡玛比率等绩效统计；
+    - daily_drawdown_pct：相对当日基准净值的回撤，按 UTC 自然日重置，用于“单日回撤熔断”。
     """
 
     def __init__(self, initial_capital: float = 10000.0, initial_shares: float = 10000.0):
@@ -39,6 +46,9 @@ class NAVEngine:
         self.initial_capital: float = initial_capital
         self.total_shares: float = initial_shares
         self.peak_nav: float = 1.0
+        # 日内回撤基准（按 UTC 自然日滚动）
+        self.day_start_nav: Optional[float] = None
+        self._current_day = None
         self.snapshots: List[EquitySnapshot] = []
 
     def current_nav(self, current_total_equity: float) -> float:
@@ -79,6 +89,17 @@ class NAVEngine:
         if self.peak_nav > 0:
             drawdown_pct = max(0.0, (self.peak_nav - nav) / self.peak_nav)
 
+        # 日切：进入新的 UTC 自然日时，以前一条快照净值（即前一日收盘净值）作为当日基准
+        snap_day = (ts.astimezone(timezone.utc) if ts.tzinfo is not None else ts).date()
+        if self._current_day != snap_day or self.day_start_nav is None:
+            prev_nav = self.snapshots[-1].nav if self.snapshots else nav
+            self.day_start_nav = prev_nav if prev_nav > 0 else nav
+            self._current_day = snap_day
+
+        daily_drawdown_pct = 0.0
+        if self.day_start_nav and self.day_start_nav > 0:
+            daily_drawdown_pct = max(0.0, (self.day_start_nav - nav) / self.day_start_nav)
+
         snapshot = EquitySnapshot(
             timestamp=ts,
             total_equity=total_equity,
@@ -90,6 +111,8 @@ class NAVEngine:
             nav=nav,
             peak_nav=self.peak_nav,
             drawdown_pct=drawdown_pct,
+            day_start_nav=self.day_start_nav,
+            daily_drawdown_pct=daily_drawdown_pct,
         )
 
         self.snapshots.append(snapshot)
