@@ -66,7 +66,11 @@ class MultiAgentPipeline:
         llm_service: Optional[LLMService] = None,
         llm_router: Optional[LLMRouter] = None,
         max_repair_rounds: int = 2,
+        checkpoint_sink: Optional[Any] = None,
     ):
+        # L4：checkpoint_sink(state, checkpoint) 为可选的异步回调，每完成一个步骤即持久化检查点，
+        #     进程中断后可由调用方读回并从断点续跑（见 DebateStrategyAdapter）
+        self.checkpoint_sink = checkpoint_sink
         self.llm = llm_service or (llm_router.default_service if llm_router else LLMService())
         self.llm_router = llm_router or LLMRouter(default_service=self.llm)
         self.max_repair_rounds = max(0, int(max_repair_rounds))
@@ -205,7 +209,7 @@ class MultiAgentPipeline:
                 input_summary=f"Symbol={state.symbol}, Klines={len(state.raw_klines)}",
                 output_summary=f"Regime={brief.get('regime')}, Price={brief.get('latest_price')}",
             ))
-            state.record_checkpoint("Step1_Analyst", {"analyst_brief": brief})
+            await self._checkpoint(state, "Step1_Analyst", {"analyst_brief": brief})
             steps_completed += 1
 
         if not need_sentiment:
@@ -239,7 +243,7 @@ class MultiAgentPipeline:
                 input_summary=f"Funding={annualized_funding:.2%}",
                 output_summary=f"Score={sentiment_report.get('sentiment_score')}, Whale={sentiment_report.get('whale_activity')}",
             ))
-            state.record_checkpoint("Step1b_Sentiment", {"sentiment_report": sentiment_report})
+            await self._checkpoint(state, "Step1b_Sentiment", {"sentiment_report": sentiment_report})
             steps_completed += 1
 
         # =====================================================================
@@ -359,7 +363,7 @@ class MultiAgentPipeline:
                 input_summary=f"DebateRounds={len(state.debate_history)}",
                 output_summary=f"BullConf={bull_view.get('confidence')}, BearConf={bear_view.get('confidence')}",
             ))
-            state.record_checkpoint(step_name, {
+            await self._checkpoint(state, step_name, {
                 "bull_thesis": bull_view,
                 "bear_thesis": bear_view,
                 "debate_history": state.debate_history,
@@ -416,7 +420,7 @@ class MultiAgentPipeline:
                 input_summary=f"Bull={debate_synthesis.get('bull_score')}, Bear={debate_synthesis.get('bear_score')}",
                 output_summary=f"Consensus={debate_synthesis.get('consensus_action')}, Conf={debate_synthesis.get('final_confidence')}",
             ))
-            state.record_checkpoint(step_name, {"debate_synthesis": debate_synthesis})
+            await self._checkpoint(state, step_name, {"debate_synthesis": debate_synthesis})
             steps_completed += 1
 
         if debate_synthesis.get("consensus_action") == "NEUTRAL":
@@ -569,6 +573,16 @@ class MultiAgentPipeline:
             state, pipeline_start_time, steps_completed, steps_skipped, fallbacks_count, repair_rounds_used
         )
         return state
+
+    async def _checkpoint(self, state: MultiAgentState, step_name: str, snapshot: Dict[str, Any]) -> None:
+        """记录检查点；配置了 checkpoint_sink 时同步持久化（失败只告警，不影响决策流程）"""
+        cp = state.record_checkpoint(step_name, snapshot)
+        if self.checkpoint_sink is None:
+            return
+        try:
+            await self.checkpoint_sink(state, cp)
+        except Exception as exc:
+            logger.warning("[Checkpoint 持久化失败] task=%s step=%s: %s", state.task_id, step_name, exc)
 
     def _finalize_metrics(
         self,
