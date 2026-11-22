@@ -19,7 +19,7 @@
 [![Python Version](https://img.shields.io/badge/Python-3.10+-3776AB?style=flat&logo=python)](https://python.org)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.110+-009688?style=flat&logo=fastapi)](https://fastapi.tiangolo.com)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/Tests-11%20Passed-success)](tests/)
+[![Tests](https://img.shields.io/badge/tests-pytest-blue)](tests/)
 
 </div>
 
@@ -80,9 +80,9 @@ flowchart TD
     end
 
     subgraph Exec["[Execution, Ledger & Alerts] Execution, NAV & Alert"]
-        E1["High-Fidelity Paper Trading Sandbox"]
-        E2["Hyperliquid DEX Perpetual Adapter"]
-        E3["Net Asset Value (NAV) Ledger Engine"]
+        E1["LOCAL_SIM / TESTNET / MAINNET Adapters (Binance, Hyperliquid)"]
+        E2["OMS + Native SL/TP + Exchange Reconciler"]
+        E3["Per-Bot Ledger & NAV Engine"]
         E4["Multi-Channel Alert Gateway (Telegram/Feishu/Discord)"]
     end
 
@@ -128,52 +128,54 @@ $$\text{NAV}_{t^+} = \frac{\text{Total Equity}_t + \Delta C}{\text{Total Shares}
 ## 5. Project Directory Structure
 
 ```text
-heimdall-trading/
 ├── config/
-│   └── default.yaml               # Default system settings (data source, DB, risk limits)
+│   ├── default.yaml                   # Default settings (data sources, DB, risk limits)
+│   └── macro_events.yaml              # FOMC / CPI calendar for the macro blackout rule
 ├── heimdall/
-│   ├── accounting/                # Ledger & quantitative performance tracking
-│   │   └── nav.py                 # NAV engine, Sharpe ratio, Max Drawdown calculator
-│   ├── agents/                    # Multi-agent cognitive decision engine
-│   │   ├── analyst.py             # Macro & technical indicators analyst
-│   │   ├── debate.py              # Bull vs. Bear adversarial debate engine
-│   │   ├── graph.py               # Pipeline orchestrator
-│   │   ├── risk_officer.py        # Logic risk officer (soft pre-check)
-│   │   ├── sentiment.py           # Sentiment & on-chain whale flow analyst
-│   │   ├── state.py               # Shared decision context state definitions
-│   │   └── strategy.py            # Quantitative proposal generation
-│   ├── alert/                     # Real-time alert gateway
-│   │   └── notifier.py            # Telegram, Feishu (Lark), Discord push notifications
-│   ├── api/                       # REST API backend (FastAPI)
-│   │   └── server.py              # Control plane endpoints
-│   ├── bifrost/                   # Bifrost Data Hub client
-│   │   └── client.py              # Read-only ingestion for zero-lookahead k-lines & guards
-│   ├── data/                      # Alternative data & multi-source intelligence ingestion
-│   │   └── sentiment_collector.py # Alternative.me Fear & Greed, news flash & derivatives
-│   ├── database/                  # Data persistence layer (SQLite / PostgreSQL)
-│   │   ├── db.py                  # Async connection pool & schema migration
-│   │   └── repository.py          # Bot, decision, trade, and NAV repositories
-│   ├── engine/                    # Orchestration core
-│   │   ├── bot_manager.py         # Bot instance lifecycle management
-│   │   └── scheduler.py           # 24/7 background daemon loop & watchdog
-│   ├── execution/                 # Exchange execution adapters
-│   │   ├── base.py                # Abstract execution contract
-│   │   ├── hyperliquid.py         # Hyperliquid L1 DEX perpetuals adapter
-│   │   └── paper.py               # In-memory realistic paper trading sandbox
-│   ├── llm/                       # Unified LLM service
-│   │   └── client.py              # Structured output inference & fallback
-│   ├── models/                    # Pydantic schema specifications
-│   │   └── schemas.py             # Standardized TradeProposal and RiskReviewResult
-│   ├── risk/                      # Deterministic code-level hard guard
-│   │   ├── flash_guard.py         # Flash spike & pin bar anomaly detector
-│   │   ├── guard.py               # Absolute veto firewall (7 Iron Rules)
-│   │   └── macro_guard.py         # Macro economic blackout calendar (FOMC/CPI)
-│   ├── cli.py                     # Command-line interface entrypoint
-│   └── config.py                  # Pydantic Settings configuration loader
-├── migrations/                    # PostgreSQL 16 & TimescaleDB schema migrations
-├── tests/                         # Full automated test suite (31 unit tests, 100% passing)
-├── pyproject.toml                 # Packaging metadata & dependency specifications
-└── requirements.txt               # Pinned dependencies
+│   ├── accounting/                    # Accounting
+│   │   ├── ledger.py                  # Per-bot ledger built from exchange fills (TESTNET / MAINNET)
+│   │   └── nav.py                     # Unit NAV, intraday drawdown, Sharpe / Calmar
+│   ├── agents/                        # Multi-agent decision pipeline
+│   │   ├── analyst.py · sentiment.py  # Market and sentiment analysts
+│   │   ├── debate.py                  # Bull / Bear researchers and the moderator
+│   │   ├── graph.py                   # Pipeline orchestrator (pre-flight gate, checkpoints)
+│   │   ├── strategy.py · risk_officer.py  # Proposal generation and soft risk check
+│   │   └── state.py · tools.py · governance.py  # Shared state, read-only evidence tools, budgets
+│   ├── alert/
+│   │   ├── notifier.py                # Telegram / Feishu / Discord alerts
+│   │   └── heartbeat.py               # External dead man's switch
+│   ├── api/
+│   │   ├── server.py                  # FastAPI control plane
+│   │   ├── workbench_router.py        # OMS, reconciliation, shadow report, backtest APIs
+│   │   └── websocket.py               # Real-time event stream
+│   ├── auth/                          # Wallet sign-in (SIWE) and AES-256-GCM key vault
+│   ├── backtest/                      # Zero-lookahead backtest engine and walk-forward
+│   ├── bifrost/ · data/               # Multi-source market data (Binance → OKX → Hyperliquid), sentiment
+│   ├── database/                      # SQLite / PostgreSQL persistence and repositories
+│   ├── engine/
+│   │   ├── bot_manager.py             # Bot lifecycle, decision cycle, reconciliation, stop coverage
+│   │   ├── scheduler.py               # Background decision and reconciliation loops
+│   │   └── shadow.py                  # Shadow Mode run report and promotion gate
+│   ├── execution/
+│   │   ├── factory.py                 # Routes exchange × market × mode to an adapter
+│   │   ├── binance.py · hyperliquid.py  # Exchange adapters (Algo conditional orders on Binance)
+│   │   ├── local_sim.py               # LOCAL_SIM matching engine
+│   │   ├── oms.py                     # Order state machine, native SL/TP, recovery
+│   │   ├── reconciler.py              # Exchange reconciliation
+│   │   └── precision.py               # Decimal tick / step normalisation
+│   ├── factors/                       # Factor engine
+│   ├── strategies/                    # StrategyRouter + trend / grid / funding-arb / debate strategies
+│   ├── risk/                          # Hard risk guard (7 rules), macro calendar, flash guard, portfolio lock
+│   ├── llm/ · models/                 # LLM service and Pydantic schemas
+│   ├── utils/                         # CORS, log redaction, security preflight, single-instance lock
+│   └── cli.py · config.py             # CLI entry point and settings
+├── migrations/                        # PostgreSQL schema migrations
+├── scripts/                           # Binance futures testnet probe
+├── tests/                             # pytest suite (unit, integration, golden eval in tests/evals/)
+├── web/                               # React / Vite workbench
+├── pyproject.toml                     # Packaging and dependencies (single source of truth)
+├── requirements.txt                   # Runtime dependencies (mirrors pyproject, used by Docker)
+└── requirements-dev.txt               # Dev / test dependencies
 ```
 
 ---
@@ -191,10 +193,10 @@ python3 -m heimdall.cli run-demo --symbol ETH --capital 10000
 ### Launch the Web Management Platform
 
 ```bash
-python3 -m heimdall.cli serve --host 0.0.0.0 --port 8080
+python3 -m heimdall.cli serve --host 0.0.0.0 --port 8000
 ```
 
-Access the interactive OpenAPI / Swagger console at `http://localhost:8080/docs`.
+Access the interactive OpenAPI / Swagger console at `http://localhost:8000/docs`.
 
 ### Run the Automated Test Suite
 
@@ -216,4 +218,11 @@ python3 -m pytest tests/ -v
 | `POST`| `/api/v1/bots/{bot_id}/step` | Trigger a single evaluation cycle manually or via cron |
 | `GET` | `/api/v1/bots/{bot_id}/nav` | Retrieve time-series NAV curve, MDD, and Sharpe ratio |
 | `GET` | `/api/v1/bots/{bot_id}/decisions` | Query full chain-of-thought debate and proposal logs |
+| `POST`| `/api/v1/bots/{bot_id}/orders/paper` | Manual order for LOCAL_SIM bots only (priced off the live cross-exchange median) |
+| `GET` | `/api/v1/bots/{bot_id}/oms/orders` | OMS orders and native protective orders |
+| `POST`| `/api/v1/bots/{bot_id}/reconcile` | Run an exchange reconciliation now (optionally resume when clean) |
+| `GET` | `/api/v1/bots/{bot_id}/shadow-report` | Shadow Mode run report and 7-day promotion gate |
+| `GET` | `/api/v1/system/live-readiness` | Live-trading readiness checks |
 | `POST`| `/api/v1/emergency/kill` | **Global Emergency Kill Switch**: immediately halts bots and cancels all open orders |
+
+> Run exactly **one** backend process per database (`--workers 1`). A second process is refused at startup by the single-instance lock (`HEIMDALL_INSTANCE_LOCK`).
