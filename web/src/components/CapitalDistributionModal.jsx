@@ -5,6 +5,7 @@
  */
 
 import React, { useState, useEffect } from 'react';
+import { showAlert } from '../utils/dialog';
 import { X, PieChart, DollarSign, TrendingUp, RefreshCw, CheckCircle2, AlertCircle } from 'lucide-react';
 import { getPortfolioCapitalDistribution, updateBotCapital } from '../api/endpoints';
 
@@ -47,7 +48,7 @@ export default function CapitalDistributionModal({ isOpen, onClose, onUpdated })
   const handleSaveCapital = async (botId) => {
     const newCap = Number(editingCapital[botId]);
     if (!newCap || newCap <= 0) {
-      alert('请输入有效的资金数额');
+      showAlert('请输入大于 0 的资金数额。', { title: '资金数额无效', tone: 'warning' });
       return;
     }
     setSavingBotId(botId);
@@ -58,7 +59,7 @@ export default function CapitalDistributionModal({ isOpen, onClose, onUpdated })
       await fetchDistribution();
       onUpdated && onUpdated();
     } catch (err) {
-      alert('调整资金失败: ' + (err.message || '未知错误'));
+      showAlert(err.message || '未知错误', { title: '调整资金失败', tone: 'error' });
     } finally {
       setSavingBotId(null);
     }
@@ -76,7 +77,7 @@ export default function CapitalDistributionModal({ isOpen, onClose, onUpdated })
             </div>
             <div>
               <h3 className="text-sm font-bold text-[#2E2823]">多策略组合资金配比看板</h3>
-              <p className="text-[11px] text-[#8C8276]">动态调整每个机器人的头寸分配与平滑重算净值份额 (NAV Continuous)</p>
+              <p className="text-xs text-[#8C8276]">动态调整每个机器人的头寸分配与平滑重算净值份额 (NAV Continuous)</p>
             </div>
           </div>
           <button 
@@ -90,14 +91,14 @@ export default function CapitalDistributionModal({ isOpen, onClose, onUpdated })
         {/* 组合总览卡片 */}
         <div className="p-4 bg-white border-b border-[#EBE4DA] flex items-center justify-between">
           <div>
-            <div className="text-[11px] text-[#7E7469]">组合总池资金池 (Total Capital)</div>
+            <div className="text-xs text-[#7E7469]">组合总池资金池 (Total Capital)</div>
             <div className="text-xl font-bold font-mono text-[#2E2823]">
               ${(currentTotal || (data?.total_portfolio_capital || 0)).toLocaleString(undefined, { minimumFractionDigits: 2 })} <span className="text-xs text-[#7E7469]">USDT</span>
             </div>
           </div>
           <div className="flex items-center space-x-3">
             <div className="text-right">
-              <div className="text-[11px] text-[#7E7469]">活跃策略实例</div>
+              <div className="text-xs text-[#7E7469]">活跃策略实例</div>
               <div className="text-sm font-bold font-mono text-[#4D835C]">{data?.bot_count || 0} 个机器人</div>
             </div>
             <button
@@ -140,16 +141,16 @@ export default function CapitalDistributionModal({ isOpen, onClose, onUpdated })
                   <div className="flex items-center justify-between mb-2">
                     <div className="flex items-center space-x-2">
                       <span className="font-bold text-xs text-[#2E2823]">{bot.name}</span>
-                      <span className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-[#EFE9DF] text-[#6E6458]">
+                      <span className="px-1.5 py-0.5 rounded text-xs font-mono bg-[#EFE9DF] text-[#6E6458]">
                         {bot.symbol}
                       </span>
-                      <span className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-yellow-50 text-yellow-700 border border-yellow-200">
+                      <span className="px-1.5 py-0.5 rounded text-xs font-mono bg-yellow-50 text-yellow-700 border border-yellow-200">
                         {bot.exchange || 'BINANCE'}
                       </span>
                     </div>
 
                     <div className="flex items-center space-x-2">
-                      <span className="text-[11px] text-[#7E7469]">占比:</span>
+                      <span className="text-xs text-[#7E7469]">占比:</span>
                       <span className="font-mono text-xs font-bold text-[#DE6438]">{pct}%</span>
                     </div>
                   </div>
@@ -164,9 +165,9 @@ export default function CapitalDistributionModal({ isOpen, onClose, onUpdated })
 
                   {/* 核心指标与输入编辑 */}
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 items-center text-xs">
-                    <div className="text-[11px] text-[#7E7469]">
+                    <div className="text-xs text-[#7E7469]">
                       当前净值 (NAV): <strong className="font-mono text-[#4D835C]">{Number(bot.latest_nav || 1.0).toFixed(4)}</strong>
-                      <div className="text-[10px] text-[#A89F93]">总净资产: ${(bot.current_equity || bot.allocated_capital).toFixed(2)}</div>
+                      <div className="text-xs text-[#A89F93]">总净资产: ${(bot.current_equity || bot.allocated_capital).toFixed(2)}</div>
                     </div>
 
                     <div className="relative">
@@ -182,12 +183,12 @@ export default function CapitalDistributionModal({ isOpen, onClose, onUpdated })
                         className="w-full pl-6 pr-14 py-1.5 bg-[#FAF7F2] border border-[#D8CEBE] rounded-lg font-mono text-xs focus:outline-hidden focus:border-[#DE6438] focus:bg-white"
                       />
                       <span className="absolute left-2 top-1.5 text-[#9E9486] font-bold">$</span>
-                      <span className="absolute right-2 top-1.5 text-[#9E9486] text-[10px]">USDT</span>
+                      <span className="absolute right-2 top-1.5 text-[#9E9486] text-xs">USDT</span>
                     </div>
 
                     <div className="flex items-center justify-end space-x-2">
                       {isModified && (
-                        <span className={`text-[10px] font-mono font-semibold ${delta > 0 ? 'text-[#4D835C]' : 'text-red-500'}`}>
+                        <span className={`text-xs font-mono font-semibold ${delta > 0 ? 'text-[#4D835C]' : 'text-red-500'}`}>
                           {delta > 0 ? `+${delta}` : delta}
                         </span>
                       )}
@@ -207,7 +208,7 @@ export default function CapitalDistributionModal({ isOpen, onClose, onUpdated })
         </div>
 
         {/* 底部原理说明 */}
-        <div className="p-3.5 bg-[#F2EDE4] border-t border-[#E6DFD5] text-[11px] text-[#6E6458] space-y-1">
+        <div className="p-3.5 bg-[#F2EDE4] border-t border-[#E6DFD5] text-xs text-[#6E6458] space-y-1">
           <div className="font-semibold text-[#2E2823] flex items-center space-x-1">
             <TrendingUp className="w-3.5 h-3.5 text-[#DE6438]" />
             <span>平滑动态调资与币安模拟对接说明:</span>

@@ -367,7 +367,7 @@ export default function KlineChart({
           <div className="flex items-center space-x-1.5 font-bold text-sm text-[#2E2823]">
             <span className="text-base">⚡</span>
             <span>{symbol}-USDT</span>
-            <span className="text-[10px] bg-[#EFE9DF] text-[#7E7469] px-1.5 py-0.2 rounded font-normal font-mono">
+            <span className="text-xs bg-[#EFE9DF] text-[#7E7469] px-1.5 py-0.2 rounded font-normal font-mono">
               永续合约
             </span>
           </div>
@@ -376,7 +376,7 @@ export default function KlineChart({
           <div className="flex items-center bg-[#EFE9DF] p-0.5 rounded-lg border border-[#DFD6C7]">
             <button
               onClick={() => setChartEngine("tradingview")}
-              className={`px-2 py-0.5 rounded text-[11px] font-bold transition flex items-center space-x-1 cursor-pointer ${
+              className={`px-2 py-0.5 rounded text-xs font-bold transition flex items-center space-x-1 cursor-pointer ${
                 chartEngine === "tradingview"
                   ? "bg-white text-[#DE6438] shadow-xs"
                   : "text-[#7E7469] hover:text-[#2E2823]"
@@ -386,7 +386,7 @@ export default function KlineChart({
             </button>
             <button
               onClick={() => setChartEngine("bifrost")}
-              className={`px-2 py-0.5 rounded text-[11px] font-bold transition flex items-center space-x-1 cursor-pointer ${
+              className={`px-2 py-0.5 rounded text-xs font-bold transition flex items-center space-x-1 cursor-pointer ${
                 chartEngine === "bifrost"
                   ? "bg-white text-[#DE6438] shadow-xs"
                   : "text-[#7E7469] hover:text-[#2E2823]"
@@ -404,7 +404,7 @@ export default function KlineChart({
               <button
                 key={tf}
                 onClick={() => setActiveInterval(tf)}
-                className={`px-2 py-0.5 rounded text-[11px] font-mono transition cursor-pointer ${
+                className={`px-2 py-0.5 rounded text-xs font-mono transition cursor-pointer ${
                   activeInterval === tf
                     ? "bg-white text-[#DE6438] font-bold shadow-xs"
                     : "text-[#7E7469] hover:text-[#2E2823]"
@@ -416,7 +416,7 @@ export default function KlineChart({
           </div>
 
           {chartEngine === "bifrost" && (
-            <div className="flex items-center space-x-2 text-[11px] text-[#7E7469]">
+            <div className="flex items-center space-x-2 text-xs text-[#7E7469]">
               <label className="flex items-center space-x-1 cursor-pointer">
                 <input 
                   type="checkbox" 
@@ -457,7 +457,7 @@ export default function KlineChart({
             return (
               <div className="flex items-center space-x-1.5 px-2 py-0.5 rounded-md bg-[#FAF4EB] border border-[#E5DACB]">
                 <span className={`w-2 h-2 rounded-full ${st.dot}`}></span>
-                <span className="font-mono text-[10px] text-[#7E7469]">{st.text}</span>
+                <span className="font-mono text-xs text-[#7E7469]">{st.text}</span>
               </div>
             );
           })()}
@@ -491,7 +491,7 @@ export default function KlineChart({
               </div>
             )}
             {klinesState.status === 'ok' && klinesState.provenance === 'SIMULATED' && (
-              <div className="absolute top-2 left-1/2 -translate-x-1/2 px-3 py-1 rounded-lg bg-[#FDF3E3] border border-[#F1DDB8] text-[11px] font-semibold text-[#B9770E] pointer-events-none">
+              <div className="absolute top-2 left-1/2 -translate-x-1/2 px-3 py-1 rounded-lg bg-[#FDF3E3] border border-[#F1DDB8] text-xs font-semibold text-[#B9770E] pointer-events-none">
                 ⚠️ 所有外部行情源不可用，当前为离线仿真 K 线，非真实行情
               </div>
             )}
@@ -500,7 +500,7 @@ export default function KlineChart({
       </div>
 
       {/* 底部行情条 */}
-      <div className="h-7 px-4 bg-[#FAF7F2] border-t border-[#F0EAE1] flex items-center justify-between text-[11px] text-[#7E7469]">
+      <div className="h-7 px-4 bg-[#FAF7F2] border-t border-[#F0EAE1] flex items-center justify-between text-xs text-[#7E7469]">
         <div className="flex items-center space-x-4">
           <span>最新标记价: <strong className="font-mono text-[#2E2823]">{Number.isFinite(latestPrice) ? `$${latestPrice.toFixed(2)}` : '--'}</strong></span>
           <span>价格源: <span className={`font-mono ${wsConnected ? 'text-[#3D784E]' : 'text-[#9E917F]'}`}>{wsConnected ? 'Binance WS 实时' : 'Binance WS 未连接'}</span></span>

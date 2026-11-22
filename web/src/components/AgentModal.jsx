@@ -37,7 +37,7 @@ export default function AgentModal({ agent, onClose }) {
               <div className="flex items-center space-x-2">
                 <h3 className="font-bold text-base text-[#2E2823]">{agent.name}</h3>
                 <span 
-                  className="text-[10px] px-2 py-0.5 rounded-full font-mono font-bold text-white shadow-xs"
+                  className="text-xs px-2 py-0.5 rounded-full font-mono font-bold text-white shadow-xs"
                   style={{ backgroundColor: agent.color }}
                 >
                   {agent.badge}
@@ -60,7 +60,7 @@ export default function AgentModal({ agent, onClose }) {
           
           {/* M5：机器人尚未产生推演结果时明确提示，不展示任何编造的结论 */}
           {agent.pending && (
-            <div className="bg-[#FDF3E3] p-3 rounded-xl border border-[#F1DDB8] text-[#B9770E] text-[11px] font-semibold">
+            <div className="bg-[#FDF3E3] p-3 rounded-xl border border-[#F1DDB8] text-[#B9770E] text-xs font-semibold">
               ⏳ 该机器人尚未产生推演结果，以下仅为角色说明；首轮决策周期完成后将展示真实论据与数据。
             </div>
           )}
@@ -73,7 +73,7 @@ export default function AgentModal({ agent, onClose }) {
           {/* 2. 决策结论与置信度量化仪表 */}
           <div className="bg-white p-3.5 rounded-xl border border-[#E6DFD5] space-y-2 shadow-xs">
             <div className="flex items-center justify-between">
-              <span className="font-semibold text-[#8C8276] uppercase tracking-wide text-[11px]">
+              <span className="font-semibold text-[#8C8276] uppercase tracking-wide text-xs">
                 当前决策观点 (Decision Stance)
               </span>
               <span 
@@ -89,7 +89,7 @@ export default function AgentModal({ agent, onClose }) {
 
             {/* 置信度进度槽 */}
             <div className="space-y-1 pt-1">
-              <div className="flex justify-between text-[11px] text-[#7E7469] font-mono">
+              <div className="flex justify-between text-xs text-[#7E7469] font-mono">
                 <span>模型确定性置信度 (Confidence Score):</span>
                 <span className="font-bold text-[#2E2823]">
                   {Number.isFinite(agent.confidence) ? `${Math.round(agent.confidence * 100)}%` : '--'}
@@ -113,7 +113,7 @@ export default function AgentModal({ agent, onClose }) {
               <span>🎯</span>
               <span>核心决策论据 (Key Thesis)</span>
             </div>
-            <p className="text-[#4A4237] leading-relaxed text-[11px] bg-[#FAF7F2] p-2.5 rounded-lg border border-[#EDE5DA]">
+            <p className="text-[#4A4237] leading-relaxed text-xs bg-[#FAF7F2] p-2.5 rounded-lg border border-[#EDE5DA]">
               {agent.keyThesis || '--'}
             </p>
           </div>
@@ -126,10 +126,10 @@ export default function AgentModal({ agent, onClose }) {
             </div>
             <div className="space-y-1.5">
               {(!agent.evidence || agent.evidence.length === 0) && (
-                <div className="text-[11px] text-[#9E917F]">暂无数据证据</div>
+                <div className="text-xs text-[#9E917F]">暂无数据证据</div>
               )}
               {(agent.evidence || []).map((item, idx) => (
-                <div key={idx} className="flex items-start space-x-2 text-[11px] text-[#4A4237]">
+                <div key={idx} className="flex items-start space-x-2 text-xs text-[#4A4237]">
                   <span className="text-[#4D835C] font-bold">✓</span>
                   <span className="leading-tight">{item}</span>
                 </div>
@@ -139,17 +139,17 @@ export default function AgentModal({ agent, onClose }) {
 
           {/* 5. 观点失效与止损条件 (Invalidation Stop Condition) */}
           <div className="bg-[#FCF7F5] p-3 rounded-xl border border-[#F2D6CA] space-y-1">
-            <div className="font-bold text-[11px] text-[#C24D4D] flex items-center space-x-1">
+            <div className="font-bold text-xs text-[#C24D4D] flex items-center space-x-1">
               <span>🛡️</span>
               <span>立论失效与防守点位 (Invalidation Rule)</span>
             </div>
-            <p className="text-[#8C3A3A] text-[11px] leading-relaxed">
+            <p className="text-[#8C3A3A] text-xs leading-relaxed">
               {agent.invalidation || '--'}
             </p>
           </div>
 
           {/* 6. 大语言模型完整思考独白 (Chain-of-Thought) */}
-          <div className="bg-[#241F1C] p-3 rounded-xl border border-[#3D352E] space-y-1 text-[#EAE2D8] font-mono text-[10px]">
+          <div className="bg-[#241F1C] p-3 rounded-xl border border-[#3D352E] space-y-1 text-[#EAE2D8] font-mono text-xs">
             <div className="flex items-center justify-between text-[#8E8276] border-b border-[#3D352E] pb-1">
               <span>🧠 LLM Chain-of-Thought Stream</span>
               <span>Latency: {agent.latency || '--'}</span>
@@ -163,7 +163,7 @@ export default function AgentModal({ agent, onClose }) {
 
         {/* 弹窗底栏操作 */}
         <div className="p-3 bg-white border-t border-[#EBE3D7] flex items-center justify-between">
-          <span className="text-[10px] text-[#9E917F]">
+          <span className="text-xs text-[#9E917F]">
             审计追踪 ID: <code className="bg-[#EFE9DF] px-1 rounded">{agent.traceId || '--'}</code>
           </span>
           <button 

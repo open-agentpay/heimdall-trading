@@ -168,7 +168,7 @@ export default function DecisionArena({
         {/* 右侧：刷新控制与状态 */}
         <div className="flex items-center space-x-2">
           {decisionRecord?.timestamp && (
-            <span className="text-[11px] text-[#7E7469] font-mono bg-white/80 border border-[#E2D9CC] px-2 py-0.5 rounded-md hidden md:inline-flex items-center space-x-1">
+            <span className="text-xs text-[#7E7469] font-mono bg-white/80 border border-[#E2D9CC] px-2 py-0.5 rounded-md hidden md:inline-flex items-center space-x-1">
               <span>🕒</span>
               <span>推演: {new Date(decisionRecord.timestamp).toLocaleTimeString()}</span>
             </span>
@@ -177,7 +177,7 @@ export default function DecisionArena({
           {onToggleAutoRefresh && (
             <button
               onClick={onToggleAutoRefresh}
-              className={`text-[11px] px-2.5 py-1 rounded-lg border font-medium flex items-center space-x-1 transition ${
+              className={`text-xs px-2.5 py-1 rounded-lg border font-medium flex items-center space-x-1 transition ${
                 autoRefresh 
                   ? "bg-[#EBF5EE] text-[#4D835C] border-[#D1E8D7]" 
                   : "bg-[#F5F1EA] text-[#8C8071] border-[#DFD6C7]"
@@ -202,7 +202,7 @@ export default function DecisionArena({
           )}
 
           <span className="text-[#C4B7A4]">|</span>
-          <span className="text-[11px] text-[#9E917F] bg-white border border-[#E2D9CC] px-2 py-0.5 rounded-md hidden lg:inline">
+          <span className="text-xs text-[#9E917F] bg-white border border-[#E2D9CC] px-2 py-0.5 rounded-md hidden lg:inline">
             💡 点击任一席位查看论据
           </span>
         </div>
@@ -213,7 +213,7 @@ export default function DecisionArena({
 
         {/* 模式 A：大画幅环形牌桌博弈 (Arena Mode) */}
         {viewMode === "arena" && (
-          <div className="w-full h-full max-w-5xl xl:max-w-6xl max-h-[650px] min-h-[500px] poker-arena relative flex items-center justify-center p-6 select-none shadow-xl transition-all">
+          <div className="w-full h-full max-w-5xl xl:max-w-6xl max-h-[650px] min-h-[500px] poker-arena relative flex items-center justify-center p-6 shadow-xl transition-all">
             
             {/* 席位 1 (上方中央)：Analyst (技术面分析师) */}
             {analyst && (
@@ -225,13 +225,13 @@ export default function DecisionArena({
                   <span className="text-xl">{analyst.avatar}</span>
                   <div>
                     <div className="text-xs font-bold text-[#2E2823]">{analyst.name}</div>
-                    <div className="text-[10px] text-[#3E6B89] font-semibold">{analyst.tag}</div>
+                    <div className="text-xs text-[#3E6B89] font-semibold">{analyst.tag}</div>
                   </div>
-                  <span className="text-[10px] bg-[#E9F2F7] text-[#3E6B89] px-2 py-0.5 rounded font-mono font-bold">
+                  <span className="text-xs bg-[#E9F2F7] text-[#3E6B89] px-2 py-0.5 rounded font-mono font-bold">
                     {analyst.badge}
                   </span>
                 </div>
-                <div className="text-[10px] text-[#7E7469] mt-0.5 bg-white/95 px-2.5 py-0.5 rounded-full border border-[#DFD6C7] shadow-xs max-w-[240px] truncate">
+                <div className="text-xs text-[#7E7469] mt-0.5 bg-white/95 px-2.5 py-0.5 rounded-full border border-[#DFD6C7] shadow-xs max-w-[240px] truncate">
                   🔍 {analyst.keyThesis ? analyst.keyThesis.slice(0, 36) : '等待推演'}
                 </div>
               </div>
@@ -247,7 +247,7 @@ export default function DecisionArena({
                   <span className="text-lg">{sentiment.avatar}</span>
                   <div>
                     <div className="text-xs font-bold text-[#2E2823]">{sentiment.name}</div>
-                    <div className="text-[10px] text-[#4D835C] font-semibold">{sentiment.tag}</div>
+                    <div className="text-xs text-[#4D835C] font-semibold">{sentiment.tag}</div>
                   </div>
                 </div>
                 <div className="text-[9.5px] text-[#4D835C] mt-0.5 font-bold bg-[#EBF5EE] px-2 py-0.5 rounded shadow-xs max-w-[180px] truncate">
@@ -266,7 +266,7 @@ export default function DecisionArena({
                   <span className="text-lg">{riskOfficer.avatar}</span>
                   <div>
                     <div className="text-xs font-bold text-[#2E2823]">{riskOfficer.name}</div>
-                    <div className="text-[10px] text-[#4D835C] font-semibold">{riskOfficer.tag || '等待推演'}</div>
+                    <div className="text-xs text-[#4D835C] font-semibold">{riskOfficer.tag || '等待推演'}</div>
                   </div>
                 </div>
               </div>
@@ -282,10 +282,10 @@ export default function DecisionArena({
                   <span className="text-2xl">{bull.avatar}</span>
                   <div>
                     <div className="text-xs font-bold text-[#4D835C]">{bull.name}</div>
-                    <div className="text-[10px] text-[#558B64] font-medium">{bull.tag || '多头进攻立论'}</div>
+                    <div className="text-xs text-[#558B64] font-medium">{bull.tag || '多头进攻立论'}</div>
                   </div>
                 </div>
-                <div className="w-44 text-center text-[10px] text-[#2E2823] mt-1.5 bg-white p-2 rounded-xl border border-[#D5E5D8] shadow-xs leading-snug line-clamp-2">
+                <div className="w-44 text-center text-xs text-[#2E2823] mt-1.5 bg-white p-2 rounded-xl border border-[#D5E5D8] shadow-xs leading-snug line-clamp-2">
                   “{bull.keyThesis ? bull.keyThesis.slice(0, 48) : '等待首轮推演'}”
                 </div>
               </div>
@@ -301,10 +301,10 @@ export default function DecisionArena({
                   <span className="text-2xl">{bear.avatar}</span>
                   <div>
                     <div className="text-xs font-bold text-[#C24D4D]">{bear.name}</div>
-                    <div className="text-[10px] text-[#A63F3F] font-medium">{bear.tag || '空头风险质询'}</div>
+                    <div className="text-xs text-[#A63F3F] font-medium">{bear.tag || '空头风险质询'}</div>
                   </div>
                 </div>
-                <div className="w-44 text-center text-[10px] text-[#2E2823] mt-1.5 bg-white p-2 rounded-xl border border-[#F2D4D4] shadow-xs leading-snug line-clamp-2">
+                <div className="w-44 text-center text-xs text-[#2E2823] mt-1.5 bg-white p-2 rounded-xl border border-[#F2D4D4] shadow-xs leading-snug line-clamp-2">
                   “{bear.keyThesis ? bear.keyThesis.slice(0, 48) : '等待首轮推演'}”
                 </div>
               </div>
@@ -320,7 +320,7 @@ export default function DecisionArena({
                   <span className="text-lg">{strategy.avatar}</span>
                   <div>
                     <div className="text-xs font-bold text-[#2E2823]">{strategy.name}</div>
-                    <div className="text-[10px] text-[#D48B38] font-semibold">{strategy.tag || '提案生成'}</div>
+                    <div className="text-xs text-[#D48B38] font-semibold">{strategy.tag || '提案生成'}</div>
                   </div>
                 </div>
               </div>
@@ -336,7 +336,7 @@ export default function DecisionArena({
                   <span className="text-2xl">{moderator.avatar}</span>
                   <div>
                     <div className="text-xs font-bold text-[#DE6438]">{moderator.name}</div>
-                    <div className="text-[10px] font-semibold text-[#2E2823]">{moderator.tag || '裁定立论'}</div>
+                    <div className="text-xs font-semibold text-[#2E2823]">{moderator.tag || '裁定立论'}</div>
                   </div>
                   <div className="text-xs font-mono font-bold bg-[#DE6438] text-white px-2.5 py-0.5 rounded shadow-xs">
                     {moderator.badge || '终审裁决'}
@@ -355,7 +355,7 @@ export default function DecisionArena({
                   <span className="text-lg">{hardGuard.avatar}</span>
                   <div>
                     <div className="text-xs font-bold text-[#2E2823]">{hardGuard.name}</div>
-                    <div className="text-[10px] text-[#4D835C] font-semibold">{hardGuard.tag || '等待推演'}</div>
+                    <div className="text-xs text-[#4D835C] font-semibold">{hardGuard.tag || '等待推演'}</div>
                   </div>
                 </div>
               </div>
@@ -372,7 +372,7 @@ export default function DecisionArena({
                 </div>
                 <div className="text-right">
                   <span className={`font-mono font-bold text-lg ${hasLatestPrice ? 'text-[#4D835C]' : 'text-[#9E917F]'}`}>{latestPriceText}</span>
-                  <span className={`block text-[10px] font-mono font-semibold ${hasLatestPrice ? 'text-[#4D835C]' : 'text-[#B9770E]'}`}>
+                  <span className={`block text-xs font-mono font-semibold ${hasLatestPrice ? 'text-[#4D835C]' : 'text-[#B9770E]'}`}>
                     {hasLatestPrice ? '多源互补 (Binance / HL)' : '等待实时行情'}
                   </span>
                 </div>
@@ -410,7 +410,7 @@ export default function DecisionArena({
                       <span className="text-[#DE6438] font-bold">{fmtPx(sizeUsd)}{sizeUsd ? ' USD' : ''}</span>
                     </div>
                     {idempotencyKey && (
-                      <div className="flex justify-between font-mono text-[10px] text-[#9E9486] pt-1 border-t border-[#F0EAE1]">
+                      <div className="flex justify-between font-mono text-xs text-[#9E9486] pt-1 border-t border-[#F0EAE1]">
                         <span>幂等防重放:</span>
                         <span className="font-mono text-[#7E7469]">{idempotencyKey.slice(0, 18)}...</span>
                       </div>
@@ -419,7 +419,7 @@ export default function DecisionArena({
                 ) : (
                   <div className="py-2.5 px-3 bg-[#FAF7F2] rounded-xl border border-[#EDE5DA] text-center space-y-1 my-1">
                     <p className="font-semibold text-[#7E7469] text-xs">{consensus ? '本轮无交易提案' : '等待首轮推演'}</p>
-                    <p className="text-[11px] text-[#9E9486] leading-relaxed">
+                    <p className="text-xs text-[#9E9486] leading-relaxed">
                       {!consensus
                         ? '该机器人尚未产生推演结果，暂无多空结论与交易提案'
                         : consensus === 'NEUTRAL'
@@ -432,11 +432,11 @@ export default function DecisionArena({
 
               {/* 七大铁律通过徽章 */}
               <div className="pt-2.5 border-t border-[#F0EAE1] flex items-center justify-between">
-                <span className="text-[10px] text-[#7E7469] flex items-center space-x-1">
+                <span className="text-xs text-[#7E7469] flex items-center space-x-1">
                   <span>🛡️</span>
                   <span>底层确定性硬风控</span>
                 </span>
-                <span className={`text-[10px] font-bold px-2 py-0.5 rounded font-mono border ${riskBadge.className}`}>
+                <span className={`text-xs font-bold px-2 py-0.5 rounded font-mono border ${riskBadge.className}`}>
                   {riskBadge.text}
                 </span>
               </div>
@@ -467,7 +467,7 @@ export default function DecisionArena({
                   <span>⚔️</span>
                   <span>智能体对抗辩论结论</span>
                 </h4>
-                <span className="text-[10px] bg-[#DE6438] text-white px-2 py-0.5 rounded font-mono font-bold">
+                <span className="text-xs bg-[#DE6438] text-white px-2 py-0.5 rounded font-mono font-bold">
                   {!consensus ? '等待推演' : consensus === 'LONG' ? '做多优势' : consensus === 'SHORT' ? '沽空优势' : '空仓观望'}
                 </span>
               </div>
@@ -482,7 +482,7 @@ export default function DecisionArena({
                     <span className="text-xl">{agent.avatar}</span>
                     <div className="overflow-hidden">
                       <div className="text-xs font-bold truncate text-[#2E2823]">{agent.name}</div>
-                      <div className="text-[10px] text-[#7E7469] truncate">{agent.badge}</div>
+                      <div className="text-xs text-[#7E7469] truncate">{agent.badge}</div>
                     </div>
                   </div>
                 ))}
@@ -491,11 +491,11 @@ export default function DecisionArena({
               <div className="bg-[#FAF7F2] p-3.5 rounded-xl border border-[#E2D9CC] text-xs space-y-1">
                 <div className="font-bold text-[#DE6438]">提案摘要: {symbol} 现价 {latestPriceText}</div>
                 {proposal ? (
-                  <div className="text-[11px] text-[#4A4237]">委托 {fmtPx(targetEntry)} · 止损 {fmtPx(stopLoss)} · 止盈 {fmtPx(takeProfit)} · 杠杆 {leverage.toFixed(1)}x</div>
+                  <div className="text-xs text-[#4A4237]">委托 {fmtPx(targetEntry)} · 止损 {fmtPx(stopLoss)} · 止盈 {fmtPx(takeProfit)} · 杠杆 {leverage.toFixed(1)}x</div>
                 ) : (
-                  <div className="text-[11px] text-[#9E9486]">{consensus ? '本轮无交易提案' : '等待首轮推演'}</div>
+                  <div className="text-xs text-[#9E9486]">{consensus ? '本轮无交易提案' : '等待首轮推演'}</div>
                 )}
-                <div className={`text-[10px] font-semibold ${riskState === 'approved' ? 'text-[#4D835C]' : riskState === 'rejected' ? 'text-[#C24D4D]' : 'text-[#7A6F62]'}`}>
+                <div className={`text-xs font-semibold ${riskState === 'approved' ? 'text-[#4D835C]' : riskState === 'rejected' ? 'text-[#C24D4D]' : 'text-[#7A6F62]'}`}>
                   {riskBadge.text}
                 </div>
               </div>
@@ -530,7 +530,7 @@ export default function DecisionArena({
 
         {/* 中间：杠杆动态滑块调节 */}
         <div className="flex items-center space-x-3 bg-white px-3.5 py-1.5 rounded-xl border border-[#D8CEBE] shadow-xs">
-          <span className="text-[11px] text-[#7E7469] font-medium">策略执行杠杆:</span>
+          <span className="text-xs text-[#7E7469] font-medium">策略执行杠杆:</span>
           <input 
             type="range" 
             min="1" 

@@ -36,7 +36,7 @@ export default function SentimentView({
   const scoreColor = sentimentScore === null ? 'text-[#9E9486]' : sentimentScore >= 0.15 ? 'text-[#3D784E]' : sentimentScore <= -0.15 ? 'text-[#C24D4D]' : 'text-[#5A5046]';
 
   return (
-    <div className="flex-1 flex flex-col bg-[#F6F2EB] overflow-hidden select-none">
+    <div className="flex-1 flex flex-col bg-[#F6F2EB] overflow-hidden">
       {/* 顶部控制栏 */}
       <div className="h-14 bg-[#FAF7F2] border-b border-[#E6DFD5] px-6 flex items-center justify-between shrink-0">
         <div className="flex items-center space-x-3">
@@ -46,11 +46,11 @@ export default function SentimentView({
           <div>
             <h1 className="text-sm font-bold text-[#2E2823] flex items-center space-x-2">
               <span>{sym} 真实情绪与链上情报雷达 (Sentiment &amp; Provenance)</span>
-              <span className="text-[10px] font-mono bg-[#FBEFEA] text-[#DE6438] border border-[#F2D6CA] px-2 py-0.5 rounded-full font-semibold">
+              <span className="text-xs font-mono bg-[#FBEFEA] text-[#DE6438] border border-[#F2D6CA] px-2 py-0.5 rounded-full font-semibold">
                 来源: {provenance}
               </span>
             </h1>
-            <p className="text-[11px] text-[#7E7469]">
+            <p className="text-xs text-[#7E7469]">
               严格零编造原则：仅呈现后端真实采集的情绪指标与溯源情报，无外部数据源时保持中性兜底
             </p>
           </div>
@@ -65,7 +65,7 @@ export default function SentimentView({
             <ShieldCheck className="w-5 h-5 text-[#3D784E] shrink-0" />
             <div className="text-xs text-[#4A4237] leading-relaxed">{summaryText}</div>
           </div>
-          <span className="text-[10px] font-mono px-2 py-1 rounded bg-[#FAF7F2] border border-[#E6DFD5] text-[#7E7469] shrink-0 ml-4">
+          <span className="text-xs font-mono px-2 py-1 rounded bg-[#FAF7F2] border border-[#E6DFD5] text-[#7E7469] shrink-0 ml-4">
             {hasLiveReport ? '已接入实时感知' : '等待首次推演'}
           </span>
         </div>
@@ -75,7 +75,7 @@ export default function SentimentView({
           <div className="bg-white p-4 rounded-xl border border-[#E6DFD5] shadow-xs space-y-2">
             <div className="flex items-center justify-between text-xs font-bold text-[#7E7469]">
               <span>综合情绪打分</span>
-              <span className="text-[10px] bg-[#FAF7F2] px-2 py-0.5 rounded font-mono">{scoreLabel}</span>
+              <span className="text-xs bg-[#FAF7F2] px-2 py-0.5 rounded font-mono">{scoreLabel}</span>
             </div>
             <div className="flex items-baseline space-x-2">
               <span className={`text-3xl font-extrabold font-mono ${scoreColor}`}>
@@ -83,7 +83,7 @@ export default function SentimentView({
               </span>
               <span className="text-xs text-[#7E7469]">[-1.0 ~ +1.0]</span>
             </div>
-            <p className="text-[11px] text-[#7E7469]">
+            <p className="text-xs text-[#7E7469]">
               由后端 SentimentCollector 结合真实费率/舆情计算
             </p>
           </div>
@@ -91,7 +91,7 @@ export default function SentimentView({
           <div className="bg-white p-4 rounded-xl border border-[#E6DFD5] shadow-xs space-y-2">
             <div className="flex items-center justify-between text-xs font-bold text-[#7E7469]">
               <span>全网恐慌贪婪指数</span>
-              <span className="text-[10px] bg-[#FAF7F2] px-2 py-0.5 rounded font-mono">FNG</span>
+              <span className="text-xs bg-[#FAF7F2] px-2 py-0.5 rounded font-mono">FNG</span>
             </div>
             <div className="flex items-baseline space-x-2">
               <span className="text-3xl font-extrabold font-mono text-[#2E2823]">
@@ -99,7 +99,7 @@ export default function SentimentView({
               </span>
               <span className="text-xs text-[#7E7469]">/ 100</span>
             </div>
-            <div className="text-[11px] text-[#7E7469] flex items-center space-x-1">
+            <div className="text-xs text-[#7E7469] flex items-center space-x-1">
               <TrendingUp className="w-3.5 h-3.5 shrink-0 text-[#3D784E]" />
               <span>{fearGreed !== null ? '来自实时恐慌贪婪数据源' : '未返回恐慌指数（已做中性降级）'}</span>
             </div>
@@ -108,7 +108,7 @@ export default function SentimentView({
           <div className="bg-white p-4 rounded-xl border border-[#E6DFD5] shadow-xs space-y-2">
             <div className="flex items-center justify-between text-xs font-bold text-[#7E7469]">
               <span>{sym} 巨鲸动向定性</span>
-              <span className="text-[10px] bg-[#FAF7F2] px-2 py-0.5 rounded font-mono">{whaleActivity || '--'}</span>
+              <span className="text-xs bg-[#FAF7F2] px-2 py-0.5 rounded font-mono">{whaleActivity || '--'}</span>
             </div>
             <div className="text-xl font-extrabold font-mono text-[#2E2823] pt-1">
               {whaleActivity === 'ACCUMULATION'
@@ -119,7 +119,7 @@ export default function SentimentView({
                 ? '中性观望'
                 : '--'}
             </div>
-            <p className="text-[11px] text-[#7E7469]">
+            <p className="text-xs text-[#7E7469]">
               无链上巨鲸 API 密钥时严格返回 NEUTRAL，绝不伪造净流出
             </p>
           </div>
@@ -127,12 +127,12 @@ export default function SentimentView({
           <div className="bg-white p-4 rounded-xl border border-[#E6DFD5] shadow-xs space-y-2">
             <div className="flex items-center justify-between text-xs font-bold text-[#7E7469]">
               <span>{sym} 衍生品拥挤度</span>
-              <span className="text-[10px] bg-[#FAF7F2] px-2 py-0.5 rounded font-mono">{crowdingRisk || '--'}</span>
+              <span className="text-xs bg-[#FAF7F2] px-2 py-0.5 rounded font-mono">{crowdingRisk || '--'}</span>
             </div>
             <div className="text-xl font-extrabold font-mono text-[#2E2823] pt-1">
               {crowdingRisk || '--'}
             </div>
-            <p className="text-[11px] text-[#7E7469]">
+            <p className="text-xs text-[#7E7469]">
               用于识别资金费率极端拥挤与多空踩踏风险
             </p>
           </div>
@@ -146,7 +146,7 @@ export default function SentimentView({
                 <Newspaper className="w-4 h-4 text-[#DE6438]" />
                 <span>{sym} 实时采集资讯快讯</span>
               </h3>
-              <span className="text-[10px] text-[#7E7469]">共 {newsItems.length} 条真实记录</span>
+              <span className="text-xs text-[#7E7469]">共 {newsItems.length} 条真实记录</span>
             </div>
 
             {newsItems.length === 0 ? (
@@ -157,7 +157,7 @@ export default function SentimentView({
               <div className="space-y-2.5">
                 {newsItems.map((news, idx) => (
                   <div key={idx} className="p-3 bg-[#FAF7F2] rounded-lg border border-[#EDE5DA] space-y-1">
-                    <div className="flex items-center justify-between text-[10px] text-[#7E7469]">
+                    <div className="flex items-center justify-between text-xs text-[#7E7469]">
                       <span className="font-semibold text-[#5A5046]">{news.source || provenance}</span>
                       <span>{news.time || news.published_at || '--'}</span>
                     </div>
@@ -176,7 +176,7 @@ export default function SentimentView({
                 <Activity className="w-4 h-4 text-[#3D784E]" />
                 <span>{sym} 链上大额异动监测 (Whale Tracker)</span>
               </h3>
-              <span className="text-[10px] font-mono text-[#7E7469]">共 {whaleTransfers.length} 条记录</span>
+              <span className="text-xs font-mono text-[#7E7469]">共 {whaleTransfers.length} 条记录</span>
             </div>
 
             {whaleTransfers.length === 0 ? (
@@ -189,11 +189,11 @@ export default function SentimentView({
                   <div key={idx} className="p-3 bg-[#FAF7F2] rounded-lg border border-[#EDE5DA] flex items-center justify-between text-xs">
                     <div>
                       <div className="font-bold text-[#2E2823]">{tx.amount}</div>
-                      <div className="text-[10px] text-[#7E7469] mt-0.5">
+                      <div className="text-xs text-[#7E7469] mt-0.5">
                         {tx.from} ➔ {tx.to}
                       </div>
                     </div>
-                    <div className="text-right text-[10px] text-[#9E9486]">
+                    <div className="text-right text-xs text-[#9E9486]">
                       <div>{tx.time}</div>
                       <div className="text-[#DE6438]">{tx.txHash}</div>
                     </div>

@@ -44,13 +44,13 @@ export default function Sidebar({
   const ddPct = currentBot ? Math.min(100, (currentBot.maxDrawdownPct / 5.0) * 100) : 0;
 
   return (
-    <aside className="w-64 bg-[#FAF7F2] border-r border-[#E6DFD5] flex flex-col shrink-0 select-none">
+    <aside className="w-64 bg-[#FAF7F2] border-r border-[#E6DFD5] flex flex-col shrink-0 min-h-0 overflow-y-auto">
       {/* 分组 1: 机器人实例列表 */}
       <div className="p-3 border-b border-[#EBE4DA]">
         <div className="flex items-center justify-between text-xs font-semibold text-[#8C8276] uppercase tracking-wider mb-2">
           <div className="flex items-center space-x-1.5">
             <span>策略机器人</span>
-            <span className="text-[10px] bg-[#EFE9DF] px-1.5 py-0.5 rounded text-[#5E554B] font-mono">
+            <span className="text-xs bg-[#EFE9DF] px-1.5 py-0.5 rounded text-[#5E554B] font-mono">
               {bots.length} 个
             </span>
           </div>
@@ -58,7 +58,7 @@ export default function Sidebar({
             <button
               onClick={onOpenCapitalModal}
               title="查看与修改各机器人资金占比"
-              className="px-1.5 py-0.5 rounded bg-[#FAF7F2] hover:bg-white border border-[#DDD5C7] text-[#5E554B] hover:text-[#DE6438] transition text-[10px] font-medium flex items-center space-x-0.5"
+              className="px-1.5 py-0.5 rounded bg-[#FAF7F2] hover:bg-white border border-[#DDD5C7] text-[#5E554B] hover:text-[#DE6438] transition text-xs font-medium flex items-center space-x-0.5"
             >
               <PieChart className="w-2.5 h-2.5 text-[#DE6438]" />
               <span>配比</span>
@@ -66,7 +66,7 @@ export default function Sidebar({
             <button
               onClick={onOpenCreateBotModal}
               title="新建策略交易机器人"
-              className="px-1.5 py-0.5 rounded bg-[#DE6438] hover:bg-[#C5532A] text-white transition text-[10px] font-bold flex items-center space-x-0.5 shadow-xs"
+              className="px-1.5 py-0.5 rounded bg-[#DE6438] hover:bg-[#C5532A] text-white transition text-xs font-bold flex items-center space-x-0.5 shadow-xs"
             >
               <Plus className="w-2.5 h-2.5" />
               <span>新建</span>
@@ -76,7 +76,7 @@ export default function Sidebar({
 
         <div className="space-y-1.5 max-h-[340px] overflow-y-auto">
           {bots.length === 0 ? (
-            <div className="p-3 text-center text-[11px] text-[#8C8276] bg-white rounded-xl border border-[#E6DFD5]">
+            <div className="p-3 text-center text-xs text-[#8C8276] bg-white rounded-xl border border-[#E6DFD5]">
               正在加载机器人列表...
             </div>
           ) : (
@@ -93,7 +93,7 @@ export default function Sidebar({
                 <div className="flex items-center justify-between mb-1">
                   <span className="text-xs font-bold text-[#2E2823] truncate pr-1">{bot.name}</span>
                   <span
-                    className={`text-[10px] px-1.5 py-0.2 rounded font-mono shrink-0 ${
+                    className={`text-xs px-1.5 py-0.2 rounded font-mono shrink-0 ${
                       activeBotId === bot.id
                         ? 'bg-[#DE6438] text-white'
                         : 'bg-[#E2DACF] text-[#6E6458]'
@@ -102,11 +102,11 @@ export default function Sidebar({
                     {bot.tag}
                   </span>
                 </div>
-                <div className="flex items-center justify-between text-[11px] text-[#7E7469]">
+                <div className="flex items-center justify-between text-xs text-[#7E7469]">
                   <span>{bot.symbol} · {bot.exchange}</span>
                   <span className="font-mono text-[#4D835C] font-semibold">NAV {bot.nav.toFixed(3)}</span>
                 </div>
-                <div className="mt-1.5 pt-1.5 border-t border-[#F2EDE4] flex items-center justify-between text-[10px] text-[#9E9486]">
+                <div className="mt-1.5 pt-1.5 border-t border-[#F2EDE4] flex items-center justify-between text-xs text-[#9E9486]">
                   <div className="flex items-center space-x-1.5">
                     <span className="font-mono px-1 rounded bg-[#F5F0E6] text-[#6E6458]">{bot.marketType} · {bot.executionMode}</span>
                     {bot.macroBias && (
@@ -137,32 +137,32 @@ export default function Sidebar({
       </div>
 
       {/* 分组 2: 数据底座与信号感知源状态树 */}
-      <div className="flex-1 overflow-y-auto p-3">
+      <div className="flex-1 min-h-[160px] overflow-y-auto p-3">
         <div className="flex items-center justify-between text-xs font-semibold text-[#8C8276] uppercase tracking-wider mb-2">
           <span>底座信号源 (Data Hub)</span>
-          <span className="text-[10px] text-[#A89F93]">零前视接入</span>
+          <span className="text-xs text-[#A89F93]">零前视接入</span>
         </div>
 
         <div className="space-y-1 text-xs text-[#5E554B]">
           <div className="flex items-center space-x-2 p-1.5 rounded-lg hover:bg-[#EFE9DF]">
             <span className="text-[#DE6438]">📁</span>
             <span className="font-medium">multi_source.klines</span>
-            <span className="ml-auto text-[10px] text-[#4D835C] font-mono">已封盘</span>
+            <span className="ml-auto text-xs text-[#4D835C] font-mono">已封盘</span>
           </div>
           <div className="flex items-center space-x-2 p-1.5 rounded-lg hover:bg-[#EFE9DF]">
             <span className="text-[#3E6B89]">⚡</span>
             <span>funding_rate_hub</span>
-            <span className="ml-auto text-[10px] text-[#7E7469] font-mono">实时</span>
+            <span className="ml-auto text-xs text-[#7E7469] font-mono">实时</span>
           </div>
           <div className="flex items-center space-x-2 p-1.5 rounded-lg hover:bg-[#EFE9DF]">
             <span className="text-[#4D835C]">🛡️</span>
             <span>oms_native_sl_tp</span>
-            <span className="ml-auto text-[10px] text-[#4D835C] font-mono">启用</span>
+            <span className="ml-auto text-xs text-[#4D835C] font-mono">启用</span>
           </div>
           <div className="flex items-center space-x-2 p-1.5 rounded-lg hover:bg-[#EFE9DF]">
             <span className="text-[#A25D8F]">📅</span>
             <span>macro_fomc_guard</span>
-            <span className="ml-auto text-[10px] text-[#8C8276] font-mono">监听中</span>
+            <span className="ml-auto text-xs text-[#8C8276] font-mono">监听中</span>
           </div>
         </div>
       </div>
@@ -186,7 +186,7 @@ export default function Sidebar({
               <div className="text-xs font-bold text-[#2E2823] flex items-center space-x-1">
                 <span>{walletState?.isConnected ? (walletState.shortAddress || '已连接') : '未连接 Web3 钱包'}</span>
               </div>
-              <div className="text-[10px] text-[#7E7469]">
+              <div className="text-xs text-[#7E7469]">
                 {walletState?.isConnected ? `${walletState.network || 'Arbitrum'} Bearer 认证` : '点击签名登录'}
               </div>
             </div>
@@ -196,7 +196,7 @@ export default function Sidebar({
               ${currentBot ? currentBot.currentEquity.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '0.00'}
             </div>
             <div
-              className={`text-[10px] font-mono font-semibold ${
+              className={`text-xs font-mono font-semibold ${
                 (currentBot?.cumulativeReturnPct || 0) >= 0 ? 'text-[#4D835C]' : 'text-[#C24D4D]'
               }`}
             >
@@ -209,14 +209,14 @@ export default function Sidebar({
         <div className="w-full bg-[#E5DACB] h-1.5 rounded-full overflow-hidden">
           <div className="bg-[#4D835C] h-full rounded-full transition-all" style={{ width: `${ddPct}%` }} />
         </div>
-        <div className="flex justify-between text-[10px] text-[#8C8276] font-mono">
+        <div className="flex justify-between text-xs text-[#8C8276] font-mono">
           <span>最大回撤: {(currentBot?.maxDrawdownPct || 0).toFixed(2)}%</span>
           <span>熔断线: 5.00%</span>
         </div>
 
         <button
           onClick={onOpenKeyVaultModal}
-          className="w-full py-1.5 px-2 rounded-lg bg-[#FAF7F2] hover:bg-white border border-[#DDD5C7] text-[11px] font-bold text-[#2E2823] flex items-center justify-center space-x-1.5 transition shadow-xs"
+          className="w-full py-1.5 px-2 rounded-lg bg-[#FAF7F2] hover:bg-white border border-[#DDD5C7] text-xs font-bold text-[#2E2823] flex items-center justify-center space-x-1.5 transition shadow-xs"
         >
           <Key className="w-3.5 h-3.5 text-[#DE6438]" />
           <span>🔑 凭证金库 (Hyperliquid / AI)</span>

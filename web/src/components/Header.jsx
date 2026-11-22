@@ -41,7 +41,7 @@ export default function Header({
   ];
 
   return (
-    <header className="h-12 bg-[#FAF7F2] border-b border-[#E6DFD5] flex items-center justify-between gap-2 px-3 shrink-0 select-none relative z-30">
+    <header className="h-12 bg-[#FAF7F2] border-b border-[#E6DFD5] flex items-center justify-between gap-2 px-3 shrink-0 relative z-30">
       {/* 左侧：移动端侧边栏开关 + 品牌标志 + 超大屏面包屑 */}
       <div className="flex items-center space-x-2 shrink-0 min-w-0">
         <button
@@ -139,8 +139,8 @@ export default function Header({
                 onClick={() => setIsWalletDropdownOpen(false)}
               >
                 <div className="p-2 bg-white rounded-lg border border-[#EDE7DD] space-y-1">
-                  <div className="text-[10px] text-[#7E7469]">已绑定地址 ({walletState.network || 'Arbitrum'})</div>
-                  <div className="font-mono text-[11px] font-bold text-[#2E2823] break-all">
+                  <div className="text-xs text-[#7E7469]">已绑定地址 ({walletState.network || 'Arbitrum'})</div>
+                  <div className="font-mono text-xs font-bold text-[#2E2823] break-all">
                     {walletState.address}
                   </div>
                 </div>

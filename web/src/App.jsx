@@ -11,6 +11,7 @@
  */
 
 import React, { useState, useEffect } from 'react';
+import { showConfirm } from './utils/dialog';
 import Header from './components/Header';
 import Sidebar from './components/Sidebar';
 import DecisionArena from './components/DecisionArena';
@@ -383,8 +384,9 @@ export default function App() {
       return;
     }
     const label = bot?.name || id;
-    const confirmed = window.confirm(
-      `确认停止并彻底删除机器人「${label}」(${id}) 吗？\n该操作将撤销其残留挂单并清理对应的历史决策、净值与成交流水，且不可恢复。`
+    const confirmed = await showConfirm(
+      `确认停止并彻底删除机器人「${label}」(${id}) 吗？\n该操作将撤销其残留挂单并清理对应的历史决策、净值与成交流水，且不可恢复。`,
+      { title: '删除机器人', confirmText: '停止并删除', danger: true }
     );
     if (!confirmed) return;
     try {
@@ -644,7 +646,7 @@ export default function App() {
       <div className="flex-1 flex overflow-hidden relative">
         
         {/* 左侧栏：桌面端常驻，小屏滑出抽屉 */}
-        <div className={`${mobileSidebarOpen ? 'fixed inset-y-11 left-0 z-40 flex shadow-2xl' : 'hidden lg:flex'}`}>
+        <div className={`${mobileSidebarOpen ? 'fixed top-12 bottom-0 left-0 z-40 flex shadow-2xl' : 'hidden lg:flex'}`}>
           <Sidebar 
             activeBotId={activeBotId} 
             onSelectBot={(id) => {
@@ -727,7 +729,7 @@ export default function App() {
         )}
 
         {/* 右侧栏：桌面端常驻，小屏滑出抽屉 */}
-        <div className={`${mobileTerminalOpen ? 'fixed inset-y-11 right-0 z-40 flex shadow-2xl' : 'hidden lg:flex'}`}>
+        <div className={`${mobileTerminalOpen ? 'fixed top-12 bottom-0 right-0 z-40 flex shadow-2xl' : 'hidden lg:flex'}`}>
           <TerminalPanel 
             decisionRecord={decisionRecord}
             activeBotId={activeBotId}

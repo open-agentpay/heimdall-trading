@@ -303,7 +303,7 @@ export default function TerminalPanel({
   };
 
   return (
-    <aside className="w-64 bg-[#FAF7F2] border-l border-[#E6DFD5] flex flex-col shrink-0 select-none">
+    <aside className="w-64 bg-[#FAF7F2] border-l border-[#E6DFD5] flex flex-col shrink-0">
       
       {/* 顶栏标签切换 */}
       <div className="h-10 px-2.5 border-b border-[#EBE3D7] flex items-center justify-between">
@@ -317,7 +317,7 @@ export default function TerminalPanel({
             }`}
           >
             <span>🧠 思维链</span>
-            <span className="text-[10px] bg-[#EFE8DE] px-1 rounded-full text-[#7E7469]">
+            <span className="text-xs bg-[#EFE8DE] px-1 rounded-full text-[#7E7469]">
               {activeThinkingLogs.length}
             </span>
           </button>
@@ -334,7 +334,7 @@ export default function TerminalPanel({
           </button>
         </div>
 
-        <span className={`text-[9px] font-mono ${isWsConnected ? 'text-[#4D835C]' : 'text-[#C28B38]'}`}>
+        <span className={`text-xs font-mono ${isWsConnected ? 'text-[#4D835C]' : 'text-[#C28B38]'}`}>
           {isWsConnected ? 'WS: LIVE' : 'WS: POLL'}
         </span>
       </div>
@@ -344,7 +344,7 @@ export default function TerminalPanel({
         <div className="flex-1 flex flex-col min-h-0">
           
           {/* 角色过滤标签 */}
-          <div className="px-2.5 py-1.5 border-b border-[#F0EAE1] flex items-center space-x-1 overflow-x-auto text-[10px] font-medium text-[#7E7469] bg-[#FAF4EB]">
+          <div className="px-2.5 py-1.5 border-b border-[#F0EAE1] flex items-center space-x-1 overflow-x-auto text-xs font-medium text-[#7E7469] bg-[#FAF4EB]">
             <span>过滤:</span>
             {[
               { key: "ALL", label: "全部" },
@@ -356,7 +356,7 @@ export default function TerminalPanel({
               <button
                 key={key}
                 onClick={() => setFilterAgent(key)}
-                className={`px-1.5 py-0.5 rounded transition text-[10px] whitespace-nowrap ${
+                className={`px-1.5 py-0.5 rounded transition text-xs whitespace-nowrap ${
                   filterAgent === key
                     ? "bg-[#DE6438] text-white font-bold"
                     : "bg-white text-[#7E7469] hover:bg-[#EAE2D5]"
@@ -381,9 +381,9 @@ export default function TerminalPanel({
                   key={index} 
                   className="bg-white p-2 rounded-xl border border-[#E6DFD5] shadow-xs hover:border-[#D48B38] transition"
                 >
-                  <div className="flex items-center justify-between text-[10px] font-bold mb-1">
+                  <div className="flex items-center justify-between text-xs font-bold mb-1">
                     <span style={{ color: item.color }} className="truncate max-w-[120px]">[{item.agent}]</span>
-                    <span className="text-[#9E917F] text-[9px] shrink-0">{item.latency ? `${item.time} · ${item.latency}` : item.time}</span>
+                    <span className="text-[#9E917F] text-xs shrink-0">{item.latency ? `${item.time} · ${item.latency}` : item.time}</span>
                   </div>
                   <p className="text-[#4A4237] text-[10.5px] leading-relaxed break-words">
                     {item.text}
@@ -395,7 +395,7 @@ export default function TerminalPanel({
         </div>
       ) : (
         /* 交互式命令行控制台 */
-        <div className="flex-1 flex flex-col min-h-0 bg-[#1E1B18] text-[#EFE8DE] font-mono text-[11px]">
+        <div className="flex-1 flex flex-col min-h-0 bg-[#1E1B18] text-[#EFE8DE] font-mono text-xs">
           
           {/* 控制台日志打印区 */}
           <div className="flex-1 overflow-y-auto p-2.5 space-y-1.5">
@@ -405,7 +405,7 @@ export default function TerminalPanel({
             </div>
 
             {consoleLogs.map((log, i) => (
-              <div key={i} className="leading-snug break-all text-[10px]">
+              <div key={i} className="leading-snug break-all text-xs">
                 <span className="text-[#6E6458] mr-1">[{log.time}]</span>
                 {log.type === "cmd" && <span className="text-[#F4BF4F] font-bold">{log.text}</span>}
                 {log.type === "success" && <span className="text-[#62C554]">{log.text}</span>}
@@ -483,7 +483,7 @@ export default function TerminalPanel({
               value={commandInput}
               onChange={(e) => setCommandInput(e.target.value)}
               placeholder="输入命令 (step, risk, nav)..."
-              className="flex-1 bg-transparent text-[#EFE8DE] text-[10px] outline-none placeholder-[#6E6458]"
+              className="flex-1 bg-transparent text-[#EFE8DE] text-xs outline-none placeholder-[#6E6458]"
             />
             <button 
               type="submit" 
@@ -497,7 +497,7 @@ export default function TerminalPanel({
       )}
 
       {/* 底部执行守护进程迷你指示器 */}
-      <div className="h-9 px-2.5 bg-[#231F1C] flex items-center justify-between font-mono text-[9px] text-[#9E917F] border-t border-[#3A332C]">
+      <div className="h-9 px-2.5 bg-[#231F1C] flex items-center justify-between font-mono text-xs text-[#9E917F] border-t border-[#3A332C]">
         <div className="flex items-center space-x-1.5">
           <span className={`w-1.5 h-1.5 rounded-full ${isWsConnected ? 'bg-[#62C554]' : 'bg-[#C28B38]'}`}></span>
           <span className="text-[#D8CEBE]">{isWsConnected ? '推流已连接' : '推流未连接（轮询）'}</span>

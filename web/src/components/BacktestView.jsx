@@ -134,7 +134,7 @@ export default function BacktestView({ onApplyToCreateBot, onShowToast }) {
   }
 
   return (
-    <div className="flex-1 flex flex-col bg-[#F6F2EB] overflow-hidden select-none">
+    <div className="flex-1 flex flex-col bg-[#F6F2EB] overflow-hidden">
       {/* 顶栏 */}
       <div className="h-14 bg-[#FAF7F2] border-b border-[#E6DFD5] px-6 flex items-center justify-between shrink-0">
         <div className="flex items-center space-x-3">
@@ -144,11 +144,11 @@ export default function BacktestView({ onApplyToCreateBot, onShowToast }) {
           <div>
             <h1 className="text-sm font-bold text-[#2E2823] flex items-center space-x-2">
               <span>零前视事件驱动回测实验室 (Zero-Lookahead Backtest)</span>
-              <span className="text-[10px] font-mono bg-[#EBF5EE] text-[#3D784E] border border-[#CDE3D2] px-2 py-0.5 rounded-full">
+              <span className="text-xs font-mono bg-[#EBF5EE] text-[#3D784E] border border-[#CDE3D2] px-2 py-0.5 rounded-full">
                 t 决策 · t+1 撮合
               </span>
             </h1>
-            <p className="text-[11px] text-[#7E7469]">
+            <p className="text-xs text-[#7E7469]">
               100% 复用实盘 FactorEngine、StrategyRouter、HardRiskGuard 与 NAVEngine，杜绝未来函数
             </p>
           </div>
@@ -189,7 +189,7 @@ export default function BacktestView({ onApplyToCreateBot, onShowToast }) {
         <div className="w-80 bg-[#FAF7F2] border-r border-[#E6DFD5] p-4 overflow-y-auto space-y-4 shrink-0 text-xs">
           {/* 验证模式 */}
           <div>
-            <label className="block text-[11px] font-bold text-[#665E54] mb-1.5">回测验证模式</label>
+            <label className="block text-xs font-bold text-[#665E54] mb-1.5">回测验证模式</label>
             <div className="grid grid-cols-2 gap-1.5 bg-[#EFE9DF] p-1 rounded-xl border border-[#DFD6C7]">
               <button
                 onClick={() => setMode('single')}
@@ -212,7 +212,7 @@ export default function BacktestView({ onApplyToCreateBot, onShowToast }) {
 
           {/* 策略选择 */}
           <div>
-            <label className="block text-[11px] font-bold text-[#665E54] mb-1.5">纯算法策略 (StrategyRouter)</label>
+            <label className="block text-xs font-bold text-[#665E54] mb-1.5">纯算法策略 (StrategyRouter)</label>
             <div className="space-y-1.5">
               {[
                 { id: 'TREND_FOLLOW', label: '📈 趋势突破 (TREND_FOLLOW)' },
@@ -240,7 +240,7 @@ export default function BacktestView({ onApplyToCreateBot, onShowToast }) {
           {/* 标的与周期 */}
           <div className="grid grid-cols-2 gap-2.5">
             <div>
-              <label className="block text-[11px] font-bold text-[#665E54] mb-1">标的</label>
+              <label className="block text-xs font-bold text-[#665E54] mb-1">标的</label>
               <select
                 value={symbol}
                 onChange={(e) => setSymbol(e.target.value)}
@@ -254,7 +254,7 @@ export default function BacktestView({ onApplyToCreateBot, onShowToast }) {
               </select>
             </div>
             <div>
-              <label className="block text-[11px] font-bold text-[#665E54] mb-1">周期</label>
+              <label className="block text-xs font-bold text-[#665E54] mb-1">周期</label>
               <select
                 value={timeframe}
                 onChange={(e) => setTimeframe(e.target.value)}
@@ -270,7 +270,7 @@ export default function BacktestView({ onApplyToCreateBot, onShowToast }) {
           {/* K 线根数与资金 */}
           <div className="grid grid-cols-2 gap-2.5">
             <div>
-              <label className="block text-[11px] font-bold text-[#665E54] mb-1">K 线根数</label>
+              <label className="block text-xs font-bold text-[#665E54] mb-1">K 线根数</label>
               <input
                 type="number"
                 min="80"
@@ -282,7 +282,7 @@ export default function BacktestView({ onApplyToCreateBot, onShowToast }) {
               />
             </div>
             <div>
-              <label className="block text-[11px] font-bold text-[#665E54] mb-1">初始资金 ($)</label>
+              <label className="block text-xs font-bold text-[#665E54] mb-1">初始资金 ($)</label>
               <input
                 type="number"
                 min="1000"
@@ -296,36 +296,36 @@ export default function BacktestView({ onApplyToCreateBot, onShowToast }) {
 
           {mode === 'walk_forward' && (
             <div className="p-3 rounded-xl bg-white border border-[#E6DFD5] space-y-2">
-              <div className="text-[11px] font-bold text-[#2E2823]">Walk-Forward 窗口切分</div>
+              <div className="text-xs font-bold text-[#2E2823]">Walk-Forward 窗口切分</div>
               <div className="grid grid-cols-3 gap-2">
                 <div>
-                  <label className="block text-[10px] text-[#7E7469]">观察段</label>
+                  <label className="block text-xs text-[#7E7469]">观察段</label>
                   <input
                     type="number"
                     min="30"
                     value={trainBars}
                     onChange={(e) => setTrainBars(e.target.value)}
-                    className="w-full px-2 py-1 border border-[#D8CEBE] rounded font-mono text-[11px]"
+                    className="w-full px-2 py-1 border border-[#D8CEBE] rounded font-mono text-xs"
                   />
                 </div>
                 <div>
-                  <label className="block text-[10px] text-[#7E7469]">OOS测试</label>
+                  <label className="block text-xs text-[#7E7469]">OOS测试</label>
                   <input
                     type="number"
                     min="30"
                     value={testBars}
                     onChange={(e) => setTestBars(e.target.value)}
-                    className="w-full px-2 py-1 border border-[#D8CEBE] rounded font-mono text-[11px]"
+                    className="w-full px-2 py-1 border border-[#D8CEBE] rounded font-mono text-xs"
                   />
                 </div>
                 <div>
-                  <label className="block text-[10px] text-[#7E7469]">步长</label>
+                  <label className="block text-xs text-[#7E7469]">步长</label>
                   <input
                     type="number"
                     min="20"
                     value={stepBars}
                     onChange={(e) => setStepBars(e.target.value)}
-                    className="w-full px-2 py-1 border border-[#D8CEBE] rounded font-mono text-[11px]"
+                    className="w-full px-2 py-1 border border-[#D8CEBE] rounded font-mono text-xs"
                   />
                 </div>
               </div>
@@ -335,10 +335,10 @@ export default function BacktestView({ onApplyToCreateBot, onShowToast }) {
           {/* 策略专属超参动态表单 */}
           {activeMeta?.params && activeMeta.params.length > 0 && (
             <div className="p-3 rounded-xl bg-white border border-[#E6DFD5] space-y-2.5">
-              <div className="text-[11px] font-bold text-[#2E2823]">策略超参微调</div>
+              <div className="text-xs font-bold text-[#2E2823]">策略超参微调</div>
               {activeMeta.params.map((p) => (
                 <div key={p.key} className="flex items-center justify-between gap-2">
-                  <label className="text-[11px] text-[#5A5046]">{p.label}</label>
+                  <label className="text-xs text-[#5A5046]">{p.label}</label>
                   <input
                     type="number"
                     min={p.min}
@@ -348,7 +348,7 @@ export default function BacktestView({ onApplyToCreateBot, onShowToast }) {
                     onChange={(e) =>
                       setStrategyConfig((prev) => ({ ...prev, [p.key]: Number(e.target.value) }))
                     }
-                    className="w-24 px-2 py-1 border border-[#D8CEBE] rounded font-mono text-right text-[11px]"
+                    className="w-24 px-2 py-1 border border-[#D8CEBE] rounded font-mono text-right text-xs"
                   />
                 </div>
               ))}
@@ -392,7 +392,7 @@ export default function BacktestView({ onApplyToCreateBot, onShowToast }) {
                     {report.strategy_type} · {report.symbol} ({report.timeframe}) · 评估 {report.bars_evaluated} 根 K 线
                   </span>
                 </div>
-                <span className="text-[10px] font-mono px-2.5 py-0.5 rounded-full bg-white border border-[#DFD6C7] text-[#5A5046]">
+                <span className="text-xs font-mono px-2.5 py-0.5 rounded-full bg-white border border-[#DFD6C7] text-[#5A5046]">
                   数据源: {singleResult.data_source}
                 </span>
               </div>
@@ -457,21 +457,21 @@ export default function BacktestView({ onApplyToCreateBot, onShowToast }) {
             <div className="space-y-4">
               <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
                 <div className="bg-white p-4 rounded-xl border border-[#E6DFD5]">
-                  <div className="text-[11px] text-[#7E7469]">OOS 样本外窗口数</div>
+                  <div className="text-xs text-[#7E7469]">OOS 样本外窗口数</div>
                   <div className="text-xl font-bold font-mono text-[#2E2823] mt-1">{wfResult.walk_forward.windows_count} 段</div>
                 </div>
                 <div className="bg-white p-4 rounded-xl border border-[#E6DFD5]">
-                  <div className="text-[11px] text-[#7E7469]">样本外平均收益率</div>
+                  <div className="text-xs text-[#7E7469]">样本外平均收益率</div>
                   <div className={`text-xl font-bold font-mono mt-1 ${(wfResult.walk_forward.avg_oos_return_pct || 0) >= 0 ? 'text-[#3D784E]' : 'text-[#C24D4D]'}`}>
                     {(wfResult.walk_forward.avg_oos_return_pct || 0) >= 0 ? '+' : ''}{(wfResult.walk_forward.avg_oos_return_pct || 0).toFixed(2)}%
                   </div>
                 </div>
                 <div className="bg-white p-4 rounded-xl border border-[#E6DFD5]">
-                  <div className="text-[11px] text-[#7E7469]">样本外平均夏普</div>
+                  <div className="text-xs text-[#7E7469]">样本外平均夏普</div>
                   <div className="text-xl font-bold font-mono text-[#2E2823] mt-1">{(wfResult.walk_forward.avg_oos_sharpe || 0).toFixed(2)}</div>
                 </div>
                 <div className="bg-white p-4 rounded-xl border border-[#E6DFD5]">
-                  <div className="text-[11px] text-[#7E7469]">最差单窗口回撤</div>
+                  <div className="text-xs text-[#7E7469]">最差单窗口回撤</div>
                   <div className="text-xl font-bold font-mono text-[#C24D4D] mt-1">-{(wfResult.walk_forward.worst_oos_drawdown_pct || 0).toFixed(2)}%</div>
                 </div>
               </div>
@@ -492,7 +492,7 @@ export default function BacktestView({ onApplyToCreateBot, onShowToast }) {
                       <th className="py-2.5 px-4">交易数 / 胜率</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-[#EFE9DF] font-mono text-[11px]">
+                  <tbody className="divide-y divide-[#EFE9DF] font-mono text-xs">
                     {(wfResult.walk_forward.oos_reports || []).map((r, i) => (
                       <tr key={i} className="hover:bg-[#FAF7F2]">
                         <td className="py-2.5 px-4 font-bold">Window #{i + 1}</td>

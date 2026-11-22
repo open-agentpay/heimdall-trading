@@ -13,8 +13,16 @@ body {
   margin: 0;
   padding: 0;
   overflow: hidden;
-  user-select: none;
   transition: background-color 0.2s ease, filter 0.2s ease;
+}
+
+/* 文字默认可以选中复制（订单号、提示词、日志、报错）；只有按钮等可点击控件禁止选中，避免连点时误选 */
+button,
+[role="button"],
+label,
+summary {
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 /* 夜间量化暗黑终端主题 (Theme Switcher: p2-3) */

@@ -169,7 +169,7 @@ export default function WalletModal({ isOpen, onClose, walletState, onConnectWal
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-xs select-none">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-xs">
       <div
         className="w-full max-w-lg bg-[#FAF7F2] rounded-2xl border border-[#E6DFD5] shadow-2xl flex flex-col overflow-hidden"
         onClick={(e) => e.stopPropagation()}
@@ -183,12 +183,12 @@ export default function WalletModal({ isOpen, onClose, walletState, onConnectWal
               <h2 className="text-sm font-bold text-[#2E2823] flex items-center space-x-2">
                 <span>{walletState.isConnected ? '已连接 Web3 钱包' : '连接去中心化钱包'}</span>
                 {walletState.isConnected && (
-                  <span className="text-[10px] bg-[#EBF5EE] text-[#3D784E] border border-[#D1E8D7] px-2 py-0.5 rounded-full font-semibold">
+                  <span className="text-xs bg-[#EBF5EE] text-[#3D784E] border border-[#D1E8D7] px-2 py-0.5 rounded-full font-semibold">
                     Bearer 会话有效
                   </span>
                 )}
               </h2>
-              <p className="text-[11px] text-[#7A6F62]">
+              <p className="text-xs text-[#7A6F62]">
                 {walletState.isConnected ? '已绑定当前量化交易与金库托管会话' : '通过 EIP-191 免 Gas 签名换取后端 Bearer 会话'}
               </p>
             </div>
@@ -205,7 +205,7 @@ export default function WalletModal({ isOpen, onClose, walletState, onConnectWal
         {errorMessage && (
           <div className="px-6 py-2.5 bg-[#FDECEC] border-b border-[#F7CDCD] text-xs font-semibold text-[#C24D4D] flex items-center justify-between">
             <span className="truncate pr-2">{errorMessage}</span>
-            <button onClick={() => setErrorMessage(null)} className="text-[10px] underline shrink-0">关闭</button>
+            <button onClick={() => setErrorMessage(null)} className="text-xs underline shrink-0">关闭</button>
           </div>
         )}
 
@@ -256,11 +256,11 @@ export default function WalletModal({ isOpen, onClose, walletState, onConnectWal
                       <div>
                         <div className="flex items-center space-x-2">
                           <span className="text-xs font-bold text-[#2E2823]">{prov.name}</span>
-                          <span className={`text-[10px] px-1.5 py-0.2 rounded border font-semibold ${prov.tagColor}`}>
+                          <span className={`text-xs px-1.5 py-0.2 rounded border font-semibold ${prov.tagColor}`}>
                             {prov.tag}
                           </span>
                         </div>
-                        <p className="text-[11px] text-[#7A6F62] mt-0.5">{prov.description}</p>
+                        <p className="text-xs text-[#7A6F62] mt-0.5">{prov.description}</p>
                       </div>
                     </div>
 

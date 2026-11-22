@@ -15,6 +15,7 @@
  */
 
 import React, { useState, useEffect } from 'react';
+import { showAlert, showConfirm } from '../utils/dialog';
 import { 
   Key, ShieldCheck, Lock, Plus, Trash2, CheckCircle2, 
   AlertCircle, ExternalLink, RefreshCw, Sparkles, 
@@ -91,11 +92,11 @@ export default function KeyVaultModal({ isOpen, onClose, walletState, onConnectW
 
     setIsLoading(true);
     try {
-      const deletedIds = JSON.parse(localStorage.getItem('heimdall_deleted_vault_keys') || '[]');
+      // 以前删除失败时会把凭据编号记在本地并从列表隐藏；列表以后端为准，清掉这份旧记录
+      localStorage.removeItem('heimdall_deleted_vault_keys');
       const remoteKeys = await listVaultKeys(walletState.address);
       if (Array.isArray(remoteKeys)) {
         const mapped = remoteKeys
-          .filter(k => !deletedIds.includes(k.key_id || k.id))
           .map(k => {
             const actualId = k.key_id || k.id;
             const prov = String(k.provider || '').toLowerCase();
@@ -185,7 +186,7 @@ export default function KeyVaultModal({ isOpen, onClose, walletState, onConnectW
         lastMessage: res?.message || (nextIsTestnet ? '已切换为测试网/模拟盘密钥' : '已切换为正式网密钥'),
       } : k));
     } catch (e) {
-      alert(`切换密钥网络环境失败: ${e.message}`);
+      showAlert(e.message || '未知错误', { title: '切换网络环境失败', tone: 'error' });
     } finally {
       setTogglingKeyId(null);
     }
@@ -208,7 +209,7 @@ export default function KeyVaultModal({ isOpen, onClose, walletState, onConnectW
         return k;
       }));
     } catch (e) {
-      alert(`切换激活密钥失败: ${e.message}`);
+      showAlert(e.message || '未知错误', { title: '切换激活密钥失败', tone: 'error' });
     } finally {
       setActivatingKeyId(null);
     }
@@ -274,7 +275,7 @@ export default function KeyVaultModal({ isOpen, onClose, walletState, onConnectW
       setEditingKeyId(null);
       setEditForm({ label: '', model: '', baseUrl: '', apiKey: '' });
     } catch (err) {
-      alert("保存配置失败: " + (err.message || '网络或鉴权异常'));
+      showAlert(err.message || '网络或鉴权异常', { title: '保存配置失败', tone: 'error' });
     } finally {
       setIsSavingEdit(false);
     }
@@ -282,39 +283,58 @@ export default function KeyVaultModal({ isOpen, onClose, walletState, onConnectW
 
   // 物理销毁凭据
   const handleDeleteKey = async (id, label) => {
-    if (!window.confirm(`确定要安全物理销毁凭据【${label}】吗？删除后正在运行的关联机器人可能会降级停止。`)) {
+    if (!(await showConfirm(`确定要销毁凭据【${label}】吗？\n删除后，正在使用它的机器人可能会停止运行。`, { title: '销毁凭据', confirmText: '销毁', danger: true }))) {
       return;
     }
 
     try {
       await deleteVaultKey(id, walletState?.address);
     } catch (err) {
-      console.warn("调用后端销毁凭证:", err);
+      // 后端没有删掉就不从列表移除：凭据仍在数据库中，不能显示成"已销毁"
+      showAlert(err.message || '网络或鉴权异常', { title: '销毁凭据失败', tone: 'error' });
+      return;
     }
-
-    // 记录被删除的预置凭据 ID，防止重新加载时恢复
-    try {
-      const deletedIds = JSON.parse(localStorage.getItem('heimdall_deleted_vault_keys') || '[]');
-      if (!deletedIds.includes(id)) {
-        deletedIds.push(id);
-        localStorage.setItem('heimdall_deleted_vault_keys', JSON.stringify(deletedIds));
-      }
-    } catch (e) {}
-
-    // 本地状态同步剔除
     setKeysList(prev => prev.filter(k => (k.id !== id && k.key_id !== id)));
+  };
+
+  // 紧急全局吊销：逐个调用后端删除，按真实结果提示（后端确认删除后才从列表移除）
+  const handleRevokeAll = async () => {
+    const targets = keysList.map(k => ({ id: k.key_id || k.id, label: k.label || k.key_id || k.id }));
+    if (targets.length === 0) {
+      showAlert('当前钱包下没有已保存的凭据。', { title: '没有可吊销的凭据' });
+      return;
+    }
+    const ok = await showConfirm(
+      `将从数据库删除当前钱包下的全部 ${targets.length} 个凭据（交易所与大模型），正在使用它们的机器人可能会停止运行。此操作不可恢复。`,
+      { title: '紧急吊销全部凭据', confirmText: `删除全部 ${targets.length} 个`, danger: true }
+    );
+    if (!ok) return;
+    const failed = [];
+    for (const t of targets) {
+      try {
+        await deleteVaultKey(t.id, walletState?.address);
+      } catch (err) {
+        failed.push(`${t.label}：${err.message || '未知错误'}`);
+      }
+    }
+    await loadVaultKeys();
+    if (failed.length === 0) {
+      showAlert(`已删除全部 ${targets.length} 个凭据。\n如果怀疑泄露，还需要到交易所和大模型服务商后台作废对应的 API Key。`, { title: '吊销完成' });
+    } else {
+      showAlert(`已删除 ${targets.length - failed.length} 个，${failed.length} 个删除失败：\n${failed.join('\n')}`, { title: '部分凭据删除失败', tone: 'error' });
+    }
   };
 
   // 提交新增凭证 (真实验密入库)
   const handleSaveNewKey = async (e) => {
     e.preventDefault();
     if (!isWalletConnected) {
-      alert("请先连接 Web3 钱包后再新增金库凭据");
+      showAlert('请先连接 Web3 钱包，再新增金库凭据。', { title: '未连接钱包', tone: 'warning' });
       return;
     }
 
     if (!newKeyForm.label) {
-      alert("请填写自定义别名备注");
+      showAlert('请填写自定义别名备注。', { title: '请补全信息', tone: 'warning' });
       return;
     }
 
@@ -322,24 +342,24 @@ export default function KeyVaultModal({ isOpen, onClose, walletState, onConnectW
     if (newKeyForm.category === 'exchanges') {
       if (newKeyForm.provider === 'hyperliquid') {
         if (!newKeyForm.secretKey) {
-          alert("请填写 Hyperliquid Agent 派生私钥");
+          showAlert('请填写 Hyperliquid Agent 派生私钥。', { title: '请补全信息', tone: 'warning' });
           return;
         }
       } else {
         // Binance / OKX / Bybit
         if (!newKeyForm.apiKey || !newKeyForm.secretKey) {
-          alert(`请同时填写 ${newKeyForm.provider.toUpperCase()} 的 API Key (公钥) 与 API Secret (密钥)`);
+          showAlert(`请同时填写 ${newKeyForm.provider.toUpperCase()} 的 API Key（公钥）与 API Secret（密钥）。`, { title: '请补全信息', tone: 'warning' });
           return;
         }
         if (newKeyForm.provider === 'okx' && !newKeyForm.passphrase) {
-          alert("欧易 OKX 要求填写 Passphrase API 密码口令");
+          showAlert('欧易 OKX 要求填写 Passphrase（API 密码口令）。', { title: '请补全信息', tone: 'warning' });
           return;
         }
       }
     } else {
       // LLMs
       if (!newKeyForm.apiKey) {
-        alert("请填写 AI 大模型的 API 访问密钥 (Key)");
+        showAlert('请填写大模型的 API 访问密钥（Key）。', { title: '请补全信息', tone: 'warning' });
         return;
       }
     }
@@ -396,7 +416,7 @@ export default function KeyVaultModal({ isOpen, onClose, walletState, onConnectW
       }
     } catch (err) {
       console.warn("调用后端入库凭证失败:", err);
-      alert("保存凭据失败，请确保后端服务正常且钱包状态有效");
+      showAlert(err.message || '请确认后端服务正常、钱包登录有效。', { title: '保存凭据失败', tone: 'error' });
       return;
     }
 
@@ -439,7 +459,7 @@ export default function KeyVaultModal({ isOpen, onClose, walletState, onConnectW
   const currentFilteredKeys = keysList.filter(k => k.category === activeCategory);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-xs select-none">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-xs">
       <div 
         className="w-full max-w-3xl bg-[#FAF7F2] rounded-2xl border border-[#E6DFD5] shadow-2xl flex flex-col overflow-hidden max-h-[85vh] animate-in fade-in zoom-in-95 duration-150"
         onClick={(e) => e.stopPropagation()}
@@ -454,12 +474,12 @@ export default function KeyVaultModal({ isOpen, onClose, walletState, onConnectW
             <div>
               <div className="flex items-center space-x-2">
                 <h2 className="text-sm font-bold text-[#2E2823]">密钥管理安全金库 (API Key Vault)</h2>
-                <span className="text-[10px] bg-[#EBF5EE] text-[#3D784E] border border-[#D1E8D7] px-2 py-0.5 rounded-full font-semibold flex items-center space-x-1">
+                <span className="text-xs bg-[#EBF5EE] text-[#3D784E] border border-[#D1E8D7] px-2 py-0.5 rounded-full font-semibold flex items-center space-x-1">
                   <ShieldCheck className="w-3 h-3" />
                   <span>AES-256-GCM 加密</span>
                 </span>
               </div>
-              <p className="text-[11px] text-[#7E7469] mt-0.5">
+              <p className="text-xs text-[#7E7469] mt-0.5">
                 安全托管 Hyperliquid 交易凭据与 AI 大模型推理密钥，明文绝不外泄
               </p>
             </div>
@@ -475,7 +495,7 @@ export default function KeyVaultModal({ isOpen, onClose, walletState, onConnectW
                 <span>新增凭据</span>
               </button>
             ) : (
-              <span className="px-2.5 py-1 rounded-xl bg-[#FBF0EA] border border-[#F2D7CA] text-[#DE6438] text-[11px] font-bold flex items-center space-x-1.5">
+              <span className="px-2.5 py-1 rounded-xl bg-[#FBF0EA] border border-[#F2D7CA] text-[#DE6438] text-xs font-bold flex items-center space-x-1.5">
                 <Lock className="w-3 h-3" />
                 <span>金库已锁定</span>
               </span>
@@ -502,7 +522,7 @@ export default function KeyVaultModal({ isOpen, onClose, walletState, onConnectW
               <p className="text-xs text-[#7E7469] leading-relaxed">
                 当前处于未登录状态。根据 Heimdall 安全架构规范，所有交易所私钥（Hyperliquid / Binance / OKX）与大模型 API Key 均采用 AES-256-GCM 硬件级认证加密，并与用户的 Web3 钱包公钥地址一对一隔离。
               </p>
-              <p className="text-[11px] text-[#A89F91]">
+              <p className="text-xs text-[#A89F91]">
                 系统严格禁止未授权跨租户检索或展示凭证。请先连接 Web3 钱包并完成身份签名，以解锁属于您的私有金库。
               </p>
             </div>
@@ -560,7 +580,7 @@ export default function KeyVaultModal({ isOpen, onClose, walletState, onConnectW
             </button>
           </div>
 
-          <div className="text-[11px] text-[#7E7469] flex items-center space-x-1">
+          <div className="text-xs text-[#7E7469] flex items-center space-x-1">
             <Activity className="w-3.5 h-3.5 text-[#3D784E]" />
             <span>自检探针待命: 4 项连通正常</span>
           </div>
@@ -575,7 +595,7 @@ export default function KeyVaultModal({ isOpen, onClose, walletState, onConnectW
               <HelpCircle className="w-4 h-4 shrink-0 mt-0.5 text-[#DE6438]" />
               <div className="leading-relaxed">
                 <span className="font-bold">Hyperliquid 安全最佳实践：</span>
-                <p className="text-[11px] text-[#9B3F1B]/90 mt-0.5">
+                <p className="text-xs text-[#9B3F1B]/90 mt-0.5">
                   切勿在系统内填入存有主资产的主钱包助记词或私钥！推荐在 Hyperliquid 官网通过「API Agents」派生仅具有开平仓权限的独立专用代理私钥，主资产与交易环境完全物理隔离。
                 </p>
               </div>
@@ -587,7 +607,7 @@ export default function KeyVaultModal({ isOpen, onClose, walletState, onConnectW
               <Sparkles className="w-4 h-4 shrink-0 mt-0.5 text-[#3D784E]" />
               <div className="leading-relaxed">
                 <span className="font-bold">多模型智能协同调度：</span>
-                <p className="text-[11px] text-[#2A5D37]/90 mt-0.5">
+                <p className="text-xs text-[#2A5D37]/90 mt-0.5">
                   Claude 3.5 Sonnet 负责核心多空激辩与胜率评估，DeepSeek V3 / R1 负责极速扫描全网快讯与链上异动，两者协作兼具极高智商与毫秒级反应速度。
                 </p>
               </div>
@@ -605,7 +625,7 @@ export default function KeyVaultModal({ isOpen, onClose, walletState, onConnectW
                     </div>
                     <div>
                       <div className="text-xs font-bold text-[#2E2823]">金库主加密状态 (Master Key)</div>
-                      <div className="text-[11px] text-[#7E7469]">本地独立 32 字节高熵随机因子已保护入库</div>
+                      <div className="text-xs text-[#7E7469]">本地独立 32 字节高熵随机因子已保护入库</div>
                     </div>
                   </div>
                   <span className="text-xs bg-[#EBF5EE] text-[#3D784E] border border-[#D1E8D7] px-2.5 py-1 rounded-lg font-bold flex items-center space-x-1">
@@ -624,24 +644,22 @@ export default function KeyVaultModal({ isOpen, onClose, walletState, onConnectW
               <div className="grid grid-cols-2 gap-3">
                 <div className="p-4 rounded-xl bg-white border border-[#E6DFD5] space-y-2">
                   <span className="text-xs font-bold text-[#2E2823]">导出安全加密备份</span>
-                  <p className="text-[11px] text-[#7E7469]">将当前配置的所有凭据导出为经过加密的 JSON 备份包。</p>
-                  <button 
-                    onClick={() => alert("已生成本地加密备份文件 heimdall-vault-backup.enc")}
-                    className="mt-1 px-3 py-1.5 rounded-lg border border-[#DCD3C5] hover:bg-[#F2ECE3] text-xs font-semibold text-[#2E2823] transition w-full"
+                  <p className="text-xs text-[#7E7469]">将所有凭据导出为加密备份包。后端还没有导出接口，暂不可用。</p>
+                  <button
+                    type="button"
+                    disabled
+                    title="后端还没有导出接口，此功能暂不可用"
+                    className="mt-1 px-3 py-1.5 rounded-lg border border-[#DCD3C5] text-xs font-semibold text-[#9E9486] w-full cursor-not-allowed opacity-70"
                   >
-                    下载加密备份包
+                    暂不支持导出
                   </button>
                 </div>
                 <div className="p-4 rounded-xl bg-white border border-[#E6DFD5] space-y-2">
                   <span className="text-xs font-bold text-[#2E2823]">紧急全局吊销 (Revoke All)</span>
-                  <p className="text-[11px] text-[#7E7469]">发生潜在泄露时，一键从数据库物理粉碎所有存储的密钥。</p>
-                  <button 
-                    onClick={() => {
-                      if (window.confirm("危险操作：确定要彻底粉碎清除数据库中的全部密钥吗？")) {
-                        setKeysList([]);
-                        alert("所有密钥已安全粉碎！");
-                      }
-                    }}
+                  <p className="text-xs text-[#7E7469]">发生潜在泄露时，从数据库删除当前钱包下的全部凭据（不会作废交易所侧的 API Key）。</p>
+                  <button
+                    type="button"
+                    onClick={handleRevokeAll}
                     className="mt-1 px-3 py-1.5 rounded-lg border border-[#F2D6CA] bg-[#FBEFEA] hover:bg-[#F8E3DA] text-xs font-bold text-[#DE6438] transition w-full"
                   >
                     粉碎所有凭证
@@ -672,11 +690,11 @@ export default function KeyVaultModal({ isOpen, onClose, walletState, onConnectW
                         <div>
                           <div className="flex items-center space-x-2">
                             <span className="text-xs font-bold text-[#2E2823]">{k.label}</span>
-                            <span className={`text-[10px] px-2 py-0.5 rounded-full border font-medium ${k.badgeColor}`}>
+                            <span className={`text-xs px-2 py-0.5 rounded-full border font-medium ${k.badgeColor}`}>
                               {k.badge}
                             </span>
                             {k.category === 'llms' && (
-                              <span className={`text-[10px] px-2 py-0.5 rounded-full border font-semibold flex items-center space-x-1 ${
+                              <span className={`text-xs px-2 py-0.5 rounded-full border font-semibold flex items-center space-x-1 ${
                                 k.isActive 
                                   ? 'bg-[#EBF5EE] text-[#3D784E] border-[#D1E8D7]' 
                                   : 'bg-[#F4EFE6] text-[#8C8276] border-[#DDD5C7]'
@@ -686,10 +704,10 @@ export default function KeyVaultModal({ isOpen, onClose, walletState, onConnectW
                               </span>
                             )}
                           </div>
-                          <div className="text-[11px] text-[#7E7469] mt-0.5 font-mono flex items-center space-x-2">
+                          <div className="text-xs text-[#7E7469] mt-0.5 font-mono flex items-center space-x-2">
                             <span>{k.providerName}</span>
                             {k.category === 'llms' && (
-                              <span className="bg-[#FAF7F2] border border-[#E6DFD5] px-1.5 py-0.5 rounded text-[10px] text-[#DE6438] font-semibold">
+                              <span className="bg-[#FAF7F2] border border-[#E6DFD5] px-1.5 py-0.5 rounded text-xs text-[#DE6438] font-semibold">
                                 模型: {k.model || (k.provider === 'deepseek' ? 'deepseek-chat' : k.provider === 'anthropic' ? 'claude-3-5-sonnet' : 'gpt-4o')}
                               </span>
                             )}
@@ -699,7 +717,7 @@ export default function KeyVaultModal({ isOpen, onClose, walletState, onConnectW
 
                       {/* 连通性指示器 */}
                       <div className="flex items-center space-x-2">
-                        <div className="flex items-center space-x-1.5 bg-[#F6F2EB] border border-[#E6DFD5] px-2 py-1 rounded-lg text-[11px]">
+                        <div className="flex items-center space-x-1.5 bg-[#F6F2EB] border border-[#E6DFD5] px-2 py-1 rounded-lg text-xs">
                           <span className={`w-2 h-2 rounded-full ${k.status === 'OK' ? 'bg-[#3D784E]' : k.status === 'FAILED' ? 'bg-[#C24D4D]' : k.status === 'WARNING' ? 'bg-[#C28B38]' : 'bg-[#9E917F]'}`}></span>
                           <span className={`font-bold ${k.status === 'OK' ? 'text-[#3D784E]' : k.status === 'FAILED' ? 'text-[#C24D4D]' : k.status === 'WARNING' ? 'text-[#C28B38]' : 'text-[#7E7469]'}`}>
                             {k.status === 'UNTESTED' ? '未测试' : k.latency !== null && k.latency !== undefined ? `${k.latency} ms` : k.status}
@@ -760,7 +778,7 @@ export default function KeyVaultModal({ isOpen, onClose, walletState, onConnectW
 
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
                           <div>
-                            <label className="block text-[11px] font-semibold text-[#5A5046] mb-1">自定义别名备注</label>
+                            <label className="block text-xs font-semibold text-[#5A5046] mb-1">自定义别名备注</label>
                             <input
                               type="text"
                               value={editForm.label}
@@ -772,7 +790,7 @@ export default function KeyVaultModal({ isOpen, onClose, walletState, onConnectW
 
                           {k.category === 'llms' && (
                             <div>
-                              <label className="block text-[11px] font-semibold text-[#5A5046] mb-1">
+                              <label className="block text-xs font-semibold text-[#5A5046] mb-1">
                                 模型代码 (Model)
                               </label>
                               <input
@@ -788,7 +806,7 @@ export default function KeyVaultModal({ isOpen, onClose, walletState, onConnectW
 
                         {k.category === 'llms' && (
                           <div className="space-y-1.5">
-                            <div className="flex items-center space-x-1 text-[10px] text-[#7E7469] flex-wrap gap-1">
+                            <div className="flex items-center space-x-1 text-xs text-[#7E7469] flex-wrap gap-1">
                               <span>快捷选择模型:</span>
                               {['deepseek-chat', 'deepseek-reasoner', 'gpt-4o', 'qwen-plus', 'claude-3-5-sonnet'].map(m => (
                                 <button
@@ -803,7 +821,7 @@ export default function KeyVaultModal({ isOpen, onClose, walletState, onConnectW
                             </div>
 
                             <div>
-                              <label className="block text-[11px] font-semibold text-[#5A5046] mb-1">
+                              <label className="block text-xs font-semibold text-[#5A5046] mb-1">
                                 API 接入端点 (Base URL)
                               </label>
                               <input
@@ -818,7 +836,7 @@ export default function KeyVaultModal({ isOpen, onClose, walletState, onConnectW
                         )}
 
                         <div>
-                          <label className="block text-[11px] font-semibold text-[#5A5046] mb-1">
+                          <label className="block text-xs font-semibold text-[#5A5046] mb-1">
                             更新 API Key / 密钥 <span className="text-[#9E9486] font-normal">(留空表示保持当前密钥不变)</span>
                           </label>
                           <input
@@ -860,13 +878,13 @@ export default function KeyVaultModal({ isOpen, onClose, walletState, onConnectW
                         </span>
                       </div>
 
-                      <span className="shrink-0 ml-2 text-[10px] text-[#9E917F]" title="密钥原文只保存在后端加密金库中，前端无法查看或复制">
+                      <span className="shrink-0 ml-2 text-xs text-[#9E917F]" title="密钥原文只保存在后端加密金库中，前端无法查看或复制">
                         仅显示脱敏值
                       </span>
                     </div>
 
                     {/* 权限清单 + 币安测试网/正式网环境开关 + 大模型激活选择 */}
-                    <div className="flex flex-wrap items-center justify-between gap-2 text-[10px] text-[#7E7469]">
+                    <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-[#7E7469]">
                       <div className="flex items-center space-x-1.5 flex-wrap gap-1">
                         <span className="font-semibold text-[#2E2823]">
                           {k.category === 'llms' ? '模型配置:' : '生效权限:'}
@@ -895,7 +913,7 @@ export default function KeyVaultModal({ isOpen, onClose, walletState, onConnectW
                       {k.category === 'llms' && (
                         <div className="flex items-center space-x-2">
                           {k.isActive ? (
-                            <div className="flex items-center space-x-1 bg-[#EBF5EE] border border-[#CEE5D3] px-2.5 py-1 rounded-lg text-[10px] text-[#3D784E] font-bold">
+                            <div className="flex items-center space-x-1 bg-[#EBF5EE] border border-[#CEE5D3] px-2.5 py-1 rounded-lg text-xs text-[#3D784E] font-bold">
                               <CheckCircle2 className="w-3.5 h-3.5 text-[#3D784E]" />
                               <span>当前激活生效</span>
                             </div>
@@ -904,7 +922,7 @@ export default function KeyVaultModal({ isOpen, onClose, walletState, onConnectW
                               type="button"
                               disabled={activatingKeyId === k.id}
                               onClick={() => handleActivateKey(k.id, k.label)}
-                              className="px-2.5 py-1 rounded-lg bg-white border border-[#DDD5C7] hover:border-[#DE6438] hover:text-[#DE6438] text-[#5C5248] text-[10px] font-bold shadow-xs transition flex items-center space-x-1 cursor-pointer disabled:opacity-50"
+                              className="px-2.5 py-1 rounded-lg bg-white border border-[#DDD5C7] hover:border-[#DE6438] hover:text-[#DE6438] text-[#5C5248] text-xs font-bold shadow-xs transition flex items-center space-x-1 cursor-pointer disabled:opacity-50"
                               title="将该大模型密钥设为当前活跃生效"
                             >
                               <Radio className={`w-3 h-3 ${activatingKeyId === k.id ? 'animate-spin text-[#DE6438]' : ''}`} />
@@ -944,7 +962,7 @@ export default function KeyVaultModal({ isOpen, onClose, walletState, onConnectW
                     </div>
 
                     {k.lastMessage && (
-                      <div className={`text-[11px] px-2.5 py-1.5 rounded-lg border ${
+                      <div className={`text-xs px-2.5 py-1.5 rounded-lg border ${
                         k.status === 'FAILED'
                           ? 'bg-[#FDF2F2] border-[#F5C6C6] text-[#C24D4D]'
                           : 'bg-[#EBF5EE] border-[#D1E8D7] text-[#2A5D37]'
@@ -961,7 +979,7 @@ export default function KeyVaultModal({ isOpen, onClose, walletState, onConnectW
                 <div className="text-center py-10 bg-white rounded-xl border border-dashed border-[#DDD5C7] space-y-2">
                   <div className="text-2xl">📭</div>
                   <div className="text-xs font-bold text-[#2E2823]">暂未配置该分类的凭证</div>
-                  <p className="text-[11px] text-[#7E7469]">点击右上角「新增凭据」一键登记并加密存储</p>
+                  <p className="text-xs text-[#7E7469]">点击右上角「新增凭据」一键登记并加密存储</p>
                 </div>
               )}
             </div>
@@ -972,7 +990,7 @@ export default function KeyVaultModal({ isOpen, onClose, walletState, onConnectW
         )}
 
         {/* 4. 弹窗底栏 */}
-        <div className="px-6 py-3.5 bg-[#F2EDE4] border-t border-[#E4DDD1] flex items-center justify-between text-[11px] text-[#7E7469]">
+        <div className="px-6 py-3.5 bg-[#F2EDE4] border-t border-[#E4DDD1] flex items-center justify-between text-xs text-[#7E7469]">
           <span className="flex items-center space-x-1.5">
             <ShieldCheck className="w-3.5 h-3.5 text-[#3D784E]" />
             <span>所有私钥与凭据仅保存在当前物理节点，绝不向第三方服务器明文同步</span>
@@ -984,7 +1002,7 @@ export default function KeyVaultModal({ isOpen, onClose, walletState, onConnectW
 
       {/* 5. 内层抽屉：添加新凭证弹窗 */}
       {showAddModal && (
-        <div className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs select-none animate-in fade-in duration-100">
+        <div className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs animate-in fade-in duration-100">
           <div 
             className="w-full max-w-md bg-[#FAF7F2] rounded-2xl border border-[#E6DFD5] shadow-2xl p-6 space-y-4"
             onClick={(e) => e.stopPropagation()}
@@ -1108,10 +1126,10 @@ export default function KeyVaultModal({ isOpen, onClose, walletState, onConnectW
                         <div className="flex items-center justify-between p-2.5 rounded-xl bg-white border border-[#DDD5C8] text-xs">
                           <div>
                             <div className="font-semibold text-[#2E2823]">密钥所属网络环境</div>
-                            <div className="text-[10px] text-[#7E7469]">测试网走 api.hyperliquid-testnet.xyz，正式密钥走 api.hyperliquid.xyz（测试网与正式网的 Agent 私钥不通用）</div>
+                            <div className="text-xs text-[#7E7469]">测试网走 api.hyperliquid-testnet.xyz，正式密钥走 api.hyperliquid.xyz（测试网与正式网的 Agent 私钥不通用）</div>
                           </div>
                           <div className="flex items-center space-x-2 shrink-0 ml-2">
-                            <span className={`text-[11px] font-semibold ${!newKeyForm.isTestnet ? 'text-[#DE6438]' : 'text-[#9E9486]'}`}>正式</span>
+                            <span className={`text-xs font-semibold ${!newKeyForm.isTestnet ? 'text-[#DE6438]' : 'text-[#9E9486]'}`}>正式</span>
                             <button
                               type="button"
                               role="switch"
@@ -1127,7 +1145,7 @@ export default function KeyVaultModal({ isOpen, onClose, walletState, onConnectW
                                 }`}
                               />
                             </button>
-                            <span className={`text-[11px] font-semibold ${newKeyForm.isTestnet ? 'text-[#3D784E]' : 'text-[#9E9486]'}`}>测试网</span>
+                            <span className={`text-xs font-semibold ${newKeyForm.isTestnet ? 'text-[#3D784E]' : 'text-[#9E9486]'}`}>测试网</span>
                           </div>
                         </div>
                       )}
@@ -1165,10 +1183,10 @@ export default function KeyVaultModal({ isOpen, onClose, walletState, onConnectW
                         <div className="flex items-center justify-between p-2.5 rounded-xl bg-white border border-[#DDD5C8] text-xs">
                           <div>
                             <div className="font-semibold text-[#2E2823]">密钥所属网络环境</div>
-                            <div className="text-[10px] text-[#7E7469]">测试网/模拟盘走 demo-api.binance.com，正式密钥走 api.binance.com</div>
+                            <div className="text-xs text-[#7E7469]">测试网/模拟盘走 demo-api.binance.com，正式密钥走 api.binance.com</div>
                           </div>
                           <div className="flex items-center space-x-2 shrink-0 ml-2">
-                            <span className={`text-[11px] font-semibold ${!newKeyForm.isTestnet ? 'text-[#DE6438]' : 'text-[#9E9486]'}`}>正式</span>
+                            <span className={`text-xs font-semibold ${!newKeyForm.isTestnet ? 'text-[#DE6438]' : 'text-[#9E9486]'}`}>正式</span>
                             <button
                               type="button"
                               role="switch"
@@ -1184,7 +1202,7 @@ export default function KeyVaultModal({ isOpen, onClose, walletState, onConnectW
                                 }`}
                               />
                             </button>
-                            <span className={`text-[11px] font-semibold ${newKeyForm.isTestnet ? 'text-[#3D784E]' : 'text-[#9E9486]'}`}>测试网</span>
+                            <span className={`text-xs font-semibold ${newKeyForm.isTestnet ? 'text-[#3D784E]' : 'text-[#9E9486]'}`}>测试网</span>
                           </div>
                         </div>
                       )}
@@ -1222,7 +1240,7 @@ export default function KeyVaultModal({ isOpen, onClose, walletState, onConnectW
                       onChange={(e) => setNewKeyForm(f => ({ ...f, model: e.target.value }))}
                       className="w-full p-2.5 rounded-xl bg-white border border-[#DDD5C8] text-xs text-[#2E2823] font-mono focus:outline-hidden focus:ring-2 focus:ring-[#DE6438]/20 font-medium"
                     />
-                    <div className="flex items-center space-x-1.5 mt-1 text-[10px] text-[#7E7469]">
+                    <div className="flex items-center space-x-1.5 mt-1 text-xs text-[#7E7469]">
                       <span>推荐快捷填入:</span>
                       <button 
                         type="button" 
@@ -1271,7 +1289,7 @@ export default function KeyVaultModal({ isOpen, onClose, walletState, onConnectW
                       onChange={(e) => setNewKeyForm(f => ({ ...f, baseUrl: e.target.value }))}
                       className="w-full p-2.5 rounded-xl bg-white border border-[#DDD5C8] text-xs text-[#2E2823] font-mono focus:outline-hidden focus:ring-2 focus:ring-[#DE6438]/20"
                     />
-                    <div className="flex items-center space-x-1.5 mt-1 text-[10px] text-[#7E7469] flex-wrap gap-1">
+                    <div className="flex items-center space-x-1.5 mt-1 text-xs text-[#7E7469] flex-wrap gap-1">
                       <span>常用端点:</span>
                       <button 
                         type="button" 
@@ -1302,7 +1320,7 @@ export default function KeyVaultModal({ isOpen, onClose, walletState, onConnectW
                         Ollama (本地)
                       </button>
                     </div>
-                    <p className="text-[10px] text-[#7E7469] mt-0.5">
+                    <p className="text-xs text-[#7E7469] mt-0.5">
                       * 提示：标准 OpenAI 兼容端点末尾保留 /v1 即可（系统遵循 RFC 3986 自动规整末尾斜杠，完整保留路径段）
                     </p>
                   </div>
@@ -1314,7 +1332,7 @@ export default function KeyVaultModal({ isOpen, onClose, walletState, onConnectW
                       onChange={(e) => setNewKeyForm(f => ({ ...f, setActive: e.target.checked }))}
                       className="w-4 h-4 rounded text-[#DE6438] focus:ring-[#DE6438] cursor-pointer"
                     />
-                    <label htmlFor="setActiveKeyCheck" className="text-xs font-semibold text-[#2E2823] cursor-pointer select-none">
+                    <label htmlFor="setActiveKeyCheck" className="text-xs font-semibold text-[#2E2823] cursor-pointer">
                       保存后立即设为当前生效激活密钥 (推演时由多智能体优先调用)
                     </label>
                   </div>

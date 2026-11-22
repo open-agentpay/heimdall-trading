@@ -118,7 +118,7 @@ export default function CreateBotModal({ isOpen, onClose, onCreated, prefill = n
             </div>
             <div>
               <h3 className="text-sm font-bold text-[#2E2823]">新建交易机器人 (StrategyRouter)</h3>
-              <p className="text-[11px] text-[#8C8276]">交易所、市场类型与运行模式独立建模，严禁跨市场误路由</p>
+              <p className="text-xs text-[#8C8276]">交易所、市场类型与运行模式独立建模，严禁跨市场误路由</p>
             </div>
           </div>
           <button
@@ -138,7 +138,7 @@ export default function CreateBotModal({ isOpen, onClose, onCreated, prefill = n
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-[11px] font-semibold text-[#665E54] mb-1">机器人唯一 ID</label>
+              <label className="block text-xs font-semibold text-[#665E54] mb-1">机器人唯一 ID</label>
               <input
                 type="text"
                 required
@@ -148,7 +148,7 @@ export default function CreateBotModal({ isOpen, onClose, onCreated, prefill = n
               />
             </div>
             <div>
-              <label className="block text-[11px] font-semibold text-[#665E54] mb-1">展示策略名称</label>
+              <label className="block text-xs font-semibold text-[#665E54] mb-1">展示策略名称</label>
               <input
                 type="text"
                 required
@@ -162,8 +162,8 @@ export default function CreateBotModal({ isOpen, onClose, onCreated, prefill = n
           <div className="grid grid-cols-2 gap-3">
             <div>
               <div className="flex items-center justify-between mb-1">
-                <label className="block text-[11px] font-semibold text-[#665E54]">交易标的</label>
-                <span className="text-[10px] text-[#DE6438] font-mono">{MAINSTREAM_SYMBOLS.length} 主流资产</span>
+                <label className="block text-xs font-semibold text-[#665E54]">交易标的</label>
+                <span className="text-xs text-[#DE6438] font-mono">{MAINSTREAM_SYMBOLS.length} 主流资产</span>
               </div>
               <select
                 value={formData.symbol}
@@ -185,7 +185,7 @@ export default function CreateBotModal({ isOpen, onClose, onCreated, prefill = n
               </select>
             </div>
             <div>
-              <label className="block text-[11px] font-semibold text-[#665E54] mb-1">执行交易所</label>
+              <label className="block text-xs font-semibold text-[#665E54] mb-1">执行交易所</label>
               <select
                 value={formData.exchange}
                 onChange={(e) => setFormData({ ...formData, exchange: e.target.value })}
@@ -200,7 +200,7 @@ export default function CreateBotModal({ isOpen, onClose, onCreated, prefill = n
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-[11px] font-semibold text-[#665E54] mb-1">交易市场</label>
+              <label className="block text-xs font-semibold text-[#665E54] mb-1">交易市场</label>
               <select
                 value={formData.market_type}
                 onChange={(e) => setFormData({ ...formData, market_type: e.target.value })}
@@ -211,7 +211,7 @@ export default function CreateBotModal({ isOpen, onClose, onCreated, prefill = n
               </select>
             </div>
             <div>
-              <label className="block text-[11px] font-semibold text-[#665E54] mb-1">运行模式</label>
+              <label className="block text-xs font-semibold text-[#665E54] mb-1">运行模式</label>
               <select
                 value={formData.execution_mode}
                 onChange={(e) => setFormData({ ...formData, execution_mode: e.target.value })}
@@ -226,18 +226,18 @@ export default function CreateBotModal({ isOpen, onClose, onCreated, prefill = n
 
           {/* 市场规则提示 */}
           {formData.market_type === 'SPOT' ? (
-            <div className="px-3 py-2 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-[11px]">
+            <div className="px-3 py-2 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-xs">
               ℹ️ 现货市场提示：<strong>不可开空</strong>，不支持杠杆与 reduceOnly；仅允许买入现货及卖出已有持仓。
             </div>
           ) : (
-            <div className="px-3 py-2 rounded-xl bg-[#F4EFE6] border border-[#E6DFD5] text-[#5A5046] text-[11px]">
+            <div className="px-3 py-2 rounded-xl bg-[#F4EFE6] border border-[#E6DFD5] text-[#5A5046] text-xs">
               ℹ️ U 本位合约说明：支持多空双向开平仓与杠杆配置；系统将自动探测账户单向/双向持仓模式（Hedge / One-way），并仅按真实成交数量挂载原生条件止损止盈。
             </div>
           )}
 
           {/* StrategyRouter 4 大核心策略 */}
           <div>
-            <label className="block text-[11px] font-semibold text-[#665E54] mb-1.5">核心决策策略模板</label>
+            <label className="block text-xs font-semibold text-[#665E54] mb-1.5">核心决策策略模板</label>
             <div className="grid grid-cols-2 gap-2">
               {[
                 { id: 'BULL_BEAR_DEBATE', label: '⚔️ 多空博弈激辩', badge: 'LLM Multi-Agent' },
@@ -255,7 +255,7 @@ export default function CreateBotModal({ isOpen, onClose, onCreated, prefill = n
                   }`}
                 >
                   <div className="font-bold text-xs">{strat.label}</div>
-                  <div className="text-[10px] text-[#8C8276] mt-0.5 font-mono">{strat.badge}</div>
+                  <div className="text-xs text-[#8C8276] mt-0.5 font-mono">{strat.badge}</div>
                 </div>
               ))}
             </div>
@@ -264,11 +264,11 @@ export default function CreateBotModal({ isOpen, onClose, onCreated, prefill = n
           {/* 策略专属超参 */}
           {activeMeta?.params && activeMeta.params.length > 0 && (
             <div className="p-3 rounded-xl bg-white border border-[#E6DFD5] space-y-2">
-              <div className="text-[11px] font-bold text-[#2E2823]">策略专属超参 (透传至 StrategyRouter)</div>
+              <div className="text-xs font-bold text-[#2E2823]">策略专属超参 (透传至 StrategyRouter)</div>
               <div className="grid grid-cols-3 gap-2">
                 {activeMeta.params.map((p) => (
                   <div key={p.key}>
-                    <label className="block text-[10px] text-[#7E7469] mb-0.5">{p.label}</label>
+                    <label className="block text-xs text-[#7E7469] mb-0.5">{p.label}</label>
                     <input
                       type="number"
                       min={p.min}
@@ -278,7 +278,7 @@ export default function CreateBotModal({ isOpen, onClose, onCreated, prefill = n
                       onChange={(e) =>
                         setStrategyConfig((prev) => ({ ...prev, [p.key]: Number(e.target.value) }))
                       }
-                      className="w-full px-2 py-1 border border-[#D8CEBE] rounded font-mono text-[11px]"
+                      className="w-full px-2 py-1 border border-[#D8CEBE] rounded font-mono text-xs"
                     />
                   </div>
                 ))}
@@ -294,16 +294,16 @@ export default function CreateBotModal({ isOpen, onClose, onCreated, prefill = n
                   <ShieldCheck className="w-4 h-4 text-[#DE6438]" />
                   <span>实盘就绪预检清单 (Live Readiness Preflight)</span>
                 </span>
-                <span className="text-[10px] font-mono text-[#7E7469]">
+                <span className="text-xs font-mono text-[#7E7469]">
                   {checkingReadiness ? '检测中...' : `${formData.market_type} · ${formData.execution_mode}`}
                 </span>
               </div>
               {readiness?.error ? (
-                <div className="text-[11px] text-[#C24D4D]">⚠️ 预检接口返回异常（请先完成钱包签名登录）: {readiness.error}</div>
+                <div className="text-xs text-[#C24D4D]">⚠️ 预检接口返回异常（请先完成钱包签名登录）: {readiness.error}</div>
               ) : (
                 <div className="space-y-1.5">
                   {(readiness?.checks || []).map((c) => (
-                    <div key={c.id} className="flex items-center justify-between text-[11px] bg-[#FAF7F2] px-2.5 py-1.5 rounded-lg">
+                    <div key={c.id} className="flex items-center justify-between text-xs bg-[#FAF7F2] px-2.5 py-1.5 rounded-lg">
                       <span className="flex items-center space-x-1.5">
                         {c.passed ? (
                           <CheckCircle2 className="w-3.5 h-3.5 text-[#3D784E]" />
@@ -312,7 +312,7 @@ export default function CreateBotModal({ isOpen, onClose, onCreated, prefill = n
                         )}
                         <span className="font-medium text-[#2E2823]">{c.name}</span>
                       </span>
-                      <span className="text-[10px] text-[#7E7469] font-mono">{c.detail}</span>
+                      <span className="text-xs text-[#7E7469] font-mono">{c.detail}</span>
                     </div>
                   ))}
                 </div>
@@ -323,7 +323,7 @@ export default function CreateBotModal({ isOpen, onClose, onCreated, prefill = n
           {/* 初始分配资金 */}
           <div>
             <div className="flex items-center justify-between mb-1">
-              <label className="text-[11px] font-semibold text-[#665E54]">初始分配资金 (USD)</label>
+              <label className="text-xs font-semibold text-[#665E54]">初始分配资金 (USD)</label>
               <span className="font-mono text-xs font-bold text-[#DE6438]">
                 ${Number(formData.allocated_capital).toLocaleString()} USDT
               </span>
@@ -334,7 +334,7 @@ export default function CreateBotModal({ isOpen, onClose, onCreated, prefill = n
                   key={amt}
                   type="button"
                   onClick={() => setFormData({ ...formData, allocated_capital: amt })}
-                  className={`px-2 py-1 rounded-lg text-[10px] font-mono font-bold transition shrink-0 ${
+                  className={`px-2 py-1 rounded-lg text-xs font-mono font-bold transition shrink-0 ${
                     Number(formData.allocated_capital) === amt
                       ? 'bg-[#DE6438] text-white shadow-xs'
                       : 'bg-[#F2EDE4] text-[#6E6458] hover:bg-white hover:text-[#DE6438] border border-[#E6DFD5]'

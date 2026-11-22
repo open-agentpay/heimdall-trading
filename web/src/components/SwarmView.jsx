@@ -126,7 +126,7 @@ export default function SwarmView({
   const totalCapital = bots.reduce((sum, b) => sum + (Number(b.allocated_capital) || 0), 0);
 
   return (
-    <div className="flex-1 flex flex-col bg-[#F6F2EB] overflow-hidden select-none">
+    <div className="flex-1 flex flex-col bg-[#F6F2EB] overflow-hidden">
       
       {/* 顶部控制与操作栏 */}
       <div className="h-14 bg-[#FAF7F2] border-b border-[#E6DFD5] px-6 flex items-center justify-between shrink-0">
@@ -136,7 +136,7 @@ export default function SwarmView({
           </div>
           <div>
             <h1 className="text-sm font-semibold text-[#1F1E1B] tracking-tight">蜂群编排与集群管控 (Swarm)</h1>
-            <p className="text-[10px] text-[#8C8275]">
+            <p className="text-xs text-[#8C8275]">
               多策略并行矩阵 · 划拨本金 ${totalCapital.toLocaleString()} · 运行状态 {runningBots}/{totalBots}
             </p>
           </div>
@@ -185,7 +185,7 @@ export default function SwarmView({
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           <div className="p-4 rounded-xl border border-[#DFD6C7] bg-[#FAF7F2] shadow-2xs flex items-center justify-between">
             <div>
-              <div className="text-[10px] text-[#8C8275] uppercase tracking-wider">活跃策略数</div>
+              <div className="text-xs text-[#8C8275] uppercase tracking-wider">活跃策略数</div>
               <div className="text-xl font-bold text-[#1F1E1B] mt-0.5">{runningBots} / {totalBots}</div>
             </div>
             <div className="w-10 h-10 rounded-lg bg-[#3D784E]/10 flex items-center justify-center text-[#3D784E]">
@@ -195,7 +195,7 @@ export default function SwarmView({
 
           <div className="p-4 rounded-xl border border-[#DFD6C7] bg-[#FAF7F2] shadow-2xs flex items-center justify-between">
             <div>
-              <div className="text-[10px] text-[#8C8275] uppercase tracking-wider">划拨总本金</div>
+              <div className="text-xs text-[#8C8275] uppercase tracking-wider">划拨总本金</div>
               <div className="text-xl font-bold font-mono text-[#1F1E1B] mt-0.5">${totalCapital.toLocaleString()}</div>
             </div>
             <div className="w-10 h-10 rounded-lg bg-[#DE6438]/10 flex items-center justify-center text-[#DE6438]">
@@ -205,7 +205,7 @@ export default function SwarmView({
 
           <div className="p-4 rounded-xl border border-[#DFD6C7] bg-[#FAF7F2] shadow-2xs flex items-center justify-between">
             <div>
-              <div className="text-[10px] text-[#8C8275] uppercase tracking-wider">启动决策周期</div>
+              <div className="text-xs text-[#8C8275] uppercase tracking-wider">启动决策周期</div>
               <div className="text-xl font-bold font-mono text-[#1F1E1B] mt-0.5">
                 {BOT_DECISION_INTERVAL_SECONDS % 60 === 0 ? `${BOT_DECISION_INTERVAL_SECONDS / 60} 分钟` : `${BOT_DECISION_INTERVAL_SECONDS}s`} 盯盘
               </div>
@@ -217,7 +217,7 @@ export default function SwarmView({
 
           <div className="p-4 rounded-xl border border-[#DFD6C7] bg-[#FAF7F2] shadow-2xs flex items-center justify-between">
             <div>
-              <div className="text-[10px] text-[#8C8275] uppercase tracking-wider">风控防御等级</div>
+              <div className="text-xs text-[#8C8275] uppercase tracking-wider">风控防御等级</div>
               <div className="text-xl font-bold text-[#3D784E] mt-0.5">7重全防护</div>
             </div>
             <div className="w-10 h-10 rounded-lg bg-[#3D784E]/10 flex items-center justify-center text-[#3D784E]">
@@ -231,11 +231,11 @@ export default function SwarmView({
           <div className="flex items-center justify-between mb-3">
             <h2 className="text-xs font-bold text-[#1F1E1B] uppercase tracking-wider flex items-center space-x-1.5">
               <span>机器人编队矩阵</span>
-              <span className="text-[10px] text-[#8C8275] font-normal">({bots.length} 台在编)</span>
+              <span className="text-xs text-[#8C8275] font-normal">({bots.length} 台在编)</span>
             </h2>
             <button 
               onClick={onRefreshBots}
-              className="text-[11px] text-[#7E7469] hover:text-[#1F1E1B] flex items-center space-x-1 cursor-pointer"
+              className="text-xs text-[#7E7469] hover:text-[#1F1E1B] flex items-center space-x-1 cursor-pointer"
             >
               <RefreshCw className="w-3 h-3" />
               <span>刷新集群状态</span>
@@ -266,12 +266,12 @@ export default function SwarmView({
                         </span>
                         <div>
                           <h3 className="text-sm font-bold text-[#1F1E1B]">{bot.name || id}</h3>
-                          <span className="text-[10px] font-mono text-[#8C8275]">{id}</span>
+                          <span className="text-xs font-mono text-[#8C8275]">{id}</span>
                         </div>
                       </div>
 
                       <span
-                        className={`text-[10px] font-mono px-2 py-0.5 rounded-full border ${
+                        className={`text-xs font-mono px-2 py-0.5 rounded-full border ${
                           isRunning
                             ? "bg-[#3D784E]/10 text-[#3D784E] border-[#3D784E]/20"
                             : "bg-[#7E7469]/10 text-[#7E7469] border-[#7E7469]/20"
@@ -284,32 +284,32 @@ export default function SwarmView({
                     {/* 策略详情参数 */}
                     <div className="mt-4 grid grid-cols-2 gap-2 text-xs bg-[#EFE9DF]/40 p-3 rounded-lg border border-[#E6DFD5]">
                       <div>
-                        <span className="text-[10px] text-[#8C8275]">策略模型</span>
-                        <div className="font-semibold text-[#2E2823] mt-0.5 text-[11px] font-mono">
+                        <span className="text-xs text-[#8C8275]">策略模型</span>
+                        <div className="font-semibold text-[#2E2823] mt-0.5 text-xs font-mono">
                           {bot.strategy || bot.strategy_type || 'TREND_FOLLOW'}
                         </div>
                       </div>
                       <div>
-                        <span className="text-[10px] text-[#8C8275]">划拨本金</span>
-                        <div className="font-bold font-mono text-[#2E2823] mt-0.5 text-[11px]">
+                        <span className="text-xs text-[#8C8275]">划拨本金</span>
+                        <div className="font-bold font-mono text-[#2E2823] mt-0.5 text-xs">
                           ${Number(bot.allocated_capital || 10000).toLocaleString()}
                         </div>
                       </div>
                       <div>
-                        <span className="text-[10px] text-[#8C8275]">交易所 · 市场 · 模式</span>
-                        <div className="font-semibold text-[#2E2823] mt-0.5 text-[11px] font-mono">
+                        <span className="text-xs text-[#8C8275]">交易所 · 市场 · 模式</span>
+                        <div className="font-semibold text-[#2E2823] mt-0.5 text-xs font-mono">
                           {bot.exchange || 'BINANCE'} · {bot.market_type || 'USDM_FUTURES'} · {bot.execution_mode || 'LOCAL_SIM'}
                         </div>
                       </div>
                       <div>
-                        <span className="text-[10px] text-[#8C8275]">宏观门控 (MacroBias)</span>
+                        <span className="text-xs text-[#8C8275]">宏观门控 (MacroBias)</span>
                         <div className="mt-0.5 flex items-center justify-between">
-                          <span className={`text-[10px] font-mono font-bold ${bot.macro_bias ? 'text-[#C28B38]' : 'text-[#3D784E]'}`}>
+                          <span className={`text-xs font-mono font-bold ${bot.macro_bias ? 'text-[#C28B38]' : 'text-[#3D784E]'}`}>
                             {bot.macro_bias ? `${bot.macro_bias.action} (${bot.macro_bias.risk_scale}x)` : 'NORMAL'}
                           </span>
                           <button
                             onClick={() => handleToggleMacroBias(bot)}
-                            className="text-[10px] underline text-[#DE6438] cursor-pointer"
+                            className="text-xs underline text-[#DE6438] cursor-pointer"
                           >
                             {bot.macro_bias ? '解除' : '降仓'}
                           </button>
