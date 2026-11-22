@@ -60,8 +60,44 @@ logger = logging.getLogger(__name__)
 # 币安官方端点常量
 BINANCE_SPOT_TESTNET_REST = "https://demo-api.binance.com"
 BINANCE_SPOT_MAINNET_REST = "https://api.binance.com"
-BINANCE_FUTURES_TESTNET_REST = "https://testnet.binancefuture.com"
+# 币安官方文档当前的 U 本位合约测试网地址（旧地址 testnet.binancefuture.com 2026-11-22 实测仍可用，但已不在文档中）
+BINANCE_FUTURES_TESTNET_REST = "https://demo-fapi.binance.com"
 BINANCE_FUTURES_MAINNET_REST = "https://fapi.binance.com"
+
+
+def _seven_days_ago_ms() -> int:
+    """交易所成交/流水接口只按 7 天窗口返回，起始时间不早于 7 天前（留 1 分钟余量）"""
+    return int(time.time() * 1000) - 7 * 24 * 3600 * 1000 + 60_000
+
+
+async def _paged_trades(
+    adapter: "BinanceAdapterBase",
+    path: str,
+    symbol: str,
+    from_id: Optional[int],
+    start_time_ms: Optional[int],
+    limit: int,
+    max_pages: int,
+) -> List[Dict[str, Any]]:
+    """按 fromId 翻页拉取成交，返回按成交编号升序、去重后的列表"""
+    adapter._require_credentials()
+    sym = adapter._binance_symbol(symbol)
+    out: Dict[int, Dict[str, Any]] = {}
+    cursor = from_id
+    for _ in range(max(1, max_pages)):
+        params: Dict[str, Any] = {"symbol": sym, "limit": int(limit)}
+        if cursor is not None:
+            params["fromId"] = int(cursor)
+        elif start_time_ms is not None:
+            params["startTime"] = int(max(start_time_ms, _seven_days_ago_ms()))
+        data = await adapter._signed_request("GET", path, params, timeout=5.0)
+        page = [t for t in (data or []) if isinstance(t, dict) and t.get("id") is not None] if isinstance(data, list) else []
+        for t in page:
+            out[int(t["id"])] = t
+        if len(page) < limit:
+            break
+        cursor = max(int(t["id"]) for t in page) + 1
+    return [out[k] for k in sorted(out)]
 
 
 class BinanceAdapterBase(BaseExecutionAdapter):
@@ -365,6 +401,30 @@ class BinanceSpotAdapter(BinanceAdapterBase):
             pass
         return dict(self._last_prices)
 
+    async def fetch_symbol_trades(
+        self,
+        symbol: str,
+        from_id: Optional[int] = None,
+        start_time_ms: Optional[int] = None,
+        limit: int = 1000,
+        max_pages: int = 5,
+    ) -> List[Dict[str, Any]]:
+        """GET /api/v3/myTrades
+        E7 / E8 / E9：按标的增量拉取账户成交，供机器人独立账本记账。
+        - 有游标时用 fromId（交易所不允许与 startTime 同时传）；
+        - 没有游标时用 startTime（不早于 7 天前，交易所只按 7 天窗口返回）；
+        - 每页最多 limit 条，最多翻 max_pages 页，按成交编号升序返回。
+        """
+        return await _paged_trades(self, "/api/v3/myTrades", symbol, from_id, start_time_ms, limit, max_pages)
+
+    async def get_asset_usd_price(self, asset: str) -> Optional[float]:
+        """手续费币种（如 BNB）换算美元用的参考价，取不到返回 None"""
+        asset = str(asset or "").upper()
+        if asset in ("USDT", "USDC", "FDUSD", "BUSD"):
+            return 1.0
+        px = (await self._fetch_ticker_prices()).get(asset)
+        return float(px) if px and px > 0 else None
+
     async def get_account_balance(self) -> Dict[str, float]:
         self._require_credentials()
         acct = await self._signed_request("GET", "/api/v3/account", timeout=5.0)
@@ -595,6 +655,8 @@ class BinanceUSDMFuturesAdapter(BinanceAdapterBase):
             "type": order_type,
             "quantity": self._dec_str(req_qty),
             "newClientOrderId": client_order_id[:32],
+            # E1：不传时默认只返回受理回包（实测市价单为 status=NEW、executedQty=0），必须显式要求返回成交结果
+            "newOrderRespType": "RESULT",
         }
         if order_type == "LIMIT":
             params["price"] = self._dec_str(Decimal(str(action.target_price)))
@@ -612,12 +674,47 @@ class BinanceUSDMFuturesAdapter(BinanceAdapterBase):
         avg_px_raw = Decimal(str(resp.get("avgPrice") or "0"))
         cum_quote = Decimal(str(resp.get("cumQuote") or "0"))
 
+        # E1：市价单若仍返回 NEW 且零成交，立即补查一次订单真实状态（查不到则交由对账恢复）
+        if order_type == "MARKET" and filled_qty <= 0 and status_str in ("NEW", "PENDING_NEW"):
+            try:
+                q = await self.query_order(symbol=binance_sym, client_order_id=client_order_id, order_id=ex_order_id)
+                if q.get("found"):
+                    status_str = str(q.get("status") or status_str).upper()
+                    filled_qty = Decimal(str(q.get("filled_qty") or "0"))
+                    if q.get("avg_fill_price"):
+                        avg_px_raw = Decimal(str(q["avg_fill_price"]))
+            except Exception as q_err:
+                logger.warning("[BinanceUSDMFutures] 市价单回包未成交，补查订单失败（交由对账恢复）| orderId=%s: %s", ex_order_id, q_err)
+
+        # E1 / E8：RESULT 回包不含均价与成交额（实测），按订单号查成交明细补齐价格、手续费、已实现盈亏
         avg_fill_price: Optional[Decimal] = None
-        if filled_qty > 0:
+        fee: Optional[Decimal] = None
+        fee_asset: Optional[str] = None
+        realized_pnl = Decimal("0")
+        raw = dict(resp)
+        fills = await self.fetch_order_fills(binance_sym, ex_order_id) if filled_qty > 0 else None
+        if fills is not None:
+            avg_fill_price = (fills["quote"] / fills["qty"]).quantize(Decimal("0.00000001"))
+            # 成交明细可能比订单状态滞后：数量一致才直接采用明细成交额，否则按均价折算
+            cum_quote = fills["quote"] if fills["qty"] == filled_qty else (avg_fill_price * filled_qty)
+            fee = fills["fee_usd"]
+            fee_asset = fills["fee_asset"]
+            realized_pnl = fills["realized_pnl"]
+            raw["heimdall_fills"] = {
+                "trade_ids": fills["trade_ids"],
+                "qty": str(fills["qty"]),
+                "quote": str(fills["quote"]),
+                "fee_usd": str(fills["fee_usd"]),
+                "fee_other": {k: str(v) for k, v in fills["fee_other"].items()},
+                "realized_pnl": str(fills["realized_pnl"]),
+            }
+        elif filled_qty > 0:
             if avg_px_raw > 0:
                 avg_fill_price = avg_px_raw
             elif cum_quote > 0:
                 avg_fill_price = (cum_quote / filled_qty).quantize(Decimal("0.00000001"))
+            if avg_fill_price is not None and cum_quote <= 0:
+                cum_quote = avg_fill_price * filled_qty
 
         return ExchangeOrderResult(
             client_order_id=str(resp.get("clientOrderId") or client_order_id),
@@ -627,12 +724,112 @@ class BinanceUSDMFuturesAdapter(BinanceAdapterBase):
             filled_qty=filled_qty,
             avg_fill_price=avg_fill_price,
             cumulative_quote_qty=cum_quote,
-            fee=None,
-            fee_asset="USDT",
-            raw_response=resp,
+            fee=fee,
+            fee_asset=fee_asset,
+            raw_response=raw,
             is_simulated=False,
             market_type=MarketType.USDM_FUTURES,
+            realized_pnl=realized_pnl,
         )
+
+    async def fetch_order_fills(self, symbol: str, order_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        """
+        按订单号拉取成交明细（GET /fapi/v1/userTrades），汇总成交量、成交额、手续费与已实现盈亏。
+        - 手续费仅把 USDT / USDC / FDUSD / BUSD 计入 fee_usd，其他币种（如 BNB 抵扣）单独放在 fee_other；
+        - 拉取失败或没有成交时返回 None，由调用方回退到订单回包里的数据。
+        """
+        if not order_id or not str(order_id).isdigit():
+            return None
+        params: Dict[str, Any] = {"symbol": self._binance_symbol(symbol), "orderId": int(order_id)}
+        try:
+            if self._is_method_mocked(self._signed_request):
+                data = await self._signed_request("GET", "/fapi/v1/userTrades", params, timeout=5.0)
+            elif self.um_client is not None and hasattr(self.um_client, "get_account_trades"):
+                data = await self._run_sdk(self.um_client.get_account_trades, **params)
+            else:
+                data = await self._signed_request("GET", "/fapi/v1/userTrades", params, timeout=5.0)
+        except Exception as exc:
+            logger.warning("[BinanceUSDMFutures] 拉取成交明细失败 | orderId=%s: %s", order_id, exc)
+            return None
+        if not isinstance(data, list) or not data:
+            return None
+
+        usd_assets = {"USDT", "USDC", "FDUSD", "BUSD"}
+        qty = quote = fee_usd = pnl = Decimal("0")
+        fee_other: Dict[str, Decimal] = {}
+        trade_ids: List[str] = []
+        for t in data:
+            if not isinstance(t, dict) or str(t.get("orderId")) != str(order_id):
+                continue
+            t_qty = Decimal(str(t.get("qty") or "0"))
+            t_quote = Decimal(str(t.get("quoteQty") or "0"))
+            if t_quote <= 0 and t_qty > 0:
+                t_quote = t_qty * Decimal(str(t.get("price") or "0"))
+            qty += t_qty
+            quote += t_quote
+            pnl += Decimal(str(t.get("realizedPnl") or "0"))
+            comm = Decimal(str(t.get("commission") or "0"))
+            asset = str(t.get("commissionAsset") or "USDT").upper()
+            if asset in usd_assets:
+                fee_usd += comm
+            else:
+                fee_other[asset] = fee_other.get(asset, Decimal("0")) + comm
+            if t.get("id") is not None:
+                trade_ids.append(str(t["id"]))
+        if qty <= 0 or quote <= 0:
+            return None
+        return {
+            "qty": qty,
+            "quote": quote,
+            "fee_usd": fee_usd,
+            "fee_asset": "USDT" if not fee_other else ",".join(["USDT"] + sorted(fee_other)),
+            "fee_other": fee_other,
+            "realized_pnl": pnl,
+            "trade_ids": trade_ids,
+        }
+
+    async def fetch_symbol_trades(
+        self,
+        symbol: str,
+        from_id: Optional[int] = None,
+        start_time_ms: Optional[int] = None,
+        limit: int = 1000,
+        max_pages: int = 5,
+    ) -> List[Dict[str, Any]]:
+        """GET /fapi/v1/userTrades
+        E7 / E8 / E9：按标的增量拉取账户成交，供机器人独立账本记账。
+        - 有游标时用 fromId（交易所不允许与 startTime 同时传）；
+        - 没有游标时用 startTime（不早于 7 天前，交易所只按 7 天窗口返回）；
+        - 每页最多 limit 条，最多翻 max_pages 页，按成交编号升序返回。
+        """
+        return await _paged_trades(self, "/fapi/v1/userTrades", symbol, from_id, start_time_ms, limit, max_pages)
+
+    async def fetch_funding_income(self, symbol: str, start_time_ms: int, limit: int = 1000) -> List[Dict[str, Any]]:
+        """E8：GET /fapi/v1/income（incomeType=FUNDING_FEE）拉取资金费流水，按时间升序返回"""
+        params: Dict[str, Any] = {
+            "symbol": self._binance_symbol(symbol),
+            "incomeType": "FUNDING_FEE",
+            "startTime": int(max(start_time_ms, _seven_days_ago_ms())),
+            "limit": int(limit),
+        }
+        data = await self._signed_request("GET", "/fapi/v1/income", params, timeout=5.0)
+        rows = [r for r in (data or []) if isinstance(r, dict)] if isinstance(data, list) else []
+        return sorted(rows, key=lambda r: int(r.get("time") or 0))
+
+    async def get_asset_usd_price(self, asset: str) -> Optional[float]:
+        """手续费币种（如 BNB）换算美元用的参考价，取不到返回 None"""
+        asset = str(asset or "").upper()
+        if asset in ("USDT", "USDC", "FDUSD", "BUSD"):
+            return 1.0
+        try:
+            async with httpx.AsyncClient(timeout=4.0) as client:
+                resp = await client.get(f"{self.rest_base}/fapi/v1/ticker/price", params={"symbol": f"{asset}USDT"})
+                if resp.status_code == 200:
+                    px = float((resp.json() or {}).get("price") or 0.0)
+                    return px if px > 0 else None
+        except Exception as exc:
+            logger.debug("[BinanceUSDMFutures] 获取 %s 参考价失败: %s", asset, exc)
+        return None
 
     async def execute_proposal(self, proposal: TradeProposal) -> TradeExecutionResult:
         cid = (proposal.idempotency_key or f"hd_fu_{uuid.uuid4().hex[:14]}")[:32]
@@ -707,6 +904,7 @@ class BinanceUSDMFuturesAdapter(BinanceAdapterBase):
                 "margin_used": round(abs(amt) * entry_px / lev, 2),
                 "unrealized_pnl": round(float(p.get("unRealizedProfit") or 0.0), 4),
                 "leverage": lev,
+                "mark_price": round(float(p.get("markPrice") or 0.0), 6),
                 "market_type": MarketType.USDM_FUTURES.value,
             })
         return fapi_pos
@@ -730,26 +928,30 @@ class BinanceUSDMFuturesAdapter(BinanceAdapterBase):
         is_dual = await self.get_dual_side_position()
         pos_side_param = ("LONG" if position_side == PositionSide.LONG else "SHORT") if is_dual else "BOTH"
 
+        # E4：币安自 2025-12-09 起条件单只能走 Algo 接口，旧接口 /fapi/v1/order 返回 -4120（2026-11-22 测试网实测确认）
         cond_params: Dict[str, Any] = {
+            "algoType": "CONDITIONAL",
             "symbol": binance_sym,
             "side": side.value,
             "positionSide": pos_side_param,
             "type": futures_type,
-            "stopPrice": self._dec_str(Decimal(str(trigger_price))),
+            "triggerPrice": self._dec_str(Decimal(str(trigger_price))),
             "quantity": self._dec_str(Decimal(str(quantity))),
             "workingType": working_type,
-            "newClientOrderId": cid,
+            "clientAlgoId": cid,
         }
         if not is_dual and reduce_only:
             cond_params["reduceOnly"] = "true"
 
-        data = await self._send_futures_order(cond_params)
-        if not isinstance(data, dict) or not data.get("orderId"):
-            raise RuntimeError(f"币安合约条件单响应缺少 orderId: {data}")
+        data = await self._signed_request("POST", "/fapi/v1/algoOrder", cond_params, timeout=5.0)
+        if not isinstance(data, dict) or not data.get("algoId"):
+            raise RuntimeError(f"币安合约 Algo 条件单响应缺少 algoId: {data}")
 
         return {
-            "order_id": str(data["orderId"]),
-            "client_order_id": str(data.get("clientOrderId") or cid),
+            "order_id": str(data["algoId"]),
+            "algo_id": str(data["algoId"]),
+            "is_algo": True,
+            "client_order_id": str(data.get("clientAlgoId") or cid),
             "symbol": binance_sym,
             "side": side.value,
             "position_side": position_side.value,
@@ -758,9 +960,53 @@ class BinanceUSDMFuturesAdapter(BinanceAdapterBase):
             "quantity": float(quantity),
             "reduce_only": bool(reduce_only),
             "working_type": working_type,
-            "status": str(data.get("status") or "NEW").upper(),
+            "status": str(data.get("algoStatus") or data.get("status") or "NEW").upper(),
             "market_type": MarketType.USDM_FUTURES.value,
         }
+
+    async def cancel_conditional_order(
+        self,
+        symbol: str,
+        order_id: Optional[str] = None,
+        client_order_id: Optional[str] = None,
+    ) -> bool:
+        """撤销单笔 Algo 条件单（DELETE /fapi/v1/algoOrder）。order_id 即 algoId。"""
+        self._require_credentials()
+        params: Dict[str, Any] = {"symbol": self._binance_symbol(symbol)}
+        if order_id and str(order_id).isdigit():
+            params["algoId"] = int(order_id)
+        elif client_order_id:
+            params["clientAlgoId"] = client_order_id
+        else:
+            return False
+        await self._signed_request("DELETE", "/fapi/v1/algoOrder", params, timeout=5.0)
+        return True
+
+    async def list_open_conditional_orders(self, symbol: Optional[str] = None) -> List[Dict[str, Any]]:
+        """查询当前生效的 Algo 条件单（GET /fapi/v1/openAlgoOrders）。普通挂单接口看不到这些订单。"""
+        self._require_credentials()
+        params: Dict[str, Any] = {"symbol": self._binance_symbol(symbol)} if symbol else {}
+        data = await self._signed_request("GET", "/fapi/v1/openAlgoOrders", params, timeout=5.0)
+        if isinstance(data, dict) and isinstance(data.get("orders"), list):
+            data = data["orders"]
+        return [o for o in (data or []) if isinstance(o, dict)] if isinstance(data, list) else []
+
+    async def cancel_all_conditional_orders(self, symbol: str) -> int:
+        """
+        撤销某标的全部 Algo 条件单，返回成功撤销的数量。
+        DELETE /fapi/v1/allOpenOrders 撤不到 Algo 条件单（实测），需逐笔按 algoId 撤销。
+        """
+        canceled = 0
+        for o in await self.list_open_conditional_orders(symbol):
+            algo_id = o.get("algoId")
+            if algo_id is None:
+                continue
+            try:
+                await self.cancel_conditional_order(symbol, order_id=str(algo_id))
+                canceled += 1
+            except Exception as exc:
+                logger.warning("[BinanceUSDMFutures] 撤销 Algo 条件单失败 | algoId=%s: %s", algo_id, exc)
+        return canceled
 
     async def query_order(
         self,

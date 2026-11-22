@@ -176,7 +176,7 @@ async def test_03_local_futures_sim_long_and_short():
 
 @pytest.mark.asyncio
 async def test_04_05_binance_testnet_strict_market_isolation():
-    """验收 4 & 5：币安合约测试网开空只调 /fapi/v1/order；币安现货测试网下单只调 /api/v3/order 且不传合约字段"""
+    """验收 4 & 5：币安合约测试网开空只通过 /fapi/v1/order 下单（之后仅允许只读查询成交明细）；币安现货测试网下单只调 /api/v3/order 且不传合约字段"""
     fut_adapter = ExecutionAdapterFactory.create(
         exchange=ExchangeType.BINANCE,
         market_type=MarketType.USDM_FUTURES,
@@ -204,8 +204,12 @@ async def test_04_05_binance_testnet_strict_market_isolation():
             client_order_id="cid_bn_fut_1",
             requested_qty=Decimal("0.02"),
         )
-        assert mock_fut.call_args.args[1] == "/fapi/v1/order"
-        assert mock_fut.call_args.args[2]["positionSide"] == "BOTH"
+        # E1：下单后会按订单号只读查询成交明细（GET /fapi/v1/userTrades），下单本身仍只走 /fapi/v1/order
+        order_call = mock_fut.call_args_list[0]
+        assert order_call.args[:2] == ("POST", "/fapi/v1/order")
+        assert order_call.args[2]["positionSide"] == "BOTH"
+        assert order_call.args[2]["newOrderRespType"] == "RESULT"
+        assert all(c.args[:2] == ("GET", "/fapi/v1/userTrades") for c in mock_fut.call_args_list[1:])
         assert res_f.filled_qty == Decimal("0.02")
 
     spot_adapter = ExecutionAdapterFactory.create(

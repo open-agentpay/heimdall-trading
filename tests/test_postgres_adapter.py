@@ -76,8 +76,9 @@ def test_postgres_database_manager_pool_init_query_commit_and_close():
 
             await mgr.init_tables()
             mock_create_pool.assert_awaited_once()
-            # 9 张表 + 1 条 ALTER + 7 条 CREATE INDEX = 17 条 DDL
-            assert len(executed_sqls) == 17
+            # 12 张表（含 system_settings、bot_ledgers、bot_run_events）+ 4 条 ALTER（owner_wallet + oms_orders 止损止盈计划 3 列）
+            # + 8 条 CREATE INDEX = 24 条 DDL
+            assert len(executed_sqls) == 24
             assert any("BIGSERIAL PRIMARY KEY" in s for s, _ in executed_sqls)
 
             rows = await mgr.execute_query(

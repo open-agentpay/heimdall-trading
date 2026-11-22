@@ -3,7 +3,7 @@
 测试用例: 币安 U 本位合约官方 SDK (BinanceUSDMFuturesAdapter) 闭环测试
 ================================================================================
 验证项目：
-1. 官方 SDK 正确识别测试网 (https://testnet.binancefuture.com) 与主网 (https://fapi.binance.com)；
+1. 官方 SDK 正确识别测试网 (https://demo-fapi.binance.com) 与主网 (https://fapi.binance.com)；
 2. BinanceSpotAdapter 严禁做空 (SHORT)，触发安全拦截；
 3. 单向持仓 (One-Way) 模式下，开空传 positionSide="BOTH"，条件保护单传 reduceOnly="true"；
 4. 双向对冲 (Hedge) 模式下，开空传 positionSide="SHORT"；
@@ -12,7 +12,7 @@
 from __future__ import annotations
 
 from decimal import Decimal
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from heimdall.execution.binance import (
@@ -136,7 +136,12 @@ async def test_binance_futures_one_way_mode_short_order_and_protection():
     assert call_kwargs["side"] == "SELL"
     assert call_kwargs["positionSide"] == "BOTH"
 
-    mock_client.new_order.return_value = {"orderId": 99887799, "status": "NEW"}
+    # 开仓必须要求返回成交结果（E1）
+    assert call_kwargs["newOrderRespType"] == "RESULT"
+
+    # E4：条件单改走 Algo 接口 POST /fapi/v1/algoOrder（旧接口已返回 -4120）
+    algo_mock = AsyncMock(return_value={"algoId": 99887799, "clientAlgoId": "cid_ow_sl", "algoStatus": "NEW"})
+    adapter._signed_request = algo_mock
     cond_order = await adapter.place_conditional_order(
         symbol="BNBUSDT",
         side=OrderSide.BUY,
@@ -146,13 +151,21 @@ async def test_binance_futures_one_way_mode_short_order_and_protection():
         quantity=1.88,
         reduce_only=True,
         working_type="MARK_PRICE",
+        client_order_id="cid_ow_sl",
     )
     assert cond_order["order_id"] == "99887799"
-    cond_kwargs = mock_client.new_order.call_args.kwargs
-    assert cond_kwargs["positionSide"] == "BOTH"
-    assert cond_kwargs["type"] == "STOP_MARKET"
-    assert cond_kwargs["reduceOnly"] == "true"
-    assert cond_kwargs["workingType"] == "MARK_PRICE"
+    assert cond_order["is_algo"] is True
+    method, path, cond_params = algo_mock.call_args.args[:3]
+    assert (method, path) == ("POST", "/fapi/v1/algoOrder")
+    assert cond_params["algoType"] == "CONDITIONAL"
+    assert cond_params["positionSide"] == "BOTH"
+    assert cond_params["type"] == "STOP_MARKET"
+    assert cond_params["triggerPrice"] == "540"
+    assert cond_params["reduceOnly"] == "true"
+    assert cond_params["workingType"] == "MARK_PRICE"
+    assert cond_params["clientAlgoId"] == "cid_ow_sl"
+    assert "stopPrice" not in cond_params
+    mock_client.new_order.assert_called_once()  # 条件单不再经过普通下单接口
 
 
 @pytest.mark.asyncio

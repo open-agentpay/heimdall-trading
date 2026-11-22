@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Set
 from pydantic import BaseModel, Field
 
 from heimdall.execution.base import BaseExecutionAdapter
@@ -81,8 +81,22 @@ class ExchangeReconciler:
         bot_id: str,
         local_positions: List[Dict[str, Any]],
         bot_instance: Optional[Any] = None,
+        on_oms_fills: Optional[Callable[[], Awaitable[Optional[List[Dict[str, Any]]]]]] = None,
+        exchange_positions_fn: Optional[Callable[[], Awaitable[List[Dict[str, Any]]]]] = None,
+        symbol_scope: Optional[Set[str]] = None,
+        spot_external_holdings_ok: bool = False,
+        strict_mismatch: bool = False,
     ) -> ReconciliationReport:
-        """执行按市场隔离的单次全量对账"""
+        """
+        执行按市场隔离的单次全量对账。
+        on_oms_fills：OMS 查单发现新成交后由机器人写成交记录，并返回更新后的本地持仓基线
+        （E2：避免限价单事后成交被误判为幽灵持仓）。
+        E7 / E9（机器人独立账本模式）：
+        - exchange_positions_fn：读取交易所持仓的函数（只返回本机器人标的）；
+        - symbol_scope：只比对这些标的，账户里其他标的属于其他机器人或用户本人；
+        - spot_external_holdings_ok：现货账户里超出账本的余额视为用户原有持仓，不算差异；
+        - strict_mismatch：成交已同步后仍存在的数量差异 / 外部平仓也暂停机器人（来源无法解释）。
+        """
         report = ReconciliationReport(bot_id=bot_id, market_type=self.market_type)
         logger.debug(
             "[对账引擎] 开始执行对账 | bot=%s | 市场=%s | 本地持仓条数=%d",
@@ -101,14 +115,25 @@ class ExchangeReconciler:
                     bot_id, len(recovered), len(synced),
                 )
 
+        if on_oms_fills is not None:
+            refreshed = await on_oms_fills()
+            if refreshed is not None:
+                local_positions = refreshed
+
         # 第二步：拉取目标市场权威持仓视图并构建标准化索引
-        exchange_positions = await self.adapter.get_open_positions()
+        if exchange_positions_fn is not None:
+            exchange_positions = await exchange_positions_fn()
+        else:
+            exchange_positions = await self.adapter.get_open_positions()
+        scope = {_norm_sym(x) for x in symbol_scope} if symbol_scope else None
 
         local_map: Dict[str, Dict[str, Any]] = {}
         for p in local_positions:
             qty = float(p.get("quantity", 0.0) or 0.0)
             side = str(p.get("side", "FLAT")).upper()
             if side != "FLAT" and qty > self.qty_tolerance:
+                if scope is not None and _norm_sym(p["symbol"]) not in scope:
+                    continue
                 local_map[_norm_sym(p["symbol"])] = {"side": side, "quantity": qty}
 
         ex_map: Dict[str, Dict[str, Any]] = {}
@@ -116,6 +141,8 @@ class ExchangeReconciler:
             qty = float(p.get("quantity", 0.0) or 0.0)
             side = str(p.get("side", "FLAT")).upper()
             if side != "FLAT" and qty > self.qty_tolerance:
+                if scope is not None and _norm_sym(p["symbol"]) not in scope:
+                    continue
                 ex_map[_norm_sym(p["symbol"])] = {"side": side, "quantity": qty}
 
         all_symbols = sorted(set(local_map.keys()) | set(ex_map.keys()))
@@ -124,6 +151,13 @@ class ExchangeReconciler:
         for sym in all_symbols:
             loc = local_map.get(sym)
             ex = ex_map.get(sym)
+
+            if spot_external_holdings_ok and ex is not None:
+                # 现货：账户余额不少于账本持仓即视为一致，多出的部分是用户原有持仓
+                if loc is None:
+                    continue
+                if loc["side"] == ex["side"] and ex["quantity"] >= loc["quantity"] - self.qty_tolerance:
+                    continue
 
             if loc is None and ex is not None:
                 report.is_clean = False
@@ -147,6 +181,13 @@ class ExchangeReconciler:
             elif loc is not None and ex is None:
                 report.is_clean = False
                 await self.adapter.cancel_all_orders(symbol=sym)
+                # E4：币安 Algo 条件单不会被普通“撤销全部挂单”撤掉，需单独撤销残留止损/止盈
+                cancel_cond_all = getattr(self.adapter, "cancel_all_conditional_orders", None)
+                if cancel_cond_all is not None:
+                    try:
+                        await cancel_cond_all(sym)
+                    except Exception as cond_err:
+                        logger.warning("[对账引擎] 撤销残留 Algo 条件单失败 | 标的=%s: %s", sym, cond_err)
                 report.orphan_orders_canceled = True
                 report.diffs.append(ReconciliationDiff(
                     diff_type="EXTERNAL_CLOSE",
@@ -155,8 +196,12 @@ class ExchangeReconciler:
                     exchange_side="FLAT",
                     local_qty=loc["quantity"],
                     exchange_qty=0.0,
-                    action_taken="CANCELED_ORPHAN_ORDERS",
+                    action_taken="CANCELED_ORPHAN_ORDERS" + ("_AND_PAUSED_BOT" if strict_mismatch else ""),
                 ))
+                if strict_mismatch:
+                    report.bot_paused = True
+                    if bot_instance is not None:
+                        bot_instance.status = AgentStatus.PAUSED
                 logger.warning(
                     "[对账引擎·外部平仓同步] bot=%s | 市场=%s | 标的=%s | 本地=%s %.6f 但交易所已平仓 -> 已自动撤销残留挂单",
                     bot_id, self.market_type, sym, loc["side"], loc["quantity"],
@@ -190,8 +235,12 @@ class ExchangeReconciler:
                         exchange_side=ex["side"],
                         local_qty=loc["quantity"],
                         exchange_qty=ex["quantity"],
-                        action_taken="ADOPT_EXCHANGE_QTY",
+                        action_taken="PAUSED_BOT_ON_QTY_MISMATCH" if strict_mismatch else "ADOPT_EXCHANGE_QTY",
                     ))
+                    if strict_mismatch:
+                        report.bot_paused = True
+                        if bot_instance is not None:
+                            bot_instance.status = AgentStatus.PAUSED
                     logger.warning(
                         "[对账引擎·数量漂移] bot=%s | 市场=%s | 标的=%s | 本地=%.6f vs 交易所=%.6f -> 将以交易所数量为准同步",
                         bot_id, self.market_type, sym, loc["quantity"], ex["quantity"],

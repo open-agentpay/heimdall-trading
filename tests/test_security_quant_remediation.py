@@ -155,15 +155,24 @@ async def test_binance_mainnet_order_submission_success():
         ),
     )
 
-    with patch.object(adapter, "_signed_request", new=AsyncMock(return_value=mock_resp)) as mock_api:
+    async def _route(method, path, params=None, timeout=6.0):
+        if (method, path) == ("POST", "/fapi/v1/order"):
+            return mock_resp
+        if (method, path) == ("GET", "/fapi/v1/userTrades"):
+            return []  # 成交明细暂不可用时回退到订单回包里的均价
+        raise AssertionError(f"未预期的请求: {method} {path}")
+
+    with patch.object(adapter, "_signed_request", new=AsyncMock(side_effect=_route)) as mock_api:
         result = await adapter.execute_proposal(prop)
         assert result.order_id == "987654321"
         assert result.executed_price == 65120.50
         assert result.executed_quantity == 0.015
-        mock_api.assert_called_once()
-        args, kwargs = mock_api.call_args
-        assert args[0] == "POST"
-        assert args[1] == "/fapi/v1/order"
+        # 只下一次单；之后的调用只允许是只读的成交明细查询（E1）
+        post_calls = [c for c in mock_api.call_args_list if c.args[0] == "POST"]
+        assert len(post_calls) == 1
+        assert post_calls[0].args[1] == "/fapi/v1/order"
+        assert post_calls[0].args[2]["newOrderRespType"] == "RESULT"
+        assert mock_api.call_args_list[0].args[:2] == ("POST", "/fapi/v1/order")
 
 
 # ==============================================================================
