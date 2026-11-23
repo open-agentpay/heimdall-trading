@@ -5,7 +5,8 @@
  *
  * 【P1 真实性对齐】：
  * 1. 移除写死的 "280k" / "529k" Token 与 "$10,420.50 / 1.20%" 假数字，绑定后端真实统计；
- * 2. 显示每个机器人的运行模式徽章 (PAPER / TESTNET / MAINNET) 与 MacroBias 门控状态。
+ * 2. 显示每个机器人的运行模式徽章 (PAPER / TESTNET / MAINNET) 与 MacroBias 门控状态；
+ * 3. 演示机器人（后端 is_demo=true）显示“演示”徽章，悬停提示只在内存运行、重启后数据清空。
  */
 
 import React from 'react';
@@ -41,6 +42,7 @@ export default function Sidebar({
     currentEquity: Number(b.current_equity || b.allocated_capital || 0),
     cumulativeReturnPct: Number(b.cumulative_return_pct || 0),
     maxDrawdownPct: Number(b.max_drawdown_pct || 0),
+    isDemo: Boolean(b.is_demo),
   }));
 
   const currentBot = bots.find((b) => b.id === activeBotId) || bots[0];
@@ -112,6 +114,14 @@ export default function Sidebar({
                 <div className="mt-1.5 pt-1.5 border-t border-line-soft flex items-center justify-between text-xs text-ink-4">
                   <div className="flex items-center space-x-1.5">
                     <span className="font-mono px-1 rounded bg-subtle text-ink-3">{bot.marketType} · {bot.executionMode}</span>
+                    {bot.isDemo && (
+                      <span
+                        title={t('bots.demoTitle')}
+                        className="px-1 rounded bg-warning-soft text-warning border border-warning-line font-semibold cursor-help"
+                      >
+                        {t('bots.demo')}
+                      </span>
+                    )}
                     {bot.macroBias && (
                       <span className="text-warning font-bold">🛡️ {bot.macroBias.action}</span>
                     )}
