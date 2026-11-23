@@ -14,7 +14,9 @@ Heimdall 交易平台 - 交易机器人调度中枢与生命周期管理器 (Bot
   （职责与依赖分层见该包的 __init__.py）；
 - 原有的属性与方法名（ledger、_last_mark_price、coverage_grace_seconds、_is_risk_reducing、
   sync_ledger、_ensure_instrument_specs 等）通过 TradingBotInstance 里的"兼容层"继续可用，
-  外部调用方与现有测试无需修改。
+  外部调用方与现有测试无需修改；
+- BotManager 的实现在 heimdall/engine/fleet/（职责与依赖规则见该包的 __init__.py），
+  本文件只保留绑定了 TradingBotInstance 与 trading_repo 的 BotManager 子类，导入路径不变。
 """
 
 import logging
@@ -35,12 +37,12 @@ from heimdall.agents.state import MultiAgentState
 from heimdall.agents.graph import MultiAgentPipeline
 from heimdall.strategies import StrategyRouter, MacroBias
 from heimdall.accounting.nav import NAVEngine, EquitySnapshot
-from heimdall.accounting.ledger import BotLedger, base_asset
+from heimdall.accounting.ledger import BotLedger
 from heimdall.execution.base import BaseExecutionAdapter, TradeExecutionResult
 from heimdall.execution.factory import ExecutionAdapterFactory
 from heimdall.execution.hyperliquid import HyperliquidAdapter
 from heimdall.execution.precision import InstrumentRegistry
-from heimdall.execution.oms import OrderManagementSystem, TERMINAL_STATES
+from heimdall.execution.oms import OrderManagementSystem
 from heimdall.execution.reconciler import ExchangeReconciler
 from heimdall.llm.client import LLMService
 from heimdall.alert.notifier import alert_gateway
@@ -48,6 +50,7 @@ from heimdall.database.repository import trading_repo
 from heimdall.engine.bot_services import build_bot_services
 from heimdall.engine.bot_services.proposal_review import CLOSE_INTENT_PREFIXES, is_risk_reducing_close
 from heimdall.engine.bot_services.protection_service import resolve_fallback_stop_pct
+from heimdall.engine.fleet import FleetManager
 
 logger = logging.getLogger(__name__)
 
@@ -458,553 +461,31 @@ class TradingBotInstance:
     _last_exec_activity = _ServiceAttr("protection_service", "last_exec_activity")
 
 
-
-
-class BotManager:
+class BotManager(FleetManager):
     """
-    平台级多机器人调度管理中枢
+    平台级多机器人调度管理中枢。
+
+    实现已拆到 heimdall/engine/fleet/（启停删与急停、同账户冲突、资金划拨、首次引导、重启恢复、概览），
+    本类只做两件绑定：
+    - bot_class = TradingBotInstance：create_bot / 重启恢复 / 首次引导创建的机器人类型；
+    - repo_getter 取本模块的 trading_repo：测试 monkeypatch 本模块的 trading_repo 后，
+      资金划拨、首次引导、重启恢复使用的默认仓储随之生效（与拆分前一致）。
+
+    方法名与签名与拆分前完全一致：create_bot、start_bot、stop_bot、delete_bot、emergency_kill_switch、
+    find_account_conflict、check_account_conflict、reallocate_capital、get_portfolio_capital_distribution、
+    bootstrap_default_bots、restore_persisted_bots、list_bots_overview。
     """
+
+    bot_class = TradingBotInstance
+    bots: Dict[str, TradingBotInstance]
 
     def __init__(
         self,
         bifrost_client: Optional[BifrostClient] = None,
         portfolio_coordinator: Optional[PortfolioCoordinator] = None,
     ):
-        self.bifrost_client = bifrost_client or BifrostClient()
-        self.portfolio_coordinator = portfolio_coordinator or PortfolioCoordinator()
-        self.bots: Dict[str, TradingBotInstance] = {}
-
-    def create_bot(
-        self,
-        bot_id: str,
-        name: str,
-        symbol: str,
-        strategy_type: StrategyType = StrategyType.BULL_BEAR_DEBATE,
-        allocated_capital: float = 10000.0,
-        max_drawdown_limit: float = 0.05,
-        exchange: ExchangeType = ExchangeType.BINANCE,
-        execution_adapter: Optional[BaseExecutionAdapter] = None,
-        llm_service: Optional[LLMService] = None,
-        owner_wallet: Optional[str] = "system",
-        strategy_config: Optional[Dict[str, Any]] = None,
-        execution_mode: Union[ExecutionMode, str] = ExecutionMode.LOCAL_SIM,
-        market_type: Union[MarketType, str] = MarketType.USDM_FUTURES,
-    ) -> TradingBotInstance:
-        """注册并创建新的交易机器人实例（强制校验 exchange + market_type + execution_mode 路由）"""
-        if bot_id in self.bots:
-            raise ValueError(f"机器人 ID '{bot_id}' 已存在，不可重复创建")
-
-        bot = TradingBotInstance(
-            bot_id=bot_id,
-            name=name,
-            symbol=symbol,
-            strategy_type=strategy_type,
-            allocated_capital=allocated_capital,
-            max_drawdown_limit=max_drawdown_limit,
-            exchange=exchange,
-            execution_adapter=execution_adapter,
-            bifrost_client=self.bifrost_client,
-            llm_service=llm_service,
-            owner_wallet=owner_wallet,
-            portfolio_coordinator=self.portfolio_coordinator,
-            strategy_config=strategy_config,
-            execution_mode=execution_mode,
-            market_type=market_type,
+        super().__init__(
+            bifrost_client=bifrost_client,
+            portfolio_coordinator=portfolio_coordinator,
+            repo_getter=lambda: trading_repo,
         )
-        self.bots[bot_id] = bot
-        bot._account_conflict_fn = lambda b=bot: self.find_account_conflict(b)
-        logger.info(
-            "[BotManager] 成功创建机器人: %s (%s) | 标的: %s | 路由: %s/%s/%s | 归属: %s",
-            bot_id, name, symbol, bot.exchange.value, bot.market_type.value, bot.execution_mode.value, bot.owner_wallet,
-        )
-        return bot
-
-    async def reallocate_capital(self, bot_id: str, new_capital: float) -> Dict[str, Any]:
-        """
-        调整指定机器人的划拨本金与资金配比 (Capital Reallocation)
-        采用消除阶跃扰动的公募单位净值法 (NAV) 份额折算，确保收益率曲线真实连续。
-        """
-        bot = self.bots.get(bot_id)
-        if not bot:
-            raise KeyError(f"未找到 ID 为 '{bot_id}' 的机器人")
-        if new_capital <= 0:
-            raise ValueError("划拨本金必须大于 0")
-
-        delta = round(new_capital - bot.allocated_capital, 2)
-        bal = await bot.get_bot_balance()
-        current_equity = bal["total_equity"]
-
-        # 执行份额折算
-        if abs(delta) > 1e-4:
-            bot.nav_engine.handle_capital_flow(current_equity, delta)
-            bot.allocated_capital = new_capital
-            if hasattr(bot.executor, "cash_balance"):
-                bot.executor.cash_balance += delta
-
-        # 持久化更新至数据库
-        await trading_repo.upsert_agent(
-            agent_id=bot.bot_id,
-            name=bot.name,
-            symbol=bot.symbol,
-            strategy_type=bot.strategy_type.value,
-            status=bot.status.value,
-            allocated_capital=bot.allocated_capital,
-            max_drawdown_limit=bot.max_drawdown_limit,
-        )
-
-        logger.info(
-            "[BotManager 资金划拨] 机器人 %s 调整划拨本金: 新本金=$%.2f, 变动额=$%.2f, 新总份额=%.2f",
-            bot_id,
-            new_capital,
-            delta,
-            bot.nav_engine.total_shares,
-        )
-
-        return {
-            "success": True,
-            "bot_id": bot_id,
-            "name": bot.name,
-            "allocated_capital": bot.allocated_capital,
-            "delta_capital": delta,
-            "capital_delta": delta,
-            "total_shares": bot.nav_engine.total_shares,
-            "new_nav": bot.nav_engine.current_nav(current_equity + delta),
-            "current_nav": bot.nav_engine.current_nav(current_equity + delta),
-        }
-
-    def get_portfolio_capital_distribution(self, caller_wallet: Optional[str] = None) -> Dict[str, Any]:
-        """计算机器人的总资产池与资金配比分布（多租户隔离过滤）"""
-        clean_wallet = caller_wallet.strip().lower() if caller_wallet else None
-        scoped_bots = [
-            b for b in self.bots.values()
-            if (getattr(b, "owner_wallet", "system") or "system").strip().lower() in ("system", clean_wallet)
-        ]
-        total_allocated = sum(b.allocated_capital for b in scoped_bots)
-        distribution = []
-        for b in scoped_bots:
-            pct = round((b.allocated_capital / total_allocated * 100.0), 2) if total_allocated > 0 else 0.0
-            equity_val = b.executor.cash_balance if hasattr(b, "executor") and hasattr(b.executor, "cash_balance") else b.allocated_capital
-            if hasattr(b, "nav_engine") and b.nav_engine:
-                if b.nav_engine.snapshots:
-                    nav_val = round(b.nav_engine.snapshots[-1].nav, 4)
-                else:
-                    nav_val = round(b.nav_engine.current_nav(equity_val), 4)
-            else:
-                nav_val = 1.0
-            distribution.append({
-                "bot_id": b.bot_id,
-                "name": b.name,
-                "symbol": b.symbol,
-                "strategy": b.strategy_type.value,
-                "status": b.status.value,
-                "allocated_capital": b.allocated_capital,
-                "capital_share_pct": pct,
-                "capital_weight_pct": pct,
-                "latest_nav": float(nav_val),
-                "current_equity": float(equity_val),
-                "exchange": getattr(b, "exchange", ExchangeType.BINANCE).value,
-            })
-        return {
-            "total_portfolio_capital": total_allocated,
-            "bot_count": len(scoped_bots),
-            "distribution": distribution,
-            "bots": distribution,
-        }
-
-    @staticmethod
-    def _account_key(bot: Any) -> Optional[tuple]:
-        """交易所账户 + 标的键：同一钱包在同一交易所、市场、运行模式下使用同一套凭证，即同一个交易所账户"""
-        mode = getattr(bot, "execution_mode", ExecutionMode.LOCAL_SIM)
-        if mode == ExecutionMode.LOCAL_SIM:
-            return None
-        return (
-            (getattr(bot, "owner_wallet", "system") or "system").strip().lower(),
-            bot.exchange.value,
-            bot.market_type.value,
-            mode.value,
-            base_asset(bot.symbol),
-        )
-
-    def find_account_conflict(self, bot: Any) -> Optional[str]:
-        """
-        E7：返回与该机器人共用同一交易所账户、同一标的且仍在活动的其他机器人编号。
-        活动 = 正在运行，或账本仍有持仓，或仍有未完成订单。
-        """
-        key = self._account_key(bot)
-        if key is None:
-            return None
-        for other in self.bots.values():
-            if other is bot or self._account_key(other) != key:
-                continue
-            other_ledger = getattr(other, "ledger", None)
-            busy = (
-                other.status == AgentStatus.RUNNING
-                or (other_ledger is not None and not other_ledger.is_flat)
-                or any(o.state not in TERMINAL_STATES for o in other.oms.orders.values())
-            )
-            if busy:
-                return other.bot_id
-        return None
-
-    async def check_account_conflict(self, bot: Any) -> Optional[str]:
-        """先从数据库读入同账户其他机器人的账本，再检查冲突（停止状态的机器人可能仍有持仓）"""
-        key = self._account_key(bot)
-        if key is None:
-            return None
-        for other in self.bots.values():
-            if other is not bot and self._account_key(other) == key:
-                await other.load_persisted_ledger()
-        return self.find_account_conflict(bot)
-
-    def start_bot(self, bot_id: str):
-        """启动机器人"""
-        if bot_id not in self.bots:
-            raise KeyError(f"未找到 ID 为 '{bot_id}' 的机器人")
-        conflict = self.find_account_conflict(self.bots[bot_id])
-        if conflict:
-            raise ValueError(
-                f"机器人 {conflict} 正在同一交易所账户的同一标的上交易（或仍有持仓/挂单）。"
-                "单向持仓下交易所会把多个机器人的仓位合并，同一账户同一标的只允许一个机器人运行"
-            )
-        self.bots[bot_id].status = AgentStatus.RUNNING
-        logger.info("[BotManager] 机器人已启动: %s", bot_id)
-
-    def stop_bot(self, bot_id: str):
-        """停止机器人"""
-        if bot_id not in self.bots:
-            raise KeyError(f"未找到 ID 为 '{bot_id}' 的机器人")
-        self.bots[bot_id].status = AgentStatus.STOPPED
-        logger.info("[BotManager] 机器人已停止: %s", bot_id)
-
-    async def delete_bot(self, bot_id: str) -> Dict[str, Any]:
-        """
-        安全停止并从内存注册表移除指定机器人：
-        1. 标记为 STOPPED 并尝试撤销该标的残留挂单；
-        2. 释放组合风控协调器中登记的敞口额度；
-        3. 从内存字典 self.bots 中移除实例。
-        """
-        bot = self.bots.get(bot_id)
-        if not bot:
-            raise KeyError(f"未找到 ID 为 '{bot_id}' 的机器人")
-
-        bot.status = AgentStatus.STOPPED
-        try:
-            await bot.executor.cancel_all_orders(bot.symbol)
-        except Exception as exc:
-            logger.warning("[BotManager 删除前撤单告警] bot_id=%s | err=%s", bot_id, exc)
-
-        if self.portfolio_coordinator is not None:
-            try:
-                await self.portfolio_coordinator.release_exposure(bot_id, bot.symbol)
-            except Exception as exc:
-                logger.warning("[BotManager 释放组合敞口告警] bot_id=%s | err=%s", bot_id, exc)
-
-        removed = self.bots.pop(bot_id)
-        logger.info("[BotManager] 机器人已安全停机并从内存注册表移除: %s (%s)", bot_id, removed.name)
-        return {
-            "bot_id": bot_id,
-            "name": removed.name,
-            "symbol": removed.symbol,
-        }
-
-    async def emergency_kill_switch(self, bot_id: Optional[str] = None):
-        """
-        一键急停与安全关停：
-        若指定 bot_id 则暂停该机器人并撤单；若为空则将全局所有机器人全部关停！
-        """
-        target_bots = [self.bots[bot_id]] if bot_id and bot_id in self.bots else list(self.bots.values())
-        for bot in target_bots:
-            bot.status = AgentStatus.CIRCUIT_BROKEN
-            await bot.executor.cancel_all_orders(bot.symbol)
-            # 币安 Algo 条件单不会被普通“撤销全部挂单”撤掉
-            cancel_cond_all = getattr(bot.executor, "cancel_all_conditional_orders", None)
-            if cancel_cond_all is not None:
-                try:
-                    await cancel_cond_all(bot.symbol)
-                except Exception as cond_err:
-                    logger.warning("[BotManager 紧急急停] 撤销 %s 的 Algo 条件单失败: %s", bot.bot_id, cond_err)
-            logger.critical("[BotManager 紧急急停] 已对机器人 %s 执行全撤单与安全锁定！", bot.bot_id)
-
-    async def bootstrap_default_bots(self, repo: Optional[Any] = None) -> None:
-        """
-        初始化系统预置的标准交易机器人。
-        规则：
-        1. 仅在首次全新部署且数据库中尚无任何机器人档案时执行一次引导；
-        2. 若已经完成过首次引导、数据库中已有用户创建的私有 Bot、或者某个预置 Bot 已被用户删除，
-           则绝对不再重复注入或复活已删除的默认机器人！
-        """
-        target_repo = repo or trading_repo
-
-        # 检查是否已完成过首次系统引导
-        try:
-            is_bootstrapped = await target_repo.get_system_setting("defaults_bootstrapped", "false")
-            if is_bootstrapped == "true":
-                logger.info("[BotManager] 系统已完成过初始引导，跳过默认示范机器人创建")
-                return
-
-            # 检查数据库中是否已存在已持久化的机器人
-            existing_agents = await target_repo.get_all_agents()
-            if existing_agents:
-                logger.info("[BotManager] 数据库已存在 %d 个机器人档案，标记引导完成并不再注入默认机器人", len(existing_agents))
-                await target_repo.set_system_setting("defaults_bootstrapped", "true")
-                return
-        except Exception as check_err:
-            logger.warning("[BotManager] 检查系统引导状态异常: %s", check_err)
-
-        defaults = [
-            ("bot_eth_debate_01", "ETH 多空激辩对战", "ETH", StrategyType.BULL_BEAR_DEBATE, 10000.0),
-            ("bot_btc_trend_01", "BTC 宏观趋势突破跟踪", "BTC", StrategyType.TREND_FOLLOW, 25000.0),
-            ("bot_sol_arb_01", "SOL 资金费率跨期对冲", "SOL", StrategyType.FUNDING_ARB, 5000.0),
-        ]
-        created_count = 0
-        for bid, name, sym, stype, cap in defaults:
-            # 严格检查：若该机器人被用户明确删除过，绝不复活
-            try:
-                if await target_repo.is_bot_deleted(bid):
-                    logger.info("[BotManager] 预置机器人 %s 已被用户主动删除，跳过初始化", bid)
-                    continue
-            except Exception:
-                pass
-
-            if bid in self.bots:
-                continue
-
-            bot = self.create_bot(
-                bot_id=bid,
-                name=name,
-                symbol=sym,
-                strategy_type=stype,
-                allocated_capital=cap,
-            )
-            # 默认设置为 RUNNING
-            bot.status = AgentStatus.RUNNING
-            created_count += 1
-
-            # 确保在 trading_agents 表中登记档案，满足 PostgreSQL 外键完整性约束
-            try:
-                await target_repo.save_agent(
-                    agent_id=bid,
-                    name=name,
-                    symbol=sym,
-                    strategy_type=stype.value,
-                    status=bot.status.value,
-                    allocated_capital=cap,
-                    max_drawdown_limit=bot.max_drawdown_limit,
-                    owner_wallet="system",
-                    config=bot.config or {},
-                )
-            except Exception as save_err:
-                logger.warning("[Bot %s] 注册预置机器人档案失败: %s", bid, save_err)
-
-            # 确保数据库中存在初始 1.0000 净值基准切片
-            try:
-                exist_series = await target_repo.get_nav_series(bid, limit=1)
-                if not exist_series:
-                    init_snap = bot.nav_engine.record_snapshot(
-                        total_equity=cap,
-                        cash_balance=cap,
-                        margin_used=0.0,
-                        unrealized_pnl=0.0,
-                        realized_pnl_cum=0.0,
-                    )
-                    await target_repo.record_equity_snapshot(bid, init_snap)
-            except Exception as init_snap_err:
-                logger.warning("[Bot %s] 写入初始净值基准失败: %s", bid, init_snap_err)
-
-        # 标记首次引导完成
-        try:
-            await target_repo.set_system_setting("defaults_bootstrapped", "true")
-        except Exception as flag_err:
-            logger.warning("[BotManager] 记录 defaults_bootstrapped 标志失败: %s", flag_err)
-
-        # 为主力机器人主动触发一轮初始 step 推演，生成真实的初始行情指标与多 Agent 决策
-        try:
-            eth_bot = self.bots.get("bot_eth_debate_01")
-            if eth_bot:
-                await eth_bot.step()
-        except Exception as e:
-            logger.warning("[BotManager] 初始机器人预推演告警 (已优雅兜底): %s", e)
-
-    async def restore_persisted_bots(self, repo: Optional[Any] = None) -> int:
-        """
-        P0 重启状态恢复：服务启动时从 SQLite `trading_agents` 表重新加载所有已持久化的
-        用户私有 Bot，并回放其最新 NAV 净值切片，彻底避免服务重启后“失忆”。
-
-        :param repo: 可选数据仓储实例（默认使用全局 trading_repo）
-        :return: 本次成功恢复的 Bot 数量
-        """
-        target_repo = repo or trading_repo
-        restored_count = 0
-        try:
-            rows = await target_repo.get_all_agents()
-        except Exception as exc:
-            logger.warning("[BotManager 重启恢复] 读取持久化 Bot 列表失败: %s", exc)
-            return 0
-
-        for row in rows:
-            agent_id = row.get("agent_id")
-            if not agent_id or agent_id in self.bots:
-                continue
-            try:
-                stype = StrategyType(row.get("strategy_type", StrategyType.BULL_BEAR_DEBATE.value))
-            except ValueError:
-                stype = StrategyType.BULL_BEAR_DEBATE
-            try:
-                status_enum = AgentStatus(row.get("status", AgentStatus.STOPPED.value))
-            except ValueError:
-                status_enum = AgentStatus.STOPPED
-
-            cap = float(row.get("allocated_capital") or 10000.0)
-            dd_limit = float(row.get("max_drawdown_limit") or 0.05)
-            owner = (row.get("owner_wallet") or "system").strip().lower()
-            row_cfg = row.get("config") if isinstance(row.get("config"), dict) else {}
-            raw_mode = str(row_cfg.get("execution_mode") or "").upper().strip()
-            raw_market = str(row_cfg.get("market_type") or MarketType.USDM_FUTURES.value).upper().strip()
-            raw_exchange = str(row_cfg.get("exchange") or ExchangeType.BINANCE.value).upper().strip()
-            restored_strategy_cfg = row_cfg.get("strategy_config") if isinstance(row_cfg.get("strategy_config"), dict) else {}
-
-            # 严格不恢复历史 PAPER / DEMO 或缺少合法三元组的旧机器人记录
-            try:
-                restored_ex, restored_mt, restored_em = ExecutionAdapterFactory.validate_route(
-                    raw_exchange, raw_market, raw_mode
-                )
-            except ValueError as skip_err:
-                logger.warning(
-                    "[BotManager 重启恢复] 跳过历史/不兼容配置 Bot=%s (raw_mode=%s, raw_market=%s): %s",
-                    agent_id, raw_mode or "<empty>", raw_market, skip_err,
-                )
-                continue
-
-            bot = self.create_bot(
-                bot_id=agent_id,
-                name=row.get("name") or agent_id,
-                symbol=row.get("symbol") or "ETH",
-                strategy_type=stype,
-                allocated_capital=cap,
-                max_drawdown_limit=dd_limit,
-                exchange=restored_ex,
-                owner_wallet=owner,
-                strategy_config=restored_strategy_cfg,
-                execution_mode=restored_em,
-                market_type=restored_mt,
-            )
-            bot.status = status_enum
-
-            # E6：读回重启前未完成的 OMS 订单，并在首次对账时以交易所持仓作为本地基线
-            if hasattr(target_repo, "list_oms_orders"):
-                try:
-                    oms_rows = await target_repo.list_oms_orders(
-                        bot_id=agent_id, states=["PENDING", "SUBMITTED", "PARTIAL", "UNKNOWN"],
-                    )
-                    bot.oms.restore_open_orders(oms_rows, default_market_type=bot.market_type.value)
-                except Exception as oms_err:
-                    logger.warning("[BotManager 重启恢复] 读回 Bot=%s 未完成订单失败: %s", agent_id, oms_err)
-            bot._adopt_exchange_baseline = True
-            # E7：读入已存在的独立账本；同账户同标的已有运行中的机器人时，后恢复的这个改为停止，避免两个机器人同时交易
-            await bot.load_persisted_ledger(target_repo)
-            if bot.status == AgentStatus.RUNNING:
-                conflict = self.find_account_conflict(bot)
-                if conflict:
-                    bot.status = AgentStatus.STOPPED
-                    logger.warning(
-                        "[BotManager 重启恢复] Bot=%s 与 %s 共用同一账户同一标的，已改为停止状态，请确认后再启动其中一个",
-                        agent_id, conflict,
-                    )
-                    try:
-                        await target_repo.update_agent_status(agent_id, AgentStatus.STOPPED.value)
-                    except Exception:
-                        pass
-
-            # 从数据库恢复最近的历史净值快照，确保重连后 NAV 曲线与峰谷回撤连续
-            # 回放时携带原始时间戳，使 NAVEngine 能正确识别 UTC 日切并还原当日回撤基准
-            try:
-                nav_rows = await target_repo.get_nav_series(agent_id, limit=50)
-                for nr in nav_rows:
-                    eq = float(nr.get("total_equity") or cap)
-                    snap_ts = None
-                    raw_ts = nr.get("timestamp")
-                    if isinstance(raw_ts, datetime):
-                        snap_ts = raw_ts
-                    elif isinstance(raw_ts, str) and raw_ts:
-                        try:
-                            snap_ts = datetime.fromisoformat(raw_ts.replace("Z", "+00:00"))
-                        except ValueError:
-                            snap_ts = None
-                    bot.nav_engine.record_snapshot(
-                        total_equity=eq,
-                        cash_balance=eq,
-                        margin_used=0.0,
-                        unrealized_pnl=0.0,
-                        realized_pnl_cum=0.0,
-                        timestamp=snap_ts,
-                    )
-            except Exception as nav_err:
-                logger.warning("[BotManager 重启恢复] 恢复 Bot=%s 历史 NAV 快照失败: %s", agent_id, nav_err)
-
-            restored_count += 1
-            logger.info(
-                "[BotManager 重启恢复] 已从数据库恢复 Bot=%s | 标的=%s | 策略=%s | 状态=%s | 归属=%s",
-                agent_id, bot.symbol, stype.value, status_enum.value, owner,
-            )
-
-        logger.info("[BotManager 重启恢复] 完成，共恢复 %d 个持久化机器人", restored_count)
-        return restored_count
-
-    def list_bots_overview(self, caller_wallet: Optional[str] = None) -> List[Dict[str, Any]]:
-        """
-        获取机器人运行概览（严格多租户可见性过滤）：
-        1. 系统公共示范机器人 (owner_wallet in ('system', None))：全平台公开可见
-        2. 用户私有创建的机器人：仅对创建者钱包 caller_wallet 可见，严禁泄漏给其他租户
-        """
-        overview = []
-        clean_wallet = caller_wallet.strip().lower() if caller_wallet else None
-        for b in self.bots.values():
-            bot_owner = (getattr(b, "owner_wallet", "system") or "system").strip().lower()
-            # 租户隔离过滤：仅包含系统公用 Bot 或当前钱包所有的私有 Bot
-            if bot_owner != "system" and bot_owner != clean_wallet:
-                continue
-
-            try:
-                perf = b.nav_engine.calculate_performance_metrics()
-            except Exception as metric_err:
-                logger.warning("[BotManager] 计算 Bot=%s 绩效指标失败，安全回落: %s", b.bot_id, metric_err)
-                perf = {
-                    "latest_nav": 1.0,
-                    "cumulative_return_pct": 0.0,
-                    "max_drawdown_pct": 0.0,
-                    "annualized_sharpe_ratio": 0.0,
-                    "calmar_ratio": 0.0,
-                }
-            overview.append({
-                "bot_id": b.bot_id,
-                "name": b.name,
-                "symbol": b.symbol,
-                "owner_wallet": bot_owner,
-                "is_system_bot": bot_owner == "system",
-                "timeframe": "15m",
-                "strategy": b.strategy_type.value,
-                "strategy_config": getattr(b, "strategy_config", {}),
-                "exchange": getattr(b, "exchange", ExchangeType.BINANCE).value,
-                "market_type": b.market_type.value if isinstance(getattr(b, "market_type", None), MarketType) else str(getattr(b, "market_type", MarketType.USDM_FUTURES.value)),
-                "execution_mode": b.execution_mode.value if isinstance(getattr(b, "execution_mode", None), ExecutionMode) else str(getattr(b, "execution_mode", ExecutionMode.LOCAL_SIM.value)),
-                "macro_bias": (
-                    b.macro_bias.model_dump(mode="json")
-                    if getattr(b, "macro_bias", None) and b.macro_bias.is_active()
-                    else None
-                ),
-                "last_reconciliation": getattr(b, "last_reconciliation", None),
-                "status": b.status.value,
-                "allocated_capital": b.allocated_capital,
-                "current_equity": perf.get("current_equity"),
-                "latest_nav": perf.get("latest_nav") or 1.0,
-                "cumulative_return_pct": perf.get("cumulative_return_pct") or 0.0,
-                "max_drawdown_pct": perf.get("max_drawdown_pct") or 0.0,
-                "sharpe_ratio": perf.get("annualized_sharpe_ratio") or 0.0,
-                "runtime": "运行中" if b.status == AgentStatus.RUNNING else b.status.value,
-                "tokens": (
-                    f"{b.total_tokens_used / 1000:.1f}k"
-                    if b.total_tokens_used >= 1000
-                    else str(b.total_tokens_used)
-                ),
-            })
-        return overview
