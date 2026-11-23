@@ -35,6 +35,32 @@ export default function AuditTracesView({ activeBotId = "bot_eth_debate_01" }) {
   // 不再内置演示用的假历史轨迹，也不再推断“非观望即放行”、补全“全部规则 PASS”或编造 42ms 等耗时。
   const normalizeDecision = (item, idx) => {
     if (!item) return null;
+    // 被拒绝（CYCLE_REFUSED）或出错（CYCLE_ERROR）的轮次：后端来自运行事件，只有时间与原因，没有决策内容
+    if (item.record_type === 'CYCLE_REFUSED' || item.record_type === 'CYCLE_ERROR') {
+      return {
+        rowKey: item.event_id || `evt_${item.timestamp || idx}`,
+        isFailure: true,
+        decisionId: null,
+        symbol: item.symbol || '--',
+        timeframe: null,
+        action: null,
+        confidence: null,
+        regime: null,
+        verdict: null,
+        bullThesis: null,
+        bearThesis: null,
+        checkedRules: {},
+        riskApproved: null,
+        status: item.record_type === 'CYCLE_ERROR' ? 'ERROR' : 'REFUSED',
+        stepTraces: [],
+        totalLatencyMs: null,
+        idempotencyKey: null,
+        rejectionReason: null,
+        failureReason: item.error || null,
+        timestamp: item.timestamp ? String(item.timestamp).replace('T', ' ').slice(0, 19) : '--',
+        timestampRaw: item.timestamp ?? null,
+      };
+    }
     const synthesis = item.debate_synthesis || {};
     const analyst = item.analyst_brief || {};
     const bull = item.bull_thesis || {};
@@ -124,7 +150,8 @@ export default function AuditTracesView({ activeBotId = "bot_eth_debate_01" }) {
   const fetchTraces = async () => {
     setLoading(true);
     try {
-      const data = await getBotDecisions(activeBotId, 20);
+      // 后端合并内存、数据库历史与失败轮次；按 15 分钟一轮，50 条约覆盖最近 12 小时
+      const data = await getBotDecisions(activeBotId, 50);
       if (Array.isArray(data) && data.length > 0) {
         setDecisions(data.map((d, idx) => normalizeDecision(d, idx)).filter(Boolean));
       } else {
@@ -212,12 +239,23 @@ export default function AuditTracesView({ activeBotId = "bot_eth_debate_01" }) {
           const isApproved = item.status === "COMPLETED";
           const isHalted = item.status === "HALTED";
           const isRejected = item.status === "REJECTED";
+          const isFailed = item.status === "ERROR" || item.status === "REFUSED";
           const statusStyle = isApproved
             ? 'bg-success-soft text-success border-success-line'
-            : isRejected
+            : (isRejected || isFailed)
             ? 'bg-danger-soft text-danger border-danger-line'
             : 'bg-canvas text-ink-3 border-line';
-          const statusText = isApproved ? t('status.completed') : isRejected ? t('status.rejected') : isHalted ? t('status.halted') : t('status.unknown');
+          const statusText = isApproved
+            ? t('status.completed')
+            : isRejected
+            ? t('status.rejected')
+            : item.status === 'ERROR'
+            ? t('status.error')
+            : item.status === 'REFUSED'
+            ? t('status.refused')
+            : isHalted
+            ? t('status.halted')
+            : t('status.unknown');
 
           return (
             <div 
@@ -270,7 +308,7 @@ export default function AuditTracesView({ activeBotId = "bot_eth_debate_01" }) {
                 {/* 状态指示与折叠箭头 */}
                 <div className="flex items-center space-x-3">
                   <div className={`px-2.5 py-1 rounded-full text-xs font-bold border flex items-center space-x-1.5 ${statusStyle}`}>
-                    {isApproved ? <CheckCircle2 className="w-3.5 h-3.5" /> : isRejected ? <XCircle className="w-3.5 h-3.5" /> : <Minus className="w-3.5 h-3.5" />}
+                    {isApproved ? <CheckCircle2 className="w-3.5 h-3.5" /> : (isRejected || isFailed) ? <XCircle className="w-3.5 h-3.5" /> : <Minus className="w-3.5 h-3.5" />}
                     <span>{statusText}</span>
                   </div>
 
@@ -283,7 +321,20 @@ export default function AuditTracesView({ activeBotId = "bot_eth_debate_01" }) {
               {/* 展开的深度细节 */}
               {isExpanded && (
                 <div className="px-6 py-4 bg-panel border-t border-line space-y-4 text-xs animate-in fade-in duration-100">
-                  
+                  {item.isFailure ? (
+                    /* 失败轮次：只有原因，没有裁决、辩论、风控与步骤明细 */
+                    <div className="bg-surface p-3.5 rounded-xl border border-danger-line space-y-2">
+                      <div className="font-bold text-danger flex items-center space-x-1.5">
+                        <XCircle className="w-4 h-4" />
+                        <span>{item.status === 'ERROR' ? t('detail.cycleError') : t('detail.cycleRefused')}</span>
+                      </div>
+                      <p className="text-ink-2 leading-relaxed bg-panel p-2.5 rounded-lg border border-line-soft break-all">
+                        {item.failureReason || t('detail.noFailureReason')}
+                      </p>
+                      <p className="text-xs text-ink-4">{t('detail.failureHint')}</p>
+                    </div>
+                  ) : (<>
+
                   {/* 1. 裁判裁决书与幂等控制 */}
                   <div className="bg-surface p-3.5 rounded-xl border border-line space-y-2">
                     <div className="flex items-center justify-between text-ink font-bold">
@@ -405,6 +456,7 @@ export default function AuditTracesView({ activeBotId = "bot_eth_debate_01" }) {
                       </div>
                     </div>
                   )}
+                  </>)}
 
                 </div>
               )}

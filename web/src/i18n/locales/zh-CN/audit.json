@@ -15,7 +15,9 @@
     "completed": "风控通过",
     "rejected": "风控拦截",
     "halted": "本轮无提案",
-    "unknown": "结论未知"
+    "unknown": "结论未知",
+    "refused": "本轮被拒绝执行",
+    "error": "本轮执行出错"
   },
   "row": {
     "verdict": "裁决: {{action}}",
@@ -34,7 +36,11 @@
     "riskCheck": "双轨风控核验审计 (Risk Enforcement Check)",
     "rejectReason": "拦截原因: {{reason}}",
     "noRules": "本轮未返回逐条规则明细",
-    "noSteps": "该记录没有 StepTrace 明细（数据库历史记录只保存思维链、提案与风控结论）。"
+    "noSteps": "该记录没有 StepTrace 明细（数据库历史记录只保存思维链、提案与风控结论）。",
+    "cycleRefused": "本轮在决策前被拒绝执行（失败即关闭）",
+    "cycleError": "本轮执行时出现未捕获的异常",
+    "noFailureReason": "未记录原因",
+    "failureHint": "这一轮没有产生决策、提案与下单；原因来自机器人运行事件记录。"
   },
   "steps": {
     "inspectHint": "点击展开查看向大模型提交的真实提示词与原始输出",

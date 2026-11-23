@@ -5,7 +5,8 @@
 调整划拨本金、资金分布、安全删除、读取最新决策状态。
 
 - 写接口（创建 / 调资 / 删除）只认 Bearer 会话钱包（``require_authenticated_wallet``），并校验机器人归属；
-- 读接口按多租户可见性过滤：系统公共机器人全平台可见，私有机器人只对创建者可见。
+- 读接口按多租户可见性过滤：系统公共机器人全平台可见，私有机器人只对创建者可见；
+- 最新状态接口默认只读，不再在内存为空时自动推演（2026-11-23 修复：打开页面会让已停止的机器人跑一轮决策）。
 
 端点
 ----
@@ -31,6 +32,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
+from heimdall.api.audit_feed import db_row_to_record
 from heimdall.api.runtime import bot_manager
 from heimdall.auth.dependencies import require_authenticated_wallet, resolve_caller_wallet
 from heimdall.auth.vault import resolve_exchange_credentials
@@ -260,7 +262,9 @@ async def get_bot_latest_state(
         caller_wallet: Optional[str] = Depends(resolve_caller_wallet),
 ) -> Dict[str, Any]:
     """
-    获取指定机器人最近一轮真实决策推演状态（含多租户隔离与匿名 refresh=true 防护）
+    获取指定机器人最近一轮真实决策推演状态（含多租户隔离与匿名 refresh=true 防护）。
+    - 默认只读：内存最新决策 → 数据库最近一条 → 空；``decision_source`` 标明来源（memory / database / none）；
+    - ``refresh=true``（需鉴权）才立即推演一轮。
     """
     bot = bot_manager.bots.get(bot_id)
     if not bot:
@@ -280,10 +284,26 @@ async def get_bot_latest_state(
             detail="强制刷新决策推演 (refresh=true) 需要先完成 Web3 Bearer 鉴权",
         )
 
-    if refresh or not bot.decision_history:
+    # 3. 只有显式 refresh=true（已鉴权）才立即推演一轮。
+    #    2026-11-23 修复：原来内存为空（例如刚重启）时打开页面就会 step(force=True)，
+    #    force 会跳过 STOPPED 检查，已停止的机器人只要有人打开页面就会跑一轮决策、满足条件还会下单。
+    if refresh:
+        logger.info("[最新状态] 钱包 %s 显式请求立即推演 bot_id=%s", caller_wallet, bot_id)
         await bot.step(force=True)
 
-    latest = bot.decision_history[-1] if bot.decision_history else {}
+    # 4. 优先内存中的最新决策；内存为空时读数据库最近一条（不再为了展示而触发推演）
+    decision_source = "memory"
+    latest: Dict[str, Any] = bot.decision_history[-1] if bot.decision_history else {}
+    if not latest:
+        decision_source = "none"
+        try:
+            rows = await trading_repo.get_decision_history(bot_id, limit=1)
+        except Exception as exc:
+            logger.warning("[最新状态] 读取 %s 的数据库最新决策失败: %s", bot_id, exc)
+            rows = []
+        if rows:
+            latest = db_row_to_record(rows[0])
+            decision_source = "database"
     return {
         "bot_id": bot_id,
         "symbol": bot.symbol,
@@ -291,4 +311,5 @@ async def get_bot_latest_state(
         "status": bot.status.value,
         "allocated_capital": bot.allocated_capital,
         "decision": latest,
+        "decision_source": decision_source,
     }

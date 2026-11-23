@@ -13,7 +13,7 @@ Heimdall 交易平台 - 业务数据仓储层 (Data Repository)
 import json
 import logging
 import uuid
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Sequence
 from datetime import datetime, timezone
 from heimdall.database.db import DatabaseManager, db_manager
 from heimdall.models.schemas import TradeProposal, RiskReviewResult
@@ -536,6 +536,26 @@ class TradingRepository:
         rows = await self.db.execute_query(
             "SELECT * FROM bot_run_events WHERE bot_id = ? AND created_at >= ? ORDER BY created_at ASC;",
             (bot_id, since_iso),
+        )
+        for r in rows:
+            try:
+                r["detail"] = json.loads(r.get("detail_json") or "{}")
+            except (TypeError, ValueError):
+                r["detail"] = {}
+        return rows
+
+    async def list_run_events_by_kind(self, bot_id: str, kinds: Sequence[str], limit: int = 50) -> List[Dict[str, Any]]:
+        """
+        按事件类型取最近 N 条运行事件（新的在前），供审计页展示被拒绝 / 出错的决策轮次。
+        kinds 为空时返回空列表。
+        """
+        kinds = [k for k in kinds or [] if k]
+        if not kinds:
+            return []
+        placeholders = ", ".join("?" for _ in kinds)
+        rows = await self.db.execute_query(
+            f"SELECT * FROM bot_run_events WHERE bot_id = ? AND kind IN ({placeholders}) ORDER BY created_at DESC LIMIT ?;",
+            (bot_id, *kinds, int(limit)),
         )
         for r in rows:
             try:

@@ -4,6 +4,8 @@
 单个机器人的只读数据：净值曲线与绩效指标、决策审计（思维链）、成交流水。
 所有接口都经 ``_assert_bot_readable`` 做多租户读隔离（私有机器人只允许所有者读取）。
 
+决策审计接口合并内存、数据库与失败轮次三个来源（2026-11-23 修复，合并规则见 ``heimdall.api.audit_feed``）。
+
 端点
 ----
 - ``GET /api/v1/bots/{bot_id}/nav`` → ``get_bot_nav``：获取指定机器人的单位净值走势时序数据与量化绩效指标（含多租户读隔离）
@@ -22,6 +24,7 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
+from heimdall.api.audit_feed import FAILURE_KINDS, merge_feed
 from heimdall.api.routes.common import _assert_bot_readable
 from heimdall.api.runtime import bot_manager
 from heimdall.auth.dependencies import resolve_caller_wallet
@@ -120,18 +123,33 @@ async def get_bot_nav(
 @router.get("/api/v1/bots/{bot_id}/decisions", tags=["Audit & Explainability"])
 async def get_bot_decisions(
         bot_id: str,
-        limit: int = Query(default=20, le=100),
+        limit: int = Query(default=20, ge=1, le=100),
+        include_failures: bool = Query(default=True, description="是否包含被拒绝 / 出错的决策轮次"),
         caller_wallet: Optional[str] = Depends(resolve_caller_wallet),
 ) -> List[Dict[str, Any]]:
-    """获取指定机器人的全链路思维链与多空辩论审计记录（含多租户读隔离）"""
+    """
+    获取指定机器人的决策审计流（含多租户读隔离），按时间倒序：
+    内存中的完整决策记录 + 数据库历史决策（按 decision_id 去重，优先内存）+ 被拒绝 / 出错的轮次。
+
+    2026-11-23 修复：原来内存里只要有记录就不再读数据库，服务重启后历史审计全部看不到。
+    每行带 ``source``（memory / database / run_event）；失败轮次带 ``record_type`` 与 ``error``。
+    任一数据源读取失败只记 WARN，用其余来源照常返回。
+    """
     bot = bot_manager.bots.get(bot_id)
     _assert_bot_readable(bot, bot_id, caller_wallet)
-    if bot and bot.decision_history:
-        return list(reversed(bot.decision_history[-limit:]))
-    db_decisions = await trading_repo.get_decision_history(bot_id, limit=limit)
-    if db_decisions:
-        return db_decisions
-    return []
+    memory = list(bot.decision_history[-limit:]) if bot else []
+    try:
+        db_rows = await trading_repo.get_decision_history(bot_id, limit=limit)
+    except Exception as exc:
+        logger.warning("[审计流] 读取 %s 的数据库决策记录失败，只返回内存记录: %s", bot_id, exc)
+        db_rows = []
+    failures: List[Dict[str, Any]] = []
+    if include_failures:
+        try:
+            failures = await trading_repo.list_run_events_by_kind(bot_id, FAILURE_KINDS, limit=limit)
+        except Exception as exc:
+            logger.warning("[审计流] 读取 %s 的失败轮次失败，审计页不显示失败轮次: %s", bot_id, exc)
+    return merge_feed(memory, db_rows, failures, limit, symbol=bot.symbol if bot else None)
 
 
 @router.get("/api/v1/bots/{bot_id}/trades", tags=["Audit & Explainability"])

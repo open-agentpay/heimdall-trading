@@ -15,7 +15,9 @@
     "completed": "Risk approved",
     "rejected": "Risk rejected",
     "halted": "No proposal",
-    "unknown": "Outcome unknown"
+    "unknown": "Outcome unknown",
+    "refused": "Cycle refused",
+    "error": "Cycle error"
   },
   "row": {
     "verdict": "Verdict: {{action}}",
@@ -34,7 +36,11 @@
     "riskCheck": "Dual-track Risk Enforcement Check",
     "rejectReason": "Rejection reason: {{reason}}",
     "noRules": "No per-rule results returned for this round",
-    "noSteps": "No StepTrace details for this record (database history only stores the chain-of-thought, proposal and risk outcome)."
+    "noSteps": "No StepTrace details for this record (database history only stores the chain-of-thought, proposal and risk outcome).",
+    "cycleRefused": "This cycle was refused before deciding (fail-closed)",
+    "cycleError": "This cycle raised an uncaught exception",
+    "noFailureReason": "No reason recorded",
+    "failureHint": "No decision, proposal or order was produced in this cycle; the reason comes from the bot run events."
   },
   "steps": {
     "inspectHint": "Click to inspect the actual prompt sent to the LLM and its raw output",
