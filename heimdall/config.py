@@ -17,8 +17,9 @@ class ServerConfig(BaseModel):
     """API 服务端网络监听配置"""
     # 监听主机地址，0.0.0.0 允许外部网络访问
     host: str = "0.0.0.0"
-    # HTTP 服务监听端口
-    port: int = 8080
+    # HTTP 服务监听端口（仅作记录，当前未被代码读取；实际端口由 `heimdall.cli serve --port`
+    # 默认 8000 与 Dockerfile `uvicorn --port 8000` 决定，三处需保持一致）
+    port: int = 8000
 
 
 class MarketDataConfig(BaseModel):

@@ -3,9 +3,11 @@ app:
   env: "development"
   debug: true
 
+# 后端监听端口统一为 8000（cli serve 默认值、Dockerfile、nginx 反代 backend:8000、vite 开发代理）
+# 该项当前仅作记录，未被代码读取；修改端口需同时改上述几处
 server:
   host: "0.0.0.0"
-  port: 8080
+  port: 8000
 
 market_data:
   primary_source: "binance"
