@@ -121,8 +121,12 @@ class FleetManager:
         strategy_config: Optional[Dict[str, Any]] = None,
         execution_mode: Union[ExecutionMode, str] = ExecutionMode.LOCAL_SIM,
         market_type: Union[MarketType, str] = MarketType.USDM_FUTURES,
+        persistent: bool = True,
     ) -> Any:
-        """注册并创建新的交易机器人实例（强制校验 exchange + market_type + execution_mode 路由）"""
+        """
+        注册并创建新的交易机器人实例（强制校验 exchange + market_type + execution_mode 路由）。
+        persistent=False 创建只在内存运行的演示机器人（不写数据库，重启后不恢复）。
+        """
         if self.bot_class is None:
             raise TypeError("FleetManager 未绑定 bot_class，请使用 heimdall.engine.bot_manager.BotManager")
         if bot_id in self.bots:
@@ -145,13 +149,15 @@ class FleetManager:
             strategy_config=strategy_config,
             execution_mode=execution_mode,
             market_type=market_type,
+            persistent=persistent,
         )
         self.bots[bot_id] = bot
         # E7：机器人每轮决策开头通过该回调检查同账户冲突
         bot._account_conflict_fn = lambda b=bot: self.find_account_conflict(b)
         logger.info(
-            "[BotManager] 成功创建机器人: %s (%s) | 标的: %s | 路由: %s/%s/%s | 归属: %s",
+            "[BotManager] 成功创建机器人: %s (%s) | 标的: %s | 路由: %s/%s/%s | 归属: %s%s",
             bot_id, name, symbol, bot.exchange.value, bot.market_type.value, bot.execution_mode.value, bot.owner_wallet,
+            "" if persistent else " | 演示机器人（只在内存运行，不写数据库）",
         )
         return bot
 

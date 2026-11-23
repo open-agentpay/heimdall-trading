@@ -47,6 +47,7 @@ from heimdall.execution.reconciler import ExchangeReconciler
 from heimdall.llm.client import LLMService
 from heimdall.alert.notifier import alert_gateway
 from heimdall.database.repository import trading_repo
+from heimdall.database.memory_only import memory_only_repo
 from heimdall.engine.bot_services import build_bot_services
 from heimdall.engine.bot_services.proposal_review import CLOSE_INTENT_PREFIXES, is_risk_reducing_close
 from heimdall.engine.bot_services.protection_service import resolve_fallback_stop_pct
@@ -113,8 +114,12 @@ class TradingBotInstance:
         strategy_config: Optional[Dict[str, Any]] = None,
         execution_mode: Union[ExecutionMode, str] = ExecutionMode.LOCAL_SIM,
         market_type: Union[MarketType, str] = MarketType.USDM_FUTURES,
+        persistent: bool = True,
     ):
         ex, mt, em = ExecutionAdapterFactory.validate_route(exchange, market_type, execution_mode)
+        # 是否写数据库：False 为只在内存运行的演示机器人（系统预置机器人），所有写库走 MemoryOnlyRepository，
+        # 读库返回空；重启后不恢复，由首次引导重新创建（2026-11-23）
+        self.persistent: bool = bool(persistent)
         ExecutionAdapterFactory.validate_strategy_market(strategy_type, mt)
 
         self.bot_id: str = bot_id
@@ -164,7 +169,7 @@ class TradingBotInstance:
         self.oms = OrderManagementSystem(
             adapter=self.executor,
             registry=instrument_registry,
-            repo=trading_repo,
+            repo=self.repository(),
             strict_sl_protection=strict_sl_protection,
         )
         self.reconciler = ExchangeReconciler(adapter=self.executor, oms=self.oms)
@@ -194,10 +199,11 @@ class TradingBotInstance:
         # - decision_audit     ：平仓反思、影子成交、决策记录与落库（M1、L4）
         # - order_execution    ：下单路由与成交落地（E7、E8、P1）
         # - decision_cycle     ：决策周期分阶段编排（step() 的实现）
-        # 仓储与告警通过 lambda 延迟获取本模块的全局对象：测试 monkeypatch 本模块的 trading_repo 后立即生效
+        # 仓储通过 self.repository 每次调用时获取（测试 monkeypatch 本模块的 trading_repo 后立即生效；
+        # 演示机器人返回 MemoryOnlyRepository），告警通过 lambda 延迟获取本模块的全局对象
         services = build_bot_services(
             self,
-            repo_getter=lambda: trading_repo,
+            repo_getter=self.repository,
             alert_getter=lambda: alert_gateway,
         )
         self.spec_service = services.specs
@@ -229,7 +235,7 @@ class TradingBotInstance:
             hard_guard=self.hard_guard,
             llm_service=self.llm_service,
             # L4：多 Agent 策略的检查点写入 pipeline_checkpoints，支持同一根 K 线内断点续跑
-            checkpoint_repo_getter=lambda: trading_repo,
+            checkpoint_repo_getter=self.repository,
         )
         self.pipeline = getattr(self.strategy, "pipeline", None) or MultiAgentPipeline(
             hard_guard=self.hard_guard,
@@ -245,6 +251,13 @@ class TradingBotInstance:
         self.lessons_limit: int = int(self.strategy_config.get("lessons_limit", 3))
         self._last_regime: Optional[str] = None
         self._run_event_count: int = 0
+
+    def repository(self) -> Any:
+        """
+        本机器人使用的数据仓储：普通机器人为本模块的 trading_repo（每次调用时取，支持测试替换），
+        演示机器人（persistent=False）为只在内存运行的 MemoryOnlyRepository（写入丢弃、读取为空）。
+        """
+        return trading_repo if self.persistent else memory_only_repo
 
     async def hydrate_exchange_credentials_from_vault(self, force_refresh: bool = False) -> bool:
         """
@@ -341,12 +354,13 @@ class TradingBotInstance:
     async def _record_run_event(self, kind: str, detail: Optional[Dict[str, Any]] = None) -> None:
         """写入运行事件；每 500 条清理一次 30 天前的事件与 2 天前的检查点。失败只告警"""
         try:
-            await trading_repo.record_run_event(self.bot_id, kind, detail or {})
+            repo = self.repository()
+            await repo.record_run_event(self.bot_id, kind, detail or {})
             self._run_event_count += 1
             if self._run_event_count % 500 == 0:
                 now = datetime.now(timezone.utc)
-                await trading_repo.prune_run_events(self.bot_id, (now - timedelta(days=30)).isoformat())
-                await trading_repo.prune_checkpoints(self.bot_id, (now - timedelta(days=2)).isoformat())
+                await repo.prune_run_events(self.bot_id, (now - timedelta(days=30)).isoformat())
+                await repo.prune_checkpoints(self.bot_id, (now - timedelta(days=2)).isoformat())
         except Exception as exc:
             logger.warning("[Bot %s] 记录运行事件 %s 失败: %s", self.bot_id, kind, exc)
 

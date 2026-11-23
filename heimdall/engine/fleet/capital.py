@@ -58,21 +58,24 @@ class CapitalAllocator(FleetService):
         else:
             self.log.info("[BotManager 资金划拨] 机器人 %s 新本金与原本金相同（$%.2f），不做份额折算", bot_id, new_capital)
 
-        # 持久化更新至数据库
-        await self.host.repo().upsert_agent(
-            agent_id=bot.bot_id,
-            name=bot.name,
-            symbol=bot.symbol,
-            strategy_type=bot.strategy_type.value,
-            status=bot.status.value,
-            allocated_capital=bot.allocated_capital,
-            max_drawdown_limit=bot.max_drawdown_limit,
-            # 2026-11-23 修复：upsert_agent 会整体覆盖 config_json 与 owner_wallet，
-            # 原来不传这两项，调资后数据库配置被清空（重启时因缺少运行路由而不恢复该机器人）、
-            # 私有机器人的归属被改成 system（变成全平台可见）
-            config=getattr(bot, "config", None) or {},
-            owner_wallet=getattr(bot, "owner_wallet", "system"),
-        )
+        # 持久化更新至数据库（演示机器人只在内存运行，不写档案；否则 upsert 会为它新建档案，重启后被当成普通机器人恢复）
+        if not getattr(bot, "persistent", True):
+            self.log.info("[BotManager 资金划拨] %s 是演示机器人，只更新内存，不写数据库", bot_id)
+        else:
+            await self.host.repo().upsert_agent(
+                agent_id=bot.bot_id,
+                name=bot.name,
+                symbol=bot.symbol,
+                strategy_type=bot.strategy_type.value,
+                status=bot.status.value,
+                allocated_capital=bot.allocated_capital,
+                max_drawdown_limit=bot.max_drawdown_limit,
+                # 2026-11-23 修复：upsert_agent 会整体覆盖 config_json 与 owner_wallet，
+                # 原来不传这两项，调资后数据库配置被清空（重启时因缺少运行路由而不恢复该机器人）、
+                # 私有机器人的归属被改成 system（变成全平台可见）
+                config=getattr(bot, "config", None) or {},
+                owner_wallet=getattr(bot, "owner_wallet", "system"),
+            )
 
         self.log.info(
             "[BotManager 资金划拨] 机器人 %s 调整划拨本金: 新本金=$%.2f, 变动额=$%.2f, 新总份额=%.2f",

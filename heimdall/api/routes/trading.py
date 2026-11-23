@@ -329,16 +329,17 @@ async def place_paper_order(
         realized_pnl_cum=balance["realized_pnl_cum"],
     )
 
-    # 4. 持久化至 SQLite 数据库
-    try:
-        await trading_repo.record_trade(
-            trade=execution_report,
-            agent_id=bot_id,
-            decision_id=proposal.proposal_id,
-        )
-        await trading_repo.record_equity_snapshot(bot_id, snapshot)
-    except Exception as db_err:
-        logger.warning("[PaperOrder] 写入 SQLite 数据库告警: %s", db_err)
+    # 4. 持久化至数据库（演示机器人只在内存运行，不写库；2026-11-23）
+    if getattr(bot, "persistent", True):
+        try:
+            await trading_repo.record_trade(
+                trade=execution_report,
+                agent_id=bot_id,
+                decision_id=proposal.proposal_id,
+            )
+            await trading_repo.record_equity_snapshot(bot_id, snapshot)
+        except Exception as db_err:
+            logger.warning("[PaperOrder] 写入 SQLite 数据库告警: %s", db_err)
 
     # 5. 广播成交流水告警
     try:

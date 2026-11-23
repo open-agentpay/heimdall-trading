@@ -84,6 +84,8 @@ class FleetOverview(FleetService):
             "symbol": b.symbol,
             "owner_wallet": bot_owner,
             "is_system_bot": bot_owner == "system",
+            # 演示机器人：只在内存运行，不写数据库，重启后重新创建（2026-11-23）
+            "is_demo": not getattr(b, "persistent", True),
             "timeframe": "15m",
             "strategy": b.strategy_type.value,
             "strategy_config": getattr(b, "strategy_config", {}),

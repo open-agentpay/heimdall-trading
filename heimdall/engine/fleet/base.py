@@ -89,6 +89,7 @@ class ManagedBot(Protocol):
     last_reconciliation: Optional[Dict[str, Any]]
     total_tokens_used: int
     _adopt_exchange_baseline: bool
+    persistent: bool                # False 为只在内存运行的演示机器人（不写数据库）
 
     async def get_bot_balance(self) -> Dict[str, Any]: ...
 
