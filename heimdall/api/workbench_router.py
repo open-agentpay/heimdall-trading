@@ -11,7 +11,8 @@ Web3 Bearer 会话鉴权与多租户归属隔离）：
    - `GET  /api/v1/bots/{bot_id}/oms/orders`：查询 OMS 订单状态机、关联原生 SL/TP 条件单及标的精度规格；
    - `POST /api/v1/bots/{bot_id}/oms/orders/{client_order_id}/recover`：人工触发 UNKNOWN 超时订单查单恢复；
    - `GET  /api/v1/bots/{bot_id}/reconcile/status`：查看最近对账报告、幽灵持仓熔断状态与外部死信心跳；
-   - `POST /api/v1/bots/{bot_id}/reconcile`：手动触发一次即时交易所对账（可选对账无误后恢复运行）；
+   - `POST /api/v1/bots/{bot_id}/reconcile`：手动触发一次即时交易所对账（可选对账无误后恢复运行；恢复与启动接口
+     共用 heimdall.api.bot_runtime，会重新创建后台循环并做齐启动前检查，未通过时返回 resume_error）；
    - `GET  /api/v1/bots/{bot_id}/shadow-report`：影子模式（Shadow Mode）运行报告与 7 天晋级门控结论；
    - `GET  /api/v1/system/live-readiness`：聚合检查实盘就绪 5 大门槛（金库密钥、精度注册表、行情守卫、死信心跳、原生止损保护）。
 
@@ -31,6 +32,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
 from heimdall.alert.heartbeat import dead_man_switch
+from heimdall.api.bot_runtime import StartRefused, start_bot_runtime
 from heimdall.api.websocket import EventType as WsEventType, manager as ws_manager
 from heimdall.auth.dependencies import (
     require_authenticated_wallet,
@@ -40,6 +42,8 @@ from heimdall.backtest.engine import BacktestEngine
 from heimdall.backtest.feed import HistoricalDataFeed
 from heimdall.database.db import db_manager
 from heimdall.database.repository import trading_repo
+from heimdall.engine.schedule_state import interval_of, read_schedule
+from heimdall.engine.scheduler import scheduler
 from heimdall.engine.shadow import build_shadow_report
 from heimdall.models.schemas import AgentStatus, ExchangeType, ExecutionMode, MarketType, StrategyType
 from heimdall.auth.vault import resolve_exchange_credentials
@@ -433,11 +437,28 @@ def create_workbench_router(bot_manager: Any) -> APIRouter:
         report = await bot.reconcile_once()
 
         resumed = False
+        resume_error: Optional[str] = None
         if req and req.resume_if_clean and report.get("is_clean") and bot.status in (AgentStatus.PAUSED, AgentStatus.CIRCUIT_BROKEN):
-            bot.status = AgentStatus.RUNNING
-            await trading_repo.update_agent_status(bot_id, AgentStatus.RUNNING.value)
-            resumed = True
-            logger.info("[对账手动恢复] 操作人=%s | bot=%s 对账一致，已恢复 RUNNING 状态", caller_wallet, bot_id)
+            # 2026-11-23 修复：原来只把状态改成 RUNNING，不重新创建后台循环（暂停 / 熔断时循环已退出），
+            # 也绕过了实盘安全预检、凭证注入与同账户冲突检查。现在与启动接口走同一套流程。
+            interval = interval_of(read_schedule(getattr(bot, "config", None)))
+            try:
+                await start_bot_runtime(
+                    bot,
+                    interval_seconds=interval,
+                    reason=f"钱包 {caller_wallet} 对账一致后恢复",
+                    bot_manager=bot_manager,
+                    scheduler=scheduler,
+                    repo=trading_repo,
+                )
+                resumed = True
+                logger.info(
+                    "[对账手动恢复] 操作人=%s | bot=%s 对账一致，已恢复运行并重启后台循环（决策间隔 %d 秒）",
+                    caller_wallet, bot_id, interval,
+                )
+            except StartRefused as refused:
+                resume_error = refused.detail
+                logger.warning("[对账手动恢复] 操作人=%s | bot=%s 对账一致但未能恢复: %s", caller_wallet, bot_id, refused.detail)
 
         if not report.get("is_clean"):
             try:
@@ -464,6 +485,7 @@ def create_workbench_router(bot_manager: Any) -> APIRouter:
             "bot_id": bot_id,
             "bot_status": bot.status.value,
             "resumed": resumed,
+            "resume_error": resume_error,
             "report": report,
         }
 

@@ -72,7 +72,17 @@ class BotScheduler:
         bot_id = bot.bot_id
 
         if self.is_running(bot_id):
-            logger.warning("[Scheduler] 机器人 %s 的后台调度器已经在运行中，无需重复启动", bot_id)
+            # 决策循环可能正处于休眠中，而对账循环已因暂停 / 熔断退出（两者独立检查状态）。
+            # 此时恢复运行要补建对账循环，否则恢复后不再对账、不再检查止损覆盖（2026-11-23 修复）。
+            if not self.is_reconciling(bot_id):
+                interval_r = self._reconcile_intervals.get(bot_id, reconcile_interval_seconds)
+                self._reconcile_tasks[bot_id] = asyncio.create_task(
+                    self._reconcile_loop(bot, interval_r),
+                    name=f"reconcile_{bot_id}",
+                )
+                logger.info("[Scheduler] 机器人 %s 的决策循环仍在运行，已补建对账循环（周期=%d秒）", bot_id, interval_r)
+            else:
+                logger.warning("[Scheduler] 机器人 %s 的后台调度器已经在运行中，无需重复启动", bot_id)
             return True
 
         bot.status = AgentStatus.RUNNING

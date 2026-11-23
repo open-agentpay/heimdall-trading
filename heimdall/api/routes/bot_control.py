@@ -3,7 +3,7 @@
 
 机器人启停与手动单步：
 - 启动：MAINNET 部署安全复核（M4）→ 凭证注入（失败即关闭）→ 同账户冲突检查（E7，冲突返回 409）
-  → 更新状态 → 启动后台调度循环 → 持久化状态；
+  → 更新状态 → 启动后台调度循环 → 持久化状态（实现在 heimdall.api.bot_runtime，与对账恢复共用）；
 - 停止：注销后台调度循环并持久化状态；
 - 启动 / 停止都会写入自动调度记录（``config_json.schedule``），服务重启后据此恢复后台循环（2026-11-23）；
 - 单步：强制执行一轮决策周期，并通过 WebSocket 推送结果；
@@ -32,14 +32,13 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
+from heimdall.api.bot_runtime import StartRefused, start_bot_runtime
 from heimdall.api.runtime import bot_manager
 from heimdall.api.websocket import EventType as WsEventType, manager as ws_manager
 from heimdall.auth.dependencies import require_authenticated_wallet
 from heimdall.database.repository import trading_repo
 from heimdall.engine.schedule_state import save_schedule
 from heimdall.engine.scheduler import scheduler
-from heimdall.models.schemas import ExecutionMode
-from heimdall.utils.security_preflight import assert_mainnet_ready, InsecureDeploymentError
 
 logger = logging.getLogger("heimdall.api.server.bot_control")
 
@@ -77,50 +76,21 @@ async def start_bot(
             detail=f"越权操作被拒绝：机器人 '{bot_id}' 归属于其他钱包用户，您无权启动",
         )
 
-    # M4：MAINNET 实盘启动前强制通过部署安全预检（弱口令 / 占位密钥一律拒绝，无豁免开关）
-    if bot.execution_mode == ExecutionMode.MAINNET:
-        try:
-            assert_mainnet_ready()
-        except InsecureDeploymentError as err:
-            raise HTTPException(status_code=400, detail=f"启动被拒绝：{err}")
-
-    # 启动前凭证校验：TESTNET / MAINNET 必须拥有精确匹配的有效凭证
-    if bot.execution_mode != ExecutionMode.LOCAL_SIM:
-        hydrated = await bot.hydrate_exchange_credentials_from_vault()
-        if not hydrated:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    f"启动被拒绝：未找到与 {bot.exchange.value}/{bot.market_type.value}/{bot.execution_mode.value} "
-                    "精确匹配的有效活动凭证"
-                ),
-            )
-
     interval = req.interval_seconds if req else 900
 
-    # E7：同一交易所账户的同一标的只允许一个机器人运行（单向持仓下交易所会合并多个机器人的仓位）
-    conflict = await bot_manager.check_account_conflict(bot)
-    if conflict:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=(
-                f"启动被拒绝：机器人 '{conflict}' 正在同一账户的 {bot.symbol} 上交易（或仍有持仓/挂单）。"
-                "同一账户同一标的只允许一个机器人运行，请先停止该机器人并平仓、撤单"
-            ),
-        )
-
-    # 1. 更新内存状态
+    # 启动前检查（实盘部署安全预检 / 凭证注入 / 同账户冲突）→ 内存状态 → 后台循环 → 数据库状态与自动调度记录。
+    # 与对账恢复共用同一实现（heimdall.api.bot_runtime），错误提示与原来一致。
     try:
-        bot_manager.start_bot(bot_id)
-    except ValueError as err:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"启动被拒绝：{err}")
-
-    # 2. 启动后台守护调度循环
-    await scheduler.start_bot_loop(bot, interval_seconds=interval)
-
-    # 3. 同步数据库状态，并记录自动调度（服务重启后据此自动恢复后台循环；实盘恢复前需人工确认）
-    await trading_repo.update_agent_status(bot_id, "RUNNING")
-    await save_schedule(bot, trading_repo, enabled=True, interval_seconds=interval, reason=f"钱包 {caller_wallet} 启动")
+        await start_bot_runtime(
+            bot,
+            interval_seconds=interval,
+            reason=f"钱包 {caller_wallet} 启动",
+            bot_manager=bot_manager,
+            scheduler=scheduler,
+            repo=trading_repo,
+        )
+    except StartRefused as refused:
+        raise HTTPException(status_code=refused.status_code, detail=refused.detail)
 
     return {
         "success": True,
