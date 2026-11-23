@@ -5,27 +5,27 @@ Heimdall 交易平台 - 交易机器人调度中枢与生命周期管理器 (Bot
 2. 调度执行主循环：
    Bifrost 数据拉取 -> 净值/回撤更新与熔断检测 -> 多智能体流水线推理 -> 确定性硬风控 -> 适配器撮合成交 -> NAV 记录；
 3. 提供一键急停、净值走势曲线查询与全链路审计日志输出。
+
+结构说明（2026-11-22 拆分）：
+- TradingBotInstance 只保留身份与配置、组件装配、凭证注入，以及 step() / reconcile_once()
+  两个入口（负责写运行事件）；
+- 决策周期（decision_cycle）、提案复审、下单执行、决策审计、标的规格、标记价格、成交记录、
+  独立账本、止损保护、对账编排都在 heimdall/engine/bot_services/ 下
+  （职责与依赖分层见该包的 __init__.py）；
+- 原有的属性与方法名（ledger、_last_mark_price、coverage_grace_seconds、_is_risk_reducing、
+  sync_ledger、_ensure_instrument_specs 等）通过 TradingBotInstance 里的"兼容层"继续可用，
+  外部调用方与现有测试无需修改。
 """
 
-import asyncio
 import logging
-import os
-import uuid
 from datetime import datetime, timedelta, timezone
-from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal
-from typing import Callable, Dict, Any, List, Optional, Union
+from typing import Any, Callable, Dict, List, Optional, Union
 from heimdall.models.schemas import (
     AgentStatus,
     ExchangeType,
     ExecutionMode,
-    MarketContext,
     MarketType,
-    OrderIntent,
-    OrderSide,
-    PositionSide,
-    RiskReviewResult,
     StrategyType,
-    TradeAction,
     TradeProposal,
 )
 from heimdall.bifrost.client import BifrostClient
@@ -33,34 +33,55 @@ from heimdall.risk.guard import HardRiskGuard
 from heimdall.risk.portfolio_guard import PortfolioCoordinator
 from heimdall.agents.state import MultiAgentState
 from heimdall.agents.graph import MultiAgentPipeline
-from heimdall.factors.engine import FactorEngine
-from heimdall.strategies import StrategyRouter, StrategyContext, MacroBias
+from heimdall.strategies import StrategyRouter, MacroBias
 from heimdall.accounting.nav import NAVEngine, EquitySnapshot
-from heimdall.accounting.ledger import USD_STABLES, BotLedger, LedgerFill, base_asset
+from heimdall.accounting.ledger import BotLedger, base_asset
 from heimdall.execution.base import BaseExecutionAdapter, TradeExecutionResult
 from heimdall.execution.factory import ExecutionAdapterFactory
 from heimdall.execution.hyperliquid import HyperliquidAdapter
 from heimdall.execution.precision import InstrumentRegistry
-from heimdall.execution.oms import OrderManagementSystem, OrderLifecycleState, TERMINAL_STATES
+from heimdall.execution.oms import OrderManagementSystem, TERMINAL_STATES
 from heimdall.execution.reconciler import ExchangeReconciler
 from heimdall.llm.client import LLMService
 from heimdall.alert.notifier import alert_gateway
 from heimdall.database.repository import trading_repo
-from heimdall.utils.security_preflight import InsecureDeploymentError, assert_mainnet_ready
-from heimdall.engine.shadow import estimate_shadow_fill
+from heimdall.engine.bot_services import build_bot_services
+from heimdall.engine.bot_services.proposal_review import CLOSE_INTENT_PREFIXES, is_risk_reducing_close
+from heimdall.engine.bot_services.protection_service import resolve_fallback_stop_pct
 
 logger = logging.getLogger(__name__)
 
 
-def _resolve_fallback_stop_pct(strategy_config: Dict[str, Any]) -> float:
-    """补挂止损的兜底距离：策略配置 fallback_stop_loss_pct > 环境变量 HEIMDALL_FALLBACK_STOP_LOSS_PCT > 5%，限定在 0.5%–50%"""
-    raw = (strategy_config or {}).get("fallback_stop_loss_pct", os.getenv("HEIMDALL_FALLBACK_STOP_LOSS_PCT", "0.05"))
-    try:
-        val = float(raw)
-    except (TypeError, ValueError):
-        logger.warning("[BotManager] fallback_stop_loss_pct=%r 无法解析，使用默认 5%%", raw)
-        val = 0.05
-    return min(max(val, 0.005), 0.5)
+# 兼容旧导入路径：from heimdall.engine.bot_manager import _resolve_fallback_stop_pct
+# （实现已迁移到 bot_services/protection_service.py）
+_resolve_fallback_stop_pct = resolve_fallback_stop_pct
+
+
+class _ServiceAttr:
+    """
+    兼容层描述符：把机器人上的旧属性名读写转发到对应子服务的字段。
+
+    例如 ``bot._last_mark_price`` 实际读写 ``bot.mark_tracker.last_price``，
+    ``bot.coverage_grace_seconds = 0`` 实际修改 ``bot.protection_service.grace_seconds``。
+    这样外部调用方、测试与运维脚本使用旧属性名时，读到和改到的都是子服务里唯一的一份状态，
+    不会出现"机器人上一份、服务里一份"的不一致。
+    """
+
+    def __init__(self, service_attr: str, field: str):
+        self.service_attr = service_attr
+        self.field = field
+        self.name = field
+
+    def __set_name__(self, owner: type, name: str) -> None:
+        self.name = name
+
+    def __get__(self, obj: Any, objtype: Optional[type] = None) -> Any:
+        if obj is None:
+            return self
+        return getattr(getattr(obj, self.service_attr), self.field)
+
+    def __set__(self, obj: Any, value: Any) -> None:
+        setattr(getattr(obj, self.service_attr), self.field, value)
 
 
 class TradingBotInstance:
@@ -144,46 +165,48 @@ class TradingBotInstance:
             strict_sl_protection=strict_sl_protection,
         )
         self.reconciler = ExchangeReconciler(adapter=self.executor, oms=self.oms)
-        self._expected_positions: List[Dict[str, Any]] = []
-        self.last_reconciliation: Optional[Dict[str, Any]] = None
         # E6：重启恢复的机器人在首次对账时以交易所持仓作为本地基线（避免把已有仓位误判为幽灵持仓）
+        #     由 BotManager.restore_persisted_bots 置 True，账本服务 / 对账服务用完后置回 False
         self._adopt_exchange_baseline: bool = False
-        # E2：提案 -> 决策编号，用于对账补记的成交关联决策审计
-        self._decision_id_by_proposal: Dict[str, str] = {}
 
         # E7：TESTNET / MAINNET 且适配器支持按标的拉取成交时，启用机器人独立账本：
         #     余额、持仓、净值、风控都按本机器人自己的成交计算，不再读取整个交易所账户
-        self.ledger: Optional[BotLedger] = None
         self.uses_bot_ledger: bool = (
             self.execution_mode != ExecutionMode.LOCAL_SIM and hasattr(self.executor, "fetch_symbol_trades")
         )
-        self._ledger_lock = asyncio.Lock()
-        self._last_mark_price: Optional[float] = None
         # 由 BotManager 注入：检查是否有其他机器人在同一账户的同一标的上交易
         self._account_conflict_fn: Optional[Callable[[], Optional[str]]] = None
         if self.uses_bot_ledger:
+            # 独立账本模式下成交以交易所成交流水为准，OMS 不再产出成交事件，避免重复记账
             self.oms.record_fill_events = False
 
-        # 止损覆盖检查：持仓没有足额止损时自动补挂
-        # - 补挂价优先沿用交易所上已有止损价，其次是开仓单的止损计划，最后按开仓均价 ± fallback_stop_loss_pct；
-        # - 刚下过单的一段时间内不检查（开仓单的止损可能正在挂载），避免重复挂单；
-        # - 补挂价已被行情穿越、或连续 3 次补挂失败时，严格保护模式下按市价平掉未覆盖部分并暂停机器人。
-        self.fallback_stop_loss_pct: float = _resolve_fallback_stop_pct(self.strategy_config)
-        self.coverage_grace_seconds: float = 20.0
-        self.coverage_max_failures: int = 3
-        self._coverage_failures: int = 0
-        self._last_exec_activity: Optional[datetime] = None
-        # P1：标的规格（价格步长 / 数量步长 / 最小下单额）从机器人所在交易所环境的 exchangeInfo 刷新
-        self.spec_refresh_seconds: float = 6 * 3600.0
-        self._spec_refreshed_at: Optional[datetime] = None
-        self._spec_retry_after: Optional[datetime] = None
-        # P4：独立账本的浮动盈亏与止损穿越判断只用机器人所在交易所环境的标记价格（exchange / market_data）
-        self._mark_price_source: Optional[str] = None
-        # P2：仓位归零后是否已按订单号前缀清理过交易所上本机器人的残留条件单
-        self._flat_sweep_done: bool = False
-        # P3：参与止损覆盖的非本机器人条件单（变化时才写日志）
-        self._external_cover_sig: Optional[tuple] = None
-        self._last_external_stops: List[Dict[str, Any]] = []
+        # 装配子服务（详见 heimdall/engine/bot_services/__init__.py）：
+        # - spec_service       ：标的规格刷新（P1）
+        # - mark_tracker       ：标记价格与来源（P4）
+        # - trade_recorder     ：成交写库 / 平仓反思 / 净值快照 / 成交通知 / 决策关联（E2、L4）
+        # - ledger_service     ：独立账本与成交同步（E7–E9）
+        # - protection_service ：止损覆盖、补挂、保护性平仓、平仓收尾（E9、P2、P3）
+        # - reconcile_service  ：对账编排与报告（E3、E6、E7）
+        # - proposal_reviewer  ：下单前提案复审（降风险豁免 / 硬风控 / 组合锁，H3）
+        # - decision_audit     ：平仓反思、影子成交、决策记录与落库（M1、L4）
+        # - order_execution    ：下单路由与成交落地（E7、E8、P1）
+        # - decision_cycle     ：决策周期分阶段编排（step() 的实现）
+        # 仓储与告警通过 lambda 延迟获取本模块的全局对象：测试 monkeypatch 本模块的 trading_repo 后立即生效
+        services = build_bot_services(
+            self,
+            repo_getter=lambda: trading_repo,
+            alert_getter=lambda: alert_gateway,
+        )
+        self.spec_service = services.specs
+        self.mark_tracker = services.mark_price
+        self.trade_recorder = services.trades
+        self.ledger_service = services.ledger
+        self.protection_service = services.protection
+        self.reconcile_service = services.reconcile
+        self.proposal_reviewer = services.reviewer
+        self.decision_audit = services.audit
+        self.order_execution = services.execution
+        self.decision_cycle = services.cycle
 
         # 挂载 Bifrost 数据客户端
         self.bifrost = bifrost_client or BifrostClient()
@@ -324,1308 +347,48 @@ class TradingBotInstance:
         except Exception as exc:
             logger.warning("[Bot %s] 记录运行事件 %s 失败: %s", self.bot_id, kind, exc)
 
-    async def _load_lessons(self) -> Optional[str]:
-        """L4：读取最近的平仓反思，拼成 lessons_learned 注入本轮决策"""
-        if self.lessons_limit <= 0:
-            return None
-        try:
-            rows = await trading_repo.get_recent_reflections(self.bot_id, limit=self.lessons_limit)
-        except Exception as exc:
-            logger.warning("[Bot %s] 读取平仓反思失败: %s", self.bot_id, exc)
-            return None
-        texts = [str(r.get("lesson_text") or "").strip()[:200] for r in rows or []]
-        texts = [t for t in texts if t]
-        if not texts:
-            return None
-        return "近期平仓复盘（最新在前）：" + "；".join(f"{i}) {t}" for i, t in enumerate(texts, 1))
-
-    async def _record_reflection(self, trade: TradeExecutionResult, regime: Optional[str] = None) -> None:
-        """有已实现盈亏的成交（平仓 / 减仓）写入一条反思，供后续决策读取"""
-        pnl = float(getattr(trade, "realized_pnl", 0.0) or 0.0)
-        if abs(pnl) <= 1e-6:
-            return
-        regime = regime or self._last_regime
-        outcome = "盈利" if pnl > 0 else "亏损"
-        source = (trade.raw_response or {}).get("source") if isinstance(trade.raw_response, dict) else None
-        via = "（交易所侧止损/止盈或手动平仓）" if source == "exchange_trade_stream" and not self._proposal_for_exchange_order(trade.order_id) else ""
-        lesson = (
-            f"{trade.symbol} {trade.position_side.value} 平仓{outcome} ${pnl:+.2f}{via} "
-            f"(成交价=${trade.executed_price:.2f}, 行情={regime})"
-        )
-        try:
-            await trading_repo.record_reflection(
-                reflection_id=f"refl_{trade.trade_id}",
-                agent_id=self.bot_id,
-                symbol=trade.symbol,
-                realized_pnl=pnl,
-                lesson_text=lesson,
-                trade_id=trade.trade_id,
-                market_regime=regime,
-            )
-        except Exception as exc:
-            logger.warning("[Bot %s] 写入平仓反思失败 %s: %s", self.bot_id, trade.trade_id, exc)
-
-    def _shadow_fills(self, trades: List[TradeExecutionResult], orderbook: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """L4：本地模拟成交按决策时的盘口最优价估算滑点（仅 LOCAL_SIM）"""
-        if self.execution_mode != ExecutionMode.LOCAL_SIM or not trades or not orderbook:
-            return []
-        out = []
-        for t in trades:
-            est = estimate_shadow_fill(t, orderbook)
-            if est is not None:
-                out.append(est)
-        return out
-
     async def _step_impl(self, force: bool = False) -> Dict[str, Any]:
-        """单个决策周期的核心闭环逻辑（由 step() 调用）"""
-        if not force and self.status != AgentStatus.RUNNING:
-            logger.info("[Bot %s] 当前状态为 %s，跳过本轮执行", self.bot_id, self.status)
-            return {"status": self.status, "message": "Bot is not running"}
-
-        # E7：同一账户的同一标的只允许一个机器人交易（单向持仓下交易所会把多个机器人的仓位合并）
-        if self.execution_mode != ExecutionMode.LOCAL_SIM and self._account_conflict_fn is not None:
-            other = self._account_conflict_fn()
-            if other:
-                reason = (
-                    f"机器人 {other} 正在同一账户的 {self.symbol} 上交易（或仍有持仓/挂单），"
-                    "同一账户同一标的只允许一个机器人，拒绝执行本轮决策"
-                )
-                logger.critical("[Bot %s 失败即关闭] %s", self.bot_id, reason)
-                return {"error": reason, "bot_id": self.bot_id}
-
-        logger.info("=== [Bot %s 循环触发] 开始拉取标的 %s 数据 ===", self.bot_id, self.symbol)
-
-        # 1. 从 Bifrost 获取零前视时序 K 线与跨所状态
-        try:
-            klines = await self.bifrost.get_klines(self.symbol, interval="15m", limit=60)
-            funding = await self.bifrost.get_funding_rate(self.symbol)
-            guard_status = await self.bifrost.check_cross_exchange_guard(self.symbol)
-            # 若跨所价差出现高危偏离 (DEGRADED 或 ISOLATED)，主动推送行情异动告警
-            if guard_status and guard_status.get("status") in ("DEGRADED", "ISOLATED"):
-                await alert_gateway.notify_bifrost_anomaly(
-                    symbol=self.symbol,
-                    guard_status=guard_status.get("status", "DEGRADED"),
-                    spread_pct=guard_status.get("spread_pct", 0.0),
-                )
-        except Exception as exc:
-            logger.error("[Bot %s] 获取 Bifrost 底座数据异常: %s", self.bot_id, exc)
-            return {"error": f"Bifrost data fetch error: {exc}"}
-
-        # 2. 获取最新市场价并更新持仓浮动盈亏
-        latest_price = 0.0
-        if klines:
-            latest_k = klines[-1]
-            latest_price = float(latest_k.get("close", 0.0) if isinstance(latest_k, dict) else latest_k[4])
-
-        if hasattr(self.executor, "update_market_price") and latest_price > 0:
-            self.executor.update_market_price(self.symbol, latest_price)
-
-        # 3. 查验账户当前总权益与持仓分布
-        #    E7：独立账本模式先同步上一轮以来本标的的新成交（含交易所触发的止损/止盈），
-        #        同步失败即关闭：持仓不可信时不做新决策
-        if self.uses_bot_ledger:
-            if not self._exchange_creds_hydrated and not await self.hydrate_exchange_credentials_from_vault():
-                reason = "未能从安全金库注入交易凭证，无法同步交易所成交，拒绝执行本轮决策"
-                logger.critical("[Bot %s 失败即关闭] %s", self.bot_id, reason)
-                return {"error": reason, "bot_id": self.bot_id}
-            try:
-                pre_fills = await self.sync_ledger()
-                if pre_fills:
-                    await self._record_trades(pre_fills)
-            except Exception as sync_err:
-                reason = f"同步交易所成交失败，本机器人持仓不可信，拒绝执行本轮决策: {sync_err}"
-                logger.critical("[Bot %s 失败即关闭] %s", self.bot_id, reason)
-                return {"error": reason, "bot_id": self.bot_id}
-            # P4：浮动盈亏用本机器人所在交易所环境的标记价格（测试网不再用正式网 K 线收盘价）
-            await self._refresh_exchange_mark(latest_price)
-        balance = await self.get_bot_balance()
-        open_positions = await self.get_bot_positions()
-        total_equity = balance["total_equity"]
-        cash_balance = balance["cash_balance"]
-        margin_used = balance["margin_used"]
-        unrealized_pnl = balance["unrealized_pnl"]
-        realized_pnl_cum = balance["realized_pnl_cum"]
-
-        # 4. 记录净值快照并计算当前日内回撤（相对当日 UTC 基准净值，每日自动重置；
-        #    snapshot.drawdown_pct 为相对历史峰值的回撤，仅用于绩效统计，不参与日内熔断）
-        snapshot = self.nav_engine.record_snapshot(
-            total_equity=total_equity,
-            cash_balance=cash_balance,
-            margin_used=margin_used,
-            unrealized_pnl=unrealized_pnl,
-            realized_pnl_cum=realized_pnl_cum,
-        )
-        current_dd = snapshot.daily_drawdown_pct
-
-        # 异步持久化权益快照至 SQLite 数据库
-        try:
-            await trading_repo.record_equity_snapshot(self.bot_id, snapshot)
-        except Exception as snap_err:
-            logger.warning("[Bot %s] 持久化净值快照失败 (内存已保留): %s", self.bot_id, snap_err)
-
-        # 5. 检查是否触发单日最大回撤熔断 (Circuit Breaker)
-        if current_dd >= self.max_drawdown_limit:
-            self.status = AgentStatus.CIRCUIT_BROKEN
-            reason = f"当日回撤 {current_dd:.2%} 达到或超过预设熔断上限 {self.max_drawdown_limit:.2%}"
-            logger.critical(
-                "[Bot %s 紧急熔断] %s！立即终止新开仓权限！",
-                self.bot_id,
-                reason,
-            )
-            await self.executor.cancel_all_orders(self.symbol)
-            await alert_gateway.notify_circuit_breaker(
-                bot_id=self.bot_id,
-                drawdown_pct=current_dd,
-                limit_pct=self.max_drawdown_limit,
-                reason=reason,
-            )
-            return {
-                "bot_id": self.bot_id,
-                "status": self.status,
-                "reason": f"Circuit broken: drawdown {current_dd:.2%} >= limit {self.max_drawdown_limit:.2%}",
-            }
-
-        # 5b. 实盘失败即关闭：宏观事件日历为空/已过期时，第 6 条铁律等同于永远放行，禁止在 MAINNET 继续决策
-        if (
-            self.execution_mode == ExecutionMode.MAINNET
-            and self.hard_guard.enable_macro_guard
-            and self.hard_guard.macro_calendar.is_stale()
-        ):
-            reason = (
-                "宏观事件日历为空或已全部过期（config/macro_events.yaml），"
-                "MAINNET 模式下拒绝执行本轮决策，请补充未来 FOMC/CPI 日程后重试"
-            )
-            logger.critical("[Bot %s 失败即关闭] %s", self.bot_id, reason)
-            return {"error": reason, "bot_id": self.bot_id}
-
-        # 5c. M4：MAINNET 实盘每轮决策前复核部署安全（弱口令 / 占位密钥 → 失败即关闭，无豁免开关）
-        if self.execution_mode == ExecutionMode.MAINNET:
-            try:
-                assert_mainnet_ready()
-            except InsecureDeploymentError as err:
-                logger.critical("[Bot %s 失败即关闭] %s", self.bot_id, err)
-                return {"error": str(err), "bot_id": self.bot_id}
-
-        # 6. 计算多维因子并通过 StrategyRouter 路由的独立策略模块推演（TESTNET/MAINNET 必须注入精确匹配凭证）
-        #    M4：凭证注入失败即关闭，不再带着空凭证的适配器继续推演与下单
-        if self.execution_mode in (ExecutionMode.TESTNET, ExecutionMode.MAINNET) and not self._exchange_creds_hydrated:
-            hydrated = await self.hydrate_exchange_credentials_from_vault()
-            if not hydrated:
-                reason = (
-                    f"未能从安全金库注入 {self.exchange.value}/{self.market_type.value}/{self.execution_mode.value} "
-                    "精确匹配的交易凭证，拒绝执行本轮决策"
-                )
-                logger.critical("[Bot %s 失败即关闭] %s", self.bot_id, reason)
-                return {"error": reason, "bot_id": self.bot_id}
-        if getattr(self.strategy, "requires_llm", False):
-            await self.llm_service.ensure_credentials(owner_wallet=self.owner_wallet)
-
-        orderbook_dict = None
-        bid_ask_spread_pct = None
-        if hasattr(self.bifrost, "get_orderbook"):
-            try:
-                ob = await self.bifrost.get_orderbook(self.symbol)
-                if ob is not None:
-                    orderbook_dict = ob.model_dump() if hasattr(ob, "model_dump") else dict(ob)
-                    bid_ask_spread_pct = orderbook_dict.get("bid_ask_spread_pct")
-            except Exception:
-                pass
-
-        factors = FactorEngine.compute(klines=klines, funding=funding, orderbook=orderbook_dict)
-        self._last_regime = factors.get("regime")
-        lessons = await self._load_lessons()
-        ctx = StrategyContext(
-            timestamp=datetime.now(timezone.utc),
-            bot_id=self.bot_id,
-            symbol=self.symbol,
-            timeframe="15m",
-            exchange=self.exchange,
-            account_equity=total_equity,
-            current_daily_drawdown_pct=current_dd,
-            klines=klines,
-            factors=factors,
-            funding=funding,
-            guard_status=guard_status,
-            open_positions=open_positions,
-            lessons_learned=lessons,
-            macro_bias=self.macro_bias,
-        )
-        decision = await self.strategy.evaluate(ctx)
-
-        # 本轮决策唯一标识（含完整 bot_id + 随机后缀，避免多 Bot / 同秒多轮主键冲突），
-        # 同时作为 trades.decision_id 外联字段，使成交流水可回溯到对应决策审计记录
-        decision_ts = datetime.now(timezone.utc)
-        decision_id = f"dec_{self.bot_id}_{decision_ts.strftime('%Y%m%d%H%M%S')}_{uuid.uuid4().hex[:6]}"
-
-        # 7. 审查策略提案：执行前对【每一笔】提案无条件重跑 HardRiskGuard（代码层一票否决，不信任上游结论）
-        #    - 策略层/流水线返回的 risk_review 仅作为审计信息保留（upstream_risk_review）；
-        #    - 唯一豁免：经持仓核验确认为纯降风险的平仓/减仓单，避免在熔断/静默期把敞口困在场内。
-        execution_report = None
-        executed_batch: List[TradeExecutionResult] = []
-        proposal = decision.proposals[0] if decision.proposals else None
-        diag = decision.diagnostics or {}
-        upstream_risk_review = diag.get("risk_review")
-        risk_result = upstream_risk_review
-
-        approved_proposals: List[TradeProposal] = []
-        for prop in decision.proposals or []:
-            if self._is_risk_reducing(prop, open_positions, latest_price, decision.action_type):
-                risk_result = RiskReviewResult(
-                    approved=True,
-                    checked_rules={"risk_reducing_close": True},
-                )
-                approved_proposals.append(prop)
-                logger.info(
-                    "[Bot %s] 提案 %s 经持仓核验为降风险平仓单，豁免开仓类硬风控规则",
-                    self.bot_id, prop.proposal_id,
-                )
-                continue
-
-            rev = self.hard_guard.review_proposal(
-                proposal=prop,
-                account_equity=total_equity,
-                current_daily_drawdown_pct=current_dd,
-                bifrost_status=guard_status,
-                market_klines=klines,
-                bid_ask_spread_pct=bid_ask_spread_pct,
-            )
-            risk_result = rev
-            if rev.approved:
-                approved_proposals.append(prop)
-            else:
-                logger.warning(
-                    "[Bot %s] 执行前 HardRiskGuard 复审拦截提案 %s: %s",
-                    self.bot_id, prop.proposal_id, rev.rejection_reason,
-                )
-                decision.thinking_logs.append(f"[HardRiskGuard 执行前复审拦截]: {rev.rejection_reason}")
-
-        if approved_proposals and self.portfolio_coordinator is not None:
-            coord_approved: List[TradeProposal] = []
-            for prop in approved_proposals:
-                ok, coord_reason = await self.portfolio_coordinator.check_and_reserve(
-                    agent_id=self.bot_id,
-                    symbol=prop.trade_action.symbol,
-                    side=prop.trade_action.position_side.value,
-                    notional_usd=prop.trade_action.size_in_usd,
-                )
-                if ok:
-                    coord_approved.append(prop)
-                else:
-                    logger.warning("[Bot %s] 组合协调器拦截提案: %s", self.bot_id, coord_reason)
-                    decision.thinking_logs.append(f"[PortfolioCoordinator 拦截]: {coord_reason}")
-            approved_proposals = coord_approved
-
-        step_traces_tmp = diag.get("step_traces") or []
-        for st in step_traces_tmp:
-            tok = getattr(st, "tokens_used", 0) if not isinstance(st, dict) else st.get("tokens_used", 0)
-            self.total_tokens_used += int(tok or 0)
-
-        if approved_proposals:
-            self._last_exec_activity = datetime.now(timezone.utc)
-            for prop in approved_proposals:
-                prop.trade_action.market_type = self.market_type
-            logger.info("[Bot %s] %d 笔提案通过风控审核，提交执行链路下单 (market=%s, use_oms=%s)...", self.bot_id, len(approved_proposals), self.market_type.value, self.use_oms)
-            if decision.action_type == "HEDGE_PAIR" and len(approved_proposals) == 2:
-                executed_batch = await self.executor.execute_atomic_pair(
-                    approved_proposals[0], approved_proposals[1]
-                )
-            elif self.use_oms:
-                await self._ensure_instrument_specs()
-                # 通过 OMS 状态机执行：市场校验 -> 精度对齐 -> Write-Ahead 落库 -> 订单事实映射 -> 仅按真实成交量挂载保护单
-                for prop in approved_proposals:
-                    self._decision_id_by_proposal[prop.proposal_id] = decision_id
-                    if len(self._decision_id_by_proposal) > 1000:
-                        self._decision_id_by_proposal.pop(next(iter(self._decision_id_by_proposal)))
-                    try:
-                        managed_order, exec_res = await self.oms.submit_proposal(
-                            bot_id=self.bot_id,
-                            proposal=prop,
-                            attach_sl_tp=True,
-                        )
-                    except ValueError as pre_err:
-                        # 发单前拦截（标的规格未知、数量低于最小下单量、市场校验不通过等）：不发单，释放组合敞口
-                        logger.warning("[Bot %s · OMS 发单前拦截] 提案=%s | 原因=%s", self.bot_id, prop.proposal_id, pre_err)
-                        decision.thinking_logs.append(f"[OMS 发单前拦截]: {pre_err}")
-                        if self.portfolio_coordinator is not None:
-                            await self.portfolio_coordinator.release_exposure(self.bot_id, prop.trade_action.symbol)
-                        continue
-                    if exec_res is not None:
-                        executed_batch.append(exec_res)
-                        logger.info(
-                            "[Bot %s · OMS 成交] cid=%s | 标的=%s | 状态=%s | 已触发原生止损/止盈保护",
-                            self.bot_id, managed_order.client_order_id, managed_order.symbol, managed_order.state.value,
-                        )
-                    elif managed_order.state == OrderLifecycleState.REJECTED:
-                        logger.warning(
-                            "[Bot %s · OMS 拒单回滚] cid=%s | 原因=%s | 正在释放组合敞口",
-                            self.bot_id, managed_order.client_order_id, managed_order.error_message,
-                        )
-                        if self.portfolio_coordinator is not None:
-                            await self.portfolio_coordinator.release_exposure(self.bot_id, prop.trade_action.symbol)
-                    elif managed_order.state == OrderLifecycleState.UNKNOWN:
-                        logger.warning(
-                            "[Bot %s · OMS 超时挂起] cid=%s 进入 UNKNOWN，等待定时对账协程查单确认",
-                            self.bot_id, managed_order.client_order_id,
-                        )
-            else:
-                for prop in approved_proposals:
-                    executed_batch.append(await self.executor.execute_proposal(prop))
-
-            # E7 / E8：独立账本模式下，成交以交易所成交流水为准（成交编号去重、含真实手续费与已实现盈亏），
-            #          不再使用下单回包汇总出的成交，避免重复记账
-            if self.uses_bot_ledger:
-                try:
-                    executed_batch = await self.sync_ledger()
-                except Exception as sync_err:
-                    logger.warning("[Bot %s] 下单后同步交易所成交失败，交由定时对账补记: %s", self.bot_id, sync_err)
-                    executed_batch = []
-
-            for rep in executed_batch:
-                self.executed_trades.append(rep)
-            execution_report = executed_batch[0] if executed_batch else None
-            self._expected_positions = await self.get_bot_positions()
-            self._last_exec_activity = datetime.now(timezone.utc)
-
-            try:
-                for rep in executed_batch:
-                    await trading_repo.record_trade(
-                        trade=rep,
-                        agent_id=self.bot_id,
-                        decision_id=self._decision_for_trade(rep) if self.uses_bot_ledger else decision_id,
-                    )
-                    await self._record_reflection(rep, factors.get("regime"))
-                post_bal = await self.get_bot_balance()
-                snapshot = self.nav_engine.record_snapshot(
-                    total_equity=post_bal["total_equity"],
-                    cash_balance=post_bal["cash_balance"],
-                    margin_used=post_bal["margin_used"],
-                    unrealized_pnl=post_bal["unrealized_pnl"],
-                    realized_pnl_cum=post_bal["realized_pnl_cum"],
-                )
-                await trading_repo.record_equity_snapshot(self.bot_id, snapshot)
-            except Exception as trade_save_err:
-                logger.warning("[Bot %s] 保存成交记录或更新净值快照异常: %s", self.bot_id, trade_save_err)
-
-            if execution_report:
-                await alert_gateway.notify_trade_filled(
-                    bot_id=self.bot_id,
-                    trade=execution_report,
-                    latest_nav=snapshot.nav,
-                )
-
-        # 8. 归档本轮思维链审计记录
-        thinking_logs = decision.thinking_logs
-        analyst_brief = diag.get("analyst_brief")
-        debate_synthesis = diag.get("debate_synthesis")
-        step_traces = diag.get("step_traces") or []
-
-        decision_record = {
-            "decision_id": decision_id,
-            "timestamp": decision_ts.isoformat(),
-            "symbol": self.symbol,
-            "strategy_type": self.strategy_type.value,
-            "action_type": decision.action_type,
-            "latest_price": latest_price,
-            "equity": total_equity,
-            "nav": snapshot.nav,
-            "drawdown_pct": snapshot.drawdown_pct,
-            "daily_drawdown_pct": current_dd,
-            "factors": factors,
-            "analyst_regime": analyst_brief.get("regime") if analyst_brief else factors.get("regime"),
-            "debate_consensus": (
-                debate_synthesis.get("consensus_action")
-                if debate_synthesis
-                else diag.get("signal")
-            ),
-            "proposal_generated": bool(proposal),
-            "risk_approved": risk_result.approved if risk_result else False,
-            "execution_id": execution_report.trade_id if execution_report else None,
-            "thinking_logs": thinking_logs,
-            "analyst_brief": analyst_brief,
-            "sentiment_report": diag.get("sentiment_report"),
-            "bull_thesis": diag.get("bull_thesis"),
-            "bear_thesis": diag.get("bear_thesis"),
-            "debate_synthesis": debate_synthesis,
-            "trade_proposal": proposal.model_dump(mode="json") if proposal else None,
-            "risk_review": risk_result.model_dump(mode="json") if risk_result else None,
-            "upstream_risk_review": (
-                upstream_risk_review.model_dump(mode="json")
-                if upstream_risk_review is not None and hasattr(upstream_risk_review, "model_dump")
-                else None
-            ),
-            "step_traces": [
-                st.model_dump(mode="json") if hasattr(st, "model_dump") else st
-                for st in step_traces
-            ],
-        }
-        decision_record["lessons_learned"] = lessons
-        decision_record["shadow_fills"] = self._shadow_fills(executed_batch, orderbook_dict)
-        decision_record["oms_orders_count"] = len(self.oms.orders)
-        decision_record["last_reconciliation"] = self.last_reconciliation
-        self.decision_history.append(decision_record)
-
-        # 9. M1：由 step() 作为决策审计的唯一落库入口（手动单步 / 后台调度走同一路径），
-        #    完整写入本轮提案与最终风控结论；落库失败仅告警，不影响内存审计与交易主流程
-        await self._persist_decision(decision_record, proposal, risk_result)
-
-        return decision_record
-
-    async def _persist_decision(
-        self,
-        decision_record: Dict[str, Any],
-        proposal: Optional[TradeProposal],
-        risk_result: Any,
-    ) -> None:
-        """将本轮决策（思维链 + 交易提案 + 最终风控结论）写入 agent_decisions 审计表"""
-        try:
-            await trading_repo.record_decision(
-                decision_id=decision_record["decision_id"],
-                agent_id=self.bot_id,
-                symbol=self.symbol,
-                timestamp=decision_record["timestamp"],
-                market_regime=decision_record.get("analyst_regime"),
-                thinking_logs=list(decision_record.get("thinking_logs") or []),
-                proposal=proposal,
-                risk_review=risk_result if isinstance(risk_result, RiskReviewResult) else None,
-            )
-        except Exception as dec_err:
-            logger.warning(
-                "[Bot %s] 持久化决策审计记录失败 (内存已保留) decision_id=%s: %s",
-                self.bot_id, decision_record.get("decision_id"), dec_err,
-            )
-
-    _CLOSE_INTENT_PREFIXES = ("CLOSE", "DEBATE_REVERSE_CLOSE", "ARB_EXIT", "REDUCE", "STOP", "TAKE_PROFIT")
-
-    def _is_risk_reducing(
-        self,
-        prop: TradeProposal,
-        open_positions: List[Dict[str, Any]],
-        latest_price: float,
-        action_type: Optional[str] = None,
-    ) -> bool:
         """
-        判定提案是否为【纯降风险】的平仓/减仓单（三条件同时满足才豁免开仓类硬风控）：
-        1. 声明了平仓意图（action_type=CLOSE、trade_action.intent=CLOSE/REDUCE、reduce_only，或 rationale.intent 以平仓前缀开头）；
-        2. 当前同标的存在反向持仓（多头持仓对应 SELL，空头持仓对应 BUY）；
-        3. 名义金额不超过现有持仓名义价值的 102%（防止借“平仓”之名反手开新仓）。
+        单个决策周期的核心闭环（由 step() 调用）。
+        分阶段实现见 heimdall/engine/bot_services/decision_cycle.py：
+        运行状态 → 账户冲突 → 行情 → 账户 → 净值与熔断 → 实盘门控 → 策略推演 → 提案复审 → 下单执行 → 决策审计
         """
-        action = prop.trade_action
-        intent_str = str((prop.rationale or {}).get("intent", "")).upper()
-        declared_close = (
-            (action_type or "").upper() == "CLOSE"
-            or action.reduce_only
-            or action.intent in (OrderIntent.CLOSE, OrderIntent.REDUCE)
-            or intent_str.startswith(self._CLOSE_INTENT_PREFIXES)
-        )
-        if not declared_close:
-            return False
-
-        target = action.symbol.upper().replace("USDT", "")
-        for pos in open_positions or []:
-            p_sym = str(pos.get("symbol", "")).upper().replace("USDT", "")
-            if p_sym != target:
-                continue
-            side = str(pos.get("side", "FLAT")).upper()
-            qty = float(pos.get("quantity", pos.get("size", 0.0)) or 0.0)
-            if qty <= 1e-12 or side not in ("LONG", "SHORT"):
-                continue
-            closing_side = "SELL" if side == "LONG" else "BUY"
-            if action.order_side.value.upper() != closing_side:
-                return False
-            ref_price = latest_price if latest_price and latest_price > 0 else float(action.target_price or 0.0)
-            if ref_price <= 0:
-                return False
-            return action.size_in_usd <= qty * ref_price * 1.02
-        return False
+        return await self.decision_cycle.run(force=force)
 
     # ==========================================================================
-    # E7 / E8 / E9：机器人独立账本
+    # 资金与持仓（独立账本模式委托 ledger_service，其余模式读取执行适配器）
     # ==========================================================================
 
     async def get_bot_balance(self) -> Dict[str, Any]:
         """本机器人的资金状况：独立账本模式按自身成交计算，其余模式读取执行适配器"""
         if self.uses_bot_ledger:
-            led = await self._ensure_ledger()
-            if led is None:
-                raise RuntimeError(f"机器人 {self.bot_id} 的独立账本尚未就绪（未能读取或初始化）")
-            return led.balance(self.allocated_capital, self._last_mark_price)
+            return await self.ledger_service.balance()
         return await self.executor.get_account_balance()
 
     async def get_bot_positions(self) -> List[Dict[str, Any]]:
         """本机器人的持仓：独立账本模式只返回本机器人在本标的上的仓位"""
         if self.uses_bot_ledger:
-            led = await self._ensure_ledger()
-            if led is None:
-                raise RuntimeError(f"机器人 {self.bot_id} 的独立账本尚未就绪（未能读取或初始化）")
-            return led.positions(self._last_mark_price)
+            return await self.ledger_service.positions()
         return await self.executor.get_open_positions()
 
     async def load_persisted_ledger(self, repo: Optional[Any] = None) -> Optional[BotLedger]:
         """只从数据库读取已存在的账本（不访问交易所、不新建），供重启恢复与同账户冲突检查使用"""
-        if not self.uses_bot_ledger or self.ledger is not None:
-            return self.ledger
-        target_repo = repo or trading_repo
-        try:
-            state = await target_repo.get_bot_ledger(self.bot_id)
-        except Exception as exc:
-            logger.warning("[Bot %s] 读取独立账本失败: %s", self.bot_id, exc)
-            return None
-        if state:
-            try:
-                self.ledger = BotLedger.from_dict(state)
-            except Exception as exc:
-                logger.warning("[Bot %s] 独立账本状态无法解析，将重新初始化: %s", self.bot_id, exc)
-        return self.ledger
-
-    async def _save_ledger(self) -> None:
-        if self.ledger is None:
-            return
-        try:
-            await trading_repo.save_bot_ledger(self.bot_id, self.ledger.symbol, self.ledger.market_type, self.ledger.to_dict())
-        except Exception as exc:
-            logger.warning("[Bot %s] 保存独立账本失败（内存已更新）: %s", self.bot_id, exc)
-
-    async def _ensure_ledger(self) -> Optional[BotLedger]:
-        """
-        取得本机器人账本：先读数据库；没有则新建。
-        升级前已在交易所交易的机器人（重启恢复且库里没有账本）把交易所该标的现有合约仓位作为起始持仓；
-        新建的机器人不继承任何已有仓位（交易所上若已有仓位，对账会判为幽灵持仓并暂停）。
-        """
-        if not self.uses_bot_ledger:
-            return None
-        if self.ledger is not None:
-            return self.ledger
-        if await self.load_persisted_ledger() is not None:
-            self._adopt_exchange_baseline = False
-            return self.ledger
-        led = BotLedger(bot_id=self.bot_id, symbol=self.symbol, market_type=self.market_type.value)
-        if self._adopt_exchange_baseline:
-            if led.is_spot:
-                # 现货余额无法区分是否属于本机器人，不继承；账户原有余额在对账时按外部持仓处理
-                pass
-            else:
-                try:
-                    ex_pos = await self._exchange_symbol_positions()
-                except Exception as exc:
-                    logger.warning("[Bot %s] 初始化独立账本时读取交易所仓位失败，稍后重试: %s", self.bot_id, exc)
-                    return None
-                if ex_pos:
-                    p = ex_pos[0]
-                    led.adopt_position(
-                        p.get("side", "FLAT"), p.get("quantity", 0), p.get("entry_price", 0),
-                        reason="升级到机器人独立账本时，采用交易所该标的现有仓位作为起始持仓（请人工确认属于本机器人）",
-                    )
-                    logger.warning(
-                        "[Bot %s] 独立账本初始化：采用交易所 %s 现有仓位 %s %s @ %s 作为起始持仓，请人工确认",
-                        self.bot_id, self.symbol, p.get("side"), p.get("quantity"), p.get("entry_price"),
-                    )
-            self._adopt_exchange_baseline = False
-        self.ledger = led
-        await self._save_ledger()
-        return led
-
-    async def _exchange_symbol_positions(self) -> List[Dict[str, Any]]:
-        """交易所上本机器人标的的仓位（账户里其他标的属于其他机器人或用户本人，不参与本机器人对账）"""
-        rows = await self.executor.get_open_positions()
-        base = base_asset(self.symbol)
-        scoped = [p for p in rows or [] if base_asset(p.get("symbol", "")) == base]
-        if self.ledger is not None and scoped and not self.ledger.is_spot:
-            try:
-                self.ledger.leverage = Decimal(str(scoped[0].get("leverage") or 1))
-            except Exception:
-                pass
-            mark = float(scoped[0].get("mark_price") or 0.0)
-            if mark > 0:
-                self._last_mark_price = mark
-                self._mark_price_source = "exchange"
-        return scoped
-
-    def _proposal_for_exchange_order(self, exchange_order_id: str) -> Optional[str]:
-        for o in self.oms.orders.values():
-            if o.exchange_order_id and str(o.exchange_order_id) == str(exchange_order_id):
-                return o.proposal_id
-        return None
-
-    def _decision_for_trade(self, trade: TradeExecutionResult) -> Optional[str]:
-        pid = self._proposal_for_exchange_order(trade.order_id) or trade.proposal_id
-        return self._decision_id_by_proposal.get(pid) if pid else None
+        return await self.ledger_service.load_persisted(repo)
 
     async def sync_ledger(self) -> List[TradeExecutionResult]:
-        """
-        拉取本标的上一次同步以来的新成交与资金费，记入独立账本，返回新记入的成交（尚未写库）。
-        同一账户同一标的只允许一个机器人，因此该标的上账本建立之后的全部成交都归属本机器人，
-        包括交易所触发的止损/止盈、在交易所页面手动下的单（E9）。
-        """
-        if not self.uses_bot_ledger:
-            return []
-        async with self._ledger_lock:
-            led = await self._ensure_ledger()
-            if led is None:
-                raise RuntimeError("独立账本尚未就绪")
-            from_id = led.last_trade_id + 1 if led.last_trade_id is not None else None
-            raw = await self.executor.fetch_symbol_trades(self.symbol, from_id=from_id, start_time_ms=led.since_ms)
-            parse = LedgerFill.from_binance_spot if led.is_spot else LedgerFill.from_binance_futures
-            fills: List[LedgerFill] = []
-            for t in raw or []:
-                try:
-                    if int(t.get("time") or 0) and int(t["time"]) < led.since_ms:
-                        continue  # 账本建立之前的成交不属于本机器人
-                    fills.append(parse(t))
-                except Exception as exc:
-                    logger.warning("[Bot %s] 跳过无法解析的交易所成交 %s: %s", self.bot_id, t.get("id"), exc)
-
-            prices: Dict[str, Decimal] = {}
-            fee_assets = {f.commission_asset for f in fills if f.commission > 0} - USD_STABLES - {led.symbol}
-            for asset in fee_assets:
-                try:
-                    px = await self.executor.get_asset_usd_price(asset)
-                except Exception:
-                    px = None
-                if px:
-                    prices[asset] = Decimal(str(px))
-
-            applied = []
-            for f in sorted(fills, key=lambda x: int(x.trade_id) if x.trade_id.isdigit() else 0):
-                res = led.apply_fill(f, price_lookup=prices.get)
-                if res is not None:
-                    applied.append(res)
-
-            funding_changed = False
-            if not led.is_spot and hasattr(self.executor, "fetch_funding_income"):
-                try:
-                    start = max(led.last_income_time + 1, led.since_ms)
-                    for row in await self.executor.fetch_funding_income(self.symbol, start_time_ms=start):
-                        income_id = row.get("tranId") or f"{row.get('time')}_{row.get('income')}"
-                        if led.apply_funding(income_id, row.get("income"), int(row.get("time") or 0)):
-                            funding_changed = True
-                except Exception as exc:
-                    logger.warning("[Bot %s] 拉取资金费流水失败（下轮重试）: %s", self.bot_id, exc)
-
-            if applied or funding_changed:
-                await self._save_ledger()
-            if applied:
-                logger.info(
-                    "[Bot %s · 独立账本] 记入 %d 笔交易所成交 | 持仓=%s %s | 已实现=%.4f | 手续费=%.6f | 资金费=%.6f",
-                    self.bot_id, len(applied), led.side, led.net_qty, led.realized_pnl, led.fees_usd, led.funding_usd,
-                )
-            return [self._fill_to_trade(a) for a in applied]
-
-    def _fill_to_trade(self, applied: Any) -> TradeExecutionResult:
-        f = applied.fill
-        quote = f.quote_qty if f.quote_qty > 0 else f.qty * f.price
-        mt = "spot" if self.market_type == MarketType.SPOT else "fut"
-        executed_at = (
-            datetime.fromtimestamp(f.time_ms / 1000, tz=timezone.utc) if f.time_ms else datetime.now(timezone.utc)
-        )
-        return TradeExecutionResult(
-            # 成交编号确定性生成：同一笔交易所成交无论写几次都只有一条记录
-            trade_id=f"{self.exchange.value.lower()}_{mt}_{f.trade_id}",
-            order_id=f.order_id or "",
-            proposal_id=self._proposal_for_exchange_order(f.order_id) or "exchange_fill",
-            exchange=self.exchange,
-            market_type=self.market_type,
-            symbol=f"{base_asset(self.symbol)}USDT",
-            order_side=OrderSide(f.side),
-            position_side=PositionSide(applied.position_side),
-            executed_price=float(f.price),
-            executed_quantity=float(f.qty),
-            executed_size_usd=float(quote),
-            fee_usd=float(applied.fee_usd),
-            realized_pnl=float(applied.realized_pnl),
-            executed_at=executed_at,
-            raw_response={
-                "source": "exchange_trade_stream",
-                "exchange_trade_id": f.trade_id,
-                "commission": str(f.commission),
-                "commission_asset": f.commission_asset,
-                "fee_other": {k: str(v) for k, v in applied.fee_other.items()},
-                "is_maker": f.is_maker,
-                "is_reducing": applied.is_reducing,
-            },
-        )
-
-    async def _record_trades(self, trades: List[TradeExecutionResult], notify: bool = True) -> None:
-        """写入成交记录（成交编号去重）、刷新净值快照并推送成交通知"""
-        if not trades:
-            return
-        for t in trades:
-            self.executed_trades.append(t)
-            try:
-                await trading_repo.record_trade(trade=t, agent_id=self.bot_id, decision_id=self._decision_for_trade(t))
-            except Exception as rec_err:
-                logger.warning("[Bot %s] 写入成交记录失败 %s: %s", self.bot_id, t.trade_id, rec_err)
-            await self._record_reflection(t)
-        snapshot = None
-        try:
-            bal = await self.get_bot_balance()
-            snapshot = self.nav_engine.record_snapshot(
-                total_equity=bal["total_equity"],
-                cash_balance=bal["cash_balance"],
-                margin_used=bal["margin_used"],
-                unrealized_pnl=bal["unrealized_pnl"],
-                realized_pnl_cum=bal["realized_pnl_cum"],
-            )
-            await trading_repo.record_equity_snapshot(self.bot_id, snapshot)
-        except Exception as nav_err:
-            logger.warning("[Bot %s] 记入成交后刷新净值快照失败: %s", self.bot_id, nav_err)
-        if notify and snapshot is not None:
-            for t in trades:
-                try:
-                    await alert_gateway.notify_trade_filled(bot_id=self.bot_id, trade=t, latest_nav=snapshot.nav)
-                except Exception as notify_err:
-                    logger.warning("[Bot %s] 发送成交通知失败: %s", self.bot_id, notify_err)
-
-    async def _ledger_sync_for_reconcile(self) -> Optional[List[Dict[str, Any]]]:
-        """对账回调：OMS 查单之后同步账本并写成交，返回账本持仓作为本地基线"""
-        self.oms.drain_fill_events()
-        fills = await self.sync_ledger()
-        if fills:
-            await self._record_trades(fills)
-        return await self.get_bot_positions()
-
-    async def _reconcile_ledger_mode(self) -> Dict[str, Any]:
-        """
-        独立账本模式的对账：
-        1. 撤销超时限价单（异常不阻塞）；
-        2. OMS 查单 → 同步本标的成交与资金费 → 账本持仓与交易所本标的仓位比对；
-           第一轮不一致时再同步复核一次（成交可能恰好落在同步和读取持仓之间），仍不一致才暂停；
-        3. 账本已平仓但本地仍有生效的保护单时（止损/止盈已触发），撤销残留保护单（E9）；
-        4. 检查持仓的止损覆盖数量。
-        """
-        if not self._exchange_creds_hydrated:
-            await self.hydrate_exchange_credentials_from_vault()
-        adopt_pending = self._adopt_exchange_baseline
-        led = await self._ensure_ledger()
-        if led is None:
-            raise RuntimeError("独立账本尚未就绪，本轮对账跳过")
-
-        try:
-            expired = await self.oms.cancel_expired_limit_orders(portfolio_coordinator=self.portfolio_coordinator)
-            if expired:
-                logger.info("[Bot %s · 定时对账] 已清理 %d 笔超时未成交限价单", self.bot_id, len(expired))
-        except Exception as ttl_err:
-            logger.error("[Bot %s · 定时对账] 清理超时限价单异常（不影响后续对账）: %s", self.bot_id, ttl_err)
-
-        report = None
-        for _attempt in range(2):
-            report = await self.reconciler.reconcile(
-                bot_id=self.bot_id,
-                local_positions=[],
-                bot_instance=None,
-                on_oms_fills=self._ledger_sync_for_reconcile,
-                exchange_positions_fn=self._exchange_symbol_positions,
-                symbol_scope={base_asset(self.symbol)},
-                spot_external_holdings_ok=led.is_spot,
-                strict_mismatch=True,
-            )
-            if report.is_clean:
-                break
-
-        if report.bot_paused:
-            self.status = AgentStatus.PAUSED
-            led.review_required = "; ".join(f"{d.diff_type}:{d.symbol}" for d in report.diffs) or "对账不一致"
-            await self._save_ledger()
-            logger.critical(
-                "[Bot %s · 独立账本对账] 同步成交后账本与交易所仍不一致，已暂停机器人: %s",
-                self.bot_id, [d.model_dump() for d in report.diffs],
-            )
-        elif report.is_clean and led.review_required:
-            led.review_required = None
-            await self._save_ledger()
-
-        retired = 0
-        swept: Optional[int] = 0
-        if not led.is_flat:
-            self._flat_sweep_done = False
-        elif self._exec_in_progress():
-            # 刚下过单或有未确认订单：新成交可能还没同步进账本，暂不收尾，避免误撤刚挂上的止损
-            logger.debug("[Bot %s · 独立账本对账] 账本为空仓但刚有下单活动，本轮不收尾保护单", self.bot_id)
-        else:
-            if self.oms.active_protective_orders(self.symbol):
-                retired = await self.oms.retire_protection(
-                    self.symbol, "仓位已平（止损或止盈可能已在交易所触发），残留保护单已撤销",
-                )
-            if retired or not self._flat_sweep_done:
-                # P2：本地记录可能已提前结束（例如被判定为"交易所上已不存在"），
-                #     再按本机器人订单号前缀撤一遍交易所上残留的条件单；不动用户自己在交易所下的单
-                swept = await self._sweep_own_conditional_orders()
-                if swept is not None:
-                    self._flat_sweep_done = True
-            if retired or swept:
-                logger.info(
-                    "[Bot %s · 独立账本对账] 仓位已平，收尾 %d 笔残留保护单，撤销交易所上本机器人残留条件单 %d 笔",
-                    self.bot_id, retired, swept or 0,
-                )
-
-        actions: List[Dict[str, Any]] = []
-        gaps: List[Dict[str, Any]] = []
-        if report.bot_paused:
-            if not led.is_flat:
-                actions.append({"action": "SKIPPED_RECONCILE_MISMATCH",
-                                "detail": "账本与交易所不一致，暂不自动补挂止损，请人工确认仓位"})
-        else:
-            actions, gaps = await self._ensure_stop_coverage(led)
-
-        out = report.model_dump(mode="json")
-        out["account_scope"] = "BOT_LEDGER"
-        out["ledger"] = {
-            "side": led.side,
-            "quantity": str(abs(led.net_qty)),
-            "avg_entry": str(led.avg_entry),
-            "realized_pnl": str(led.realized_pnl),
-            "fees_usd": str(led.fees_usd),
-            "funding_usd": str(led.funding_usd),
-            "last_trade_id": led.last_trade_id,
-            "review_required": led.review_required,
-        }
-        out["protection_retired"] = retired
-        out["protection_swept"] = swept or 0
-        out["protection_external_stops"] = list(self._last_external_stops) if not led.is_flat else []
-        out["mark_price"] = self._last_mark_price
-        out["mark_price_source"] = self._mark_price_source
-        out["protection_gaps"] = gaps
-        out["protection_actions"] = actions
-        out["protection_alert"] = bool(gaps) or any(
-            a.get("action") in ("PLACE_FAILED", "PROTECTIVE_CLOSE", "PROTECTIVE_CLOSE_FAILED", "STOP_CROSSED")
-            for a in actions
-        )
-        if adopt_pending and led.adopted:
-            out["baseline_adopted_positions"] = [led.adopted]
-        self.last_reconciliation = out
-        return out
+        """拉取本标的新成交与资金费记入独立账本，返回新记入的成交（尚未写库）"""
+        return await self.ledger_service.sync()
 
     # ==========================================================================
-    # 止损覆盖检查与自动补挂
+    # 对账（编排在 reconcile_service，这里只负责写运行事件）
     # ==========================================================================
-
-    @staticmethod
-    def _truthy(v: Any) -> bool:
-        return v is True or str(v).strip().lower() == "true"
-
-    def _stop_coverage_from_exchange(self, led: BotLedger, ex_orders: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """统计交易所上生效中、能为当前持仓止损的条件单（含用户在交易所页面手动设置的）"""
-        is_long = led.net_qty > 0
-        close_side = "SELL" if is_long else "BUY"
-        cover = Decimal("0")
-        full = False
-        triggers: List[Decimal] = []
-        external: List[Dict[str, Any]] = []
-        prefix = self.oms.bot_order_prefix(self.bot_id)
-        own_ids = {str(x.exchange_order_id) for x in self.oms.orders.values() if x.exchange_order_id}
-        for o in ex_orders:
-            otype = str(o.get("orderType") or o.get("type") or "").upper()
-            if otype not in ("STOP_MARKET", "STOP"):
-                continue
-            if str(o.get("side") or "").upper() != close_side:
-                continue
-            ps = str(o.get("positionSide") or "BOTH").upper()
-            if ps not in ("BOTH", led.side):
-                continue
-            closing = self._truthy(o.get("reduceOnly")) or self._truthy(o.get("closePosition")) or ps == led.side
-            if not closing:
-                continue
-            if self._truthy(o.get("closePosition")):
-                full = True
-            else:
-                cover += Decimal(str(o.get("quantity") or o.get("origQty") or "0"))
-            # P3：记录参与覆盖、但不是本机器人下的止损单（例如在交易所页面手动设置的）
-            ext_cid = str(o.get("clientAlgoId") or o.get("clientOrderId") or "")
-            ext_aid = o.get("algoId")
-            if not ext_cid.startswith(prefix) and not (ext_aid is not None and str(ext_aid) in own_ids):
-                external.append({
-                    "algo_id": str(ext_aid) if ext_aid is not None else None,
-                    "client_algo_id": ext_cid or None,
-                    "quantity": "ALL" if self._truthy(o.get("closePosition")) else str(o.get("quantity") or o.get("origQty") or "0"),
-                    "trigger_price": str(o.get("triggerPrice") or o.get("stopPrice") or ""),
-                })
-            trig = o.get("triggerPrice") or o.get("stopPrice")
-            if trig and Decimal(str(trig)) > 0:
-                triggers.append(Decimal(str(trig)))
-        return {"cover": cover, "full": full, "triggers": triggers, "external": external}
-
-    def _stop_price_plan(self, led: BotLedger, existing_triggers: List[Decimal]) -> Dict[str, Any]:
-        """补挂止损价：已有止损价 > 开仓单止损计划 > 开仓均价 ± fallback_stop_loss_pct"""
-        is_long = led.net_qty > 0
-        if existing_triggers:
-            return {"price": max(existing_triggers) if is_long else min(existing_triggers), "source": "existing_exchange_stop"}
-        plans = [
-            o for o in self.oms.orders.values()
-            if not o.reduce_only and o.stop_loss_price and o.filled_qty > 0
-            and o.position_side == led.side and base_asset(o.symbol) == led.symbol
-        ]
-        if plans:
-            latest = max(plans, key=lambda o: o.updated_at)
-            return {"price": Decimal(str(latest.stop_loss_price)), "source": f"order_plan:{latest.client_order_id}"}
-        if led.avg_entry <= 0:
-            return {"price": None, "source": "no_entry_price"}
-        pct = Decimal(str(self.fallback_stop_loss_pct))
-        px = led.avg_entry * (Decimal("1") - pct) if is_long else led.avg_entry * (Decimal("1") + pct)
-        return {"price": px, "source": f"fallback_{self.fallback_stop_loss_pct:.2%}"}
-
-    # ==========================================================================
-    # P1：标的规格刷新；P4：交易所标记价格；P2：平仓后清理残留条件单；P3：外部止损覆盖日志
-    # ==========================================================================
-
-    async def _ensure_instrument_specs(self) -> None:
-        """
-        从机器人所在交易所环境（测试网 / 正式网）拉取 exchangeInfo 覆盖内置规格表，默认每 6 小时一次；
-        失败时 60 秒后再试，期间沿用已登记规格（没有登记的标的由 OMS 拒单）。
-        """
-        fetch = getattr(self.executor, "fetch_instrument_specs", None)
-        if fetch is None or self.execution_mode == ExecutionMode.LOCAL_SIM or self.exchange != ExchangeType.BINANCE:
-            return
-        now = datetime.now(timezone.utc)
-        if self._spec_refreshed_at and (now - self._spec_refreshed_at).total_seconds() < self.spec_refresh_seconds:
-            return
-        if self._spec_retry_after and now < self._spec_retry_after:
-            return
-        registry = self.oms.registry
-        try:
-            payload = await asyncio.wait_for(fetch(self.symbol), timeout=20.0)
-            if payload is None:  # 离线测试替身：沿用内置规格表
-                self._spec_refreshed_at = now
-                return
-            updated = registry.refresh_from_binance_exchange_info(payload, self.market_type)
-            if updated <= 0:
-                raise RuntimeError("exchangeInfo 中没有任何 USDT 交易对")
-            self._spec_refreshed_at = now
-            self._spec_retry_after = None
-            if registry.spec_source(self.exchange.value, self.symbol, self.market_type) == "exchange":
-                sp = registry.get_spec(self.exchange.value, self.symbol, self.market_type)
-                logger.info(
-                    "[Bot %s · 标的规格] 已从 %s 刷新 %s %s 规格：价格步长=%s 数量步长=%s 最小数量=%s 最小名义额=%s",
-                    self.bot_id, getattr(self.executor, "rest_base", "交易所"), self.symbol, self.market_type.value,
-                    sp.tick_size, sp.step_size, sp.min_qty, sp.min_notional_usd,
-                )
-            else:
-                logger.error(
-                    "[Bot %s · 标的规格] 交易所 exchangeInfo 中没有 %s %s，%s",
-                    self.bot_id, self.symbol, self.market_type.value,
-                    "暂用内置规格表" if registry.has_spec(self.exchange.value, self.symbol, self.market_type) else "该标的下单将被拒绝",
-                )
-        except Exception as exc:
-            self._spec_retry_after = now + timedelta(seconds=60)
-            known = registry.has_spec(self.exchange.value, self.symbol, self.market_type)
-            logger.warning(
-                "[Bot %s · 标的规格] 从交易所拉取 exchangeInfo 失败，%s: %s",
-                self.bot_id, "暂用内置规格表" if known else "该标的没有内置规格，下单将被拒绝", exc,
-            )
-
-    async def _refresh_exchange_mark(self, fallback_price: float) -> None:
-        """
-        独立账本的标记价格：优先读取本机器人所在交易所环境的标记价格；读不到时
-        - 测试网：保留上次从交易所拿到的价格（对账时持仓接口也会刷新），没有才用行情数据兜底；
-        - 正式网：行情数据与交易所是同一市场，可直接兜底。
-        """
-        getter = getattr(self.executor, "get_mark_price", None)
-        if getter is not None:
-            mark = None
-            try:
-                mark = await asyncio.wait_for(getter(self.symbol), timeout=6.0)
-            except Exception as exc:
-                logger.warning("[Bot %s · 标记价格] 读取交易所标记价格失败，改用兜底价格: %s", self.bot_id, exc)
-            if mark is not None and float(mark) > 0:
-                self._last_mark_price = float(mark)
-                self._mark_price_source = "exchange"
-                return
-        if fallback_price <= 0:
-            return
-        if self.execution_mode == ExecutionMode.TESTNET and self._mark_price_source == "exchange" and self._last_mark_price:
-            return
-        self._last_mark_price = float(fallback_price)
-        self._mark_price_source = "market_data"
-
-    def _exec_in_progress(self) -> bool:
-        """刚下过单（宽限期内）或本标的有状态未确认的订单"""
-        now = datetime.now(timezone.utc)
-        if self._last_exec_activity and (now - self._last_exec_activity).total_seconds() < self.coverage_grace_seconds:
-            return True
-        base = base_asset(self.symbol)
-        return any(
-            base_asset(o.symbol) == base and o.state in (OrderLifecycleState.PENDING, OrderLifecycleState.UNKNOWN)
-            for o in self.oms.orders.values()
-        )
-
-    async def _sweep_own_conditional_orders(self) -> Optional[int]:
-        """
-        P2：仓位已平时，撤销交易所上本机器人残留的条件单（订单号带本机器人前缀，或 algoId 在本机器人订单记录里）。
-        返回撤销数量；读取条件单失败返回 None（下一轮对账再试）。
-        """
-        lister = getattr(self.executor, "list_open_conditional_orders", None)
-        canceller = getattr(self.executor, "cancel_conditional_order", None)
-        if lister is None or canceller is None:
-            return 0
-        prefix = self.oms.bot_order_prefix(self.bot_id)
-        own_ids = {str(o.exchange_order_id) for o in self.oms.orders.values() if o.reduce_only and o.exchange_order_id}
-        try:
-            rows = await lister(self.symbol)
-        except Exception as exc:
-            logger.warning("[Bot %s · 平仓收尾] 读取交易所条件单失败，下轮对账再试: %s", self.bot_id, exc)
-            return None
-        canceled = 0
-        for o in rows or []:
-            cid = str(o.get("clientAlgoId") or o.get("clientOrderId") or "")
-            aid = o.get("algoId")
-            if not (cid.startswith(prefix) or (aid is not None and str(aid) in own_ids)):
-                continue
-            try:
-                await canceller(self.symbol, order_id=str(aid) if aid is not None else None, client_order_id=cid or None)
-                canceled += 1
-                logger.warning(
-                    "[Bot %s · 平仓收尾] 已撤销交易所残留条件单 algoId=%s cid=%s 类型=%s 数量=%s 触发价=%s",
-                    self.bot_id, aid, cid or "-", o.get("orderType") or o.get("type"), o.get("quantity"), o.get("triggerPrice"),
-                )
-            except Exception as exc:
-                logger.warning("[Bot %s · 平仓收尾] 撤销残留条件单失败 algoId=%s: %s", self.bot_id, aid, exc)
-        return canceled
-
-    def _log_external_cover(self, led: BotLedger, external: List[Dict[str, Any]]) -> None:
-        """P3：止损覆盖计入了非本机器人下的条件单时写日志（内容变化时才写，避免每 30 秒刷屏）"""
-        self._last_external_stops = list(external)
-        sig = tuple(sorted(f"{e['algo_id']}:{e['quantity']}:{e['trigger_price']}" for e in external))
-        if sig == (self._external_cover_sig or ()):
-            return
-        self._external_cover_sig = sig
-        if external:
-            logger.warning(
-                "[Bot %s · 止损覆盖] %s %s 持仓 %s 的止损覆盖计入了 %d 张不是本机器人下的条件单（可能是在交易所页面手动设置的）：%s",
-                self.bot_id, led.symbol, led.side, abs(led.net_qty), len(external),
-                "; ".join(f"algoId={e['algo_id']} 数量={e['quantity']} 触发价={e['trigger_price']}" for e in external),
-            )
-        else:
-            logger.info("[Bot %s · 止损覆盖] 交易所上已没有非本机器人下的止损单参与覆盖", self.bot_id)
-
-    async def _ensure_stop_coverage(self, led: BotLedger):
-        """检查本机器人持仓的止损覆盖，不足时自动补挂；返回 (处置动作列表, 仍未覆盖的缺口列表)"""
-        actions: List[Dict[str, Any]] = []
-        gaps: List[Dict[str, Any]] = []
-        if led.is_flat or led.is_spot or not getattr(self.executor, "supports_native_conditional_orders", False):
-            self._coverage_failures = 0
-            return actions, gaps
-
-        now = datetime.now(timezone.utc)
-        if self._last_exec_activity and (now - self._last_exec_activity).total_seconds() < self.coverage_grace_seconds:
-            actions.append({"action": "SKIPPED_RECENT_EXECUTION", "detail": "刚下过单，开仓单的止损可能正在挂载，下轮再检查"})
-            return actions, gaps
-        in_flight = [
-            o for o in self.oms.orders.values()
-            if base_asset(o.symbol) == led.symbol
-            and o.state in (OrderLifecycleState.PENDING, OrderLifecycleState.UNKNOWN)
-        ]
-        if in_flight:
-            actions.append({"action": "SKIPPED_ORDERS_IN_FLIGHT",
-                            "detail": f"有 {len(in_flight)} 笔订单状态未确认，下轮再检查"})
-            return actions, gaps
-
-        need = abs(led.net_qty)
-        position_side = PositionSide.LONG if led.net_qty > 0 else PositionSide.SHORT
-        lister = getattr(self.executor, "list_open_conditional_orders", None)
-        if lister is not None:
-            try:
-                ex_orders = await lister(self.symbol)
-            except Exception as exc:
-                actions.append({"action": "CHECK_FAILED", "detail": f"读取交易所条件单失败: {exc}"})
-                gaps.append({"symbol": led.symbol, "position_qty": str(need), "stop_loss_qty": "unknown"})
-                return actions, gaps
-            cov = self._stop_coverage_from_exchange(led, ex_orders)
-            self._log_external_cover(led, cov.get("external") or [])
-            # 本地仍标记为生效、但交易所上已不存在的保护单（已触发或被手动撤销）改为结束
-            live_ids = {str(o.get("algoId")) for o in ex_orders if o.get("algoId") is not None}
-            for o in self.oms.active_protective_orders(self.symbol):
-                age = (now - o.created_at).total_seconds()
-                if o.exchange_order_id and str(o.exchange_order_id) not in live_ids and age > self.coverage_grace_seconds:
-                    o.transition_to(OrderLifecycleState.CANCELED, error_message="交易所上已不存在（可能已触发或被手动撤销）")
-                    await self.oms._persist(o)
-                    logger.warning(
-                        "[Bot %s · 保护单失效] cid=%s | algoId=%s | %s %s 触发价=%s | 交易所上已不存在（可能已触发或被手动撤销），本地记录已结束",
-                        self.bot_id, o.client_order_id, o.exchange_order_id, o.order_type, o.requested_qty, o.trigger_price,
-                    )
-                    actions.append({"action": "STALE_LOCAL_PROTECTION_CLOSED", "client_order_id": o.client_order_id})
-        else:
-            cov = {"cover": self.oms.stop_coverage(self.symbol), "full": False,
-                   "triggers": [o.trigger_price for o in self.oms.active_protective_orders(self.symbol)
-                                if o.order_type == "STOP_MARKET" and o.trigger_price]}
-
-        if cov["full"] or cov["cover"] + Decimal("1e-12") >= need:
-            self._coverage_failures = 0
-            return actions, gaps
-
-        await self._ensure_instrument_specs()
-        spec = self.oms.registry.get_spec(self.exchange.value, self.symbol, self.market_type)
-        gap = need - cov["cover"]
-        qty = (gap / spec.step_size).to_integral_value(rounding=ROUND_FLOOR) * spec.step_size
-        if qty < spec.min_qty:
-            actions.append({"action": "DUST_GAP", "gap_qty": str(gap),
-                            "detail": f"未覆盖数量低于最小下单量 {spec.min_qty}，无法补挂"})
-            return actions, gaps
-
-        plan = self._stop_price_plan(led, cov["triggers"])
-        if plan["price"] is None:
-            gaps.append({"symbol": led.symbol, "position_qty": str(need), "stop_loss_qty": str(cov["cover"]),
-                         "detail": "缺少开仓均价，无法计算补挂止损价"})
-            return actions, gaps
-        rounding = ROUND_FLOOR if position_side == PositionSide.LONG else ROUND_CEILING
-        trigger = (plan["price"] / spec.tick_size).to_integral_value(rounding=rounding) * spec.tick_size
-
-        mark = Decimal(str(self._last_mark_price)) if self._last_mark_price else None
-        # P4：标记价格不是来自本机器人所在交易所时（测试网只拿到正式网 K 线价），不据此判定止损已被穿越
-        mark_trusted = self._mark_price_source == "exchange" or self.execution_mode == ExecutionMode.MAINNET
-        crossed = mark is not None and mark_trusted and (
-            (position_side == PositionSide.LONG and trigger >= mark)
-            or (position_side == PositionSide.SHORT and trigger <= mark)
-        )
-        base_info = {"gap_qty": str(qty), "trigger_price": str(trigger), "price_source": plan["source"],
-                     "mark_price": str(mark) if mark is not None else None, "mark_price_source": self._mark_price_source}
-
-        if crossed:
-            reason = f"止损价 {trigger} 已被行情（{mark}）穿越，未覆盖数量 {qty}"
-            actions.append({"action": "STOP_CROSSED", **base_info})
-            if self.oms.strict_sl_protection:
-                actions.append(await self._protective_close(led, qty, mark, reason))
-            else:
-                gaps.append({"symbol": led.symbol, "position_qty": str(need), "stop_loss_qty": str(cov["cover"]),
-                             "detail": reason})
-                await alert_gateway.send_notification(f"⚠️ 止损价已被穿越 - {self.bot_id}", reason, level="CRITICAL")
-            return actions, gaps
-
-        try:
-            order = await self.oms.place_protective_stop(
-                bot_id=self.bot_id, exchange=self.exchange.value, symbol=self.symbol,
-                position_side=position_side, quantity=qty, trigger_price=trigger,
-                reason=f"止损覆盖不足自动补挂（持仓 {need}，原覆盖 {cov['cover']}，价格来源 {plan['source']}）",
-            )
-            self._coverage_failures = 0
-            actions.append({"action": "PLACED", "client_order_id": order.client_order_id,
-                            "exchange_order_id": order.exchange_order_id, **base_info})
-            logger.warning(
-                "[Bot %s · 止损补挂] %s %s 持仓 %s，原止损覆盖 %s，已补挂 %s @ %s（%s）",
-                self.bot_id, led.symbol, led.side, need, cov["cover"], qty, trigger, plan["source"],
-            )
-        except Exception as exc:
-            self._coverage_failures += 1
-            actions.append({"action": "PLACE_FAILED", "error": str(exc), "consecutive_failures": self._coverage_failures, **base_info})
-            gaps.append({"symbol": led.symbol, "position_qty": str(need), "stop_loss_qty": str(cov["cover"]),
-                         "detail": f"补挂止损失败: {exc}"})
-            logger.error("[Bot %s · 止损补挂失败 %d 次] %s", self.bot_id, self._coverage_failures, exc)
-            if self._coverage_failures >= self.coverage_max_failures and self.oms.strict_sl_protection:
-                actions.append(await self._protective_close(
-                    led, qty, mark, f"止损连续补挂失败 {self._coverage_failures} 次，未覆盖数量 {qty}",
-                ))
-                gaps.clear()
-        return actions, gaps
-
-    async def _protective_close(self, led: BotLedger, qty: Decimal, mark: Optional[Decimal], reason: str) -> Dict[str, Any]:
-        """按市价只减仓平掉没有止损保护的数量，并暂停机器人、发送紧急告警"""
-        position_side = PositionSide.LONG if led.net_qty > 0 else PositionSide.SHORT
-        order_side = OrderSide.SELL if position_side == PositionSide.LONG else OrderSide.BUY
-        price = mark if mark is not None and mark > 0 else led.avg_entry
-        spec = self.oms.registry.get_spec(self.exchange.value, self.symbol, self.market_type)
-        key = f"cover_close_{led.last_trade_id}_{qty}"
-        proposal = TradeProposal(
-            proposal_id=f"cover_close_{self.bot_id}_{led.last_trade_id}",
-            agent_id=self.bot_id,
-            market_context=MarketContext(summary=reason),
-            trade_action=TradeAction(
-                exchange=self.exchange,
-                market_type=self.market_type,
-                symbol=self.symbol,
-                position_side=position_side,      # 平多：持仓方向仍为 LONG、卖出、只减仓（单向 / 双向持仓都正确）
-                order_side=order_side,
-                order_type="MARKET",
-                target_price=float(price),
-                # 多给半个数量步长，避免金额换算数量时向下取整少平一档；只减仓单不会超过实际持仓
-                size_in_usd=float((qty + spec.step_size / 2) * price),
-                leverage=float(led.leverage) if led.leverage > 0 else 1.0,
-                reduce_only=True,
-            ),
-            idempotency_key=key,
-        )
-        result: Dict[str, Any] = {"action": "PROTECTIVE_CLOSE", "quantity": str(qty), "reason": reason}
-        try:
-            order, _ = await self.oms.submit_proposal(self.bot_id, proposal, attach_sl_tp=False)
-            result.update({"client_order_id": order.client_order_id, "state": order.state.value})
-            if order.state == OrderLifecycleState.REJECTED:
-                result["action"] = "PROTECTIVE_CLOSE_FAILED"
-                result["error"] = order.error_message
-        except Exception as exc:
-            result.update({"action": "PROTECTIVE_CLOSE_FAILED", "error": str(exc)})
-        try:
-            fills = await self.sync_ledger()
-            if fills:
-                await self._record_trades(fills)
-        except Exception as sync_err:
-            logger.warning("[Bot %s] 保护性平仓后同步成交失败（下轮对账补记）: %s", self.bot_id, sync_err)
-        self._coverage_failures = 0
-        self.status = AgentStatus.PAUSED
-        try:
-            await trading_repo.update_agent_status(self.bot_id, AgentStatus.PAUSED.value)
-        except Exception:
-            pass
-        title = "🚨 止损保护失效，已保护性平仓" if result["action"] == "PROTECTIVE_CLOSE" else "🚨 止损保护失效，保护性平仓失败"
-        await alert_gateway.send_notification(
-            f"{title} - {self.bot_id}",
-            f"• 标的: {self.symbol} {position_side.value}\n• 数量: {qty}\n• 原因: {reason}\n"
-            f"• 结果: {result.get('state') or result.get('error')}\n• 机器人已暂停，请人工确认后再恢复",
-            level="CRITICAL",
-        )
-        logger.critical("[Bot %s · 保护性平仓] %s | 结果=%s", self.bot_id, reason, result)
-        return result
-
-    async def _apply_oms_fill_events(self) -> Optional[List[Dict[str, Any]]]:
-        """
-        E2：把 OMS 对账查单新发现的成交写成交记录、刷新净值并推送成交通知，
-        返回更新后的本地持仓基线；没有新成交时返回 None。
-        """
-        events = self.oms.drain_fill_events()
-        if not events:
-            return None
-        for order, trade in events:
-            self.executed_trades.append(trade)
-            try:
-                await trading_repo.record_trade(
-                    trade=trade,
-                    agent_id=self.bot_id,
-                    decision_id=self._decision_id_by_proposal.get(order.proposal_id),
-                )
-            except Exception as rec_err:
-                logger.warning("[Bot %s · 对账补记成交] 写入成交记录失败 cid=%s: %s", self.bot_id, order.client_order_id, rec_err)
-            await self._record_reflection(trade)
-            logger.info(
-                "[Bot %s · 对账补记成交] cid=%s | %s %s %.6f @ %.4f | 手续费=%.6f",
-                self.bot_id, order.client_order_id, trade.symbol, trade.order_side.value,
-                trade.executed_quantity, trade.executed_price, trade.fee_usd,
-            )
-        snapshot = None
-        try:
-            bal = await self.executor.get_account_balance()
-            snapshot = self.nav_engine.record_snapshot(
-                total_equity=bal["total_equity"],
-                cash_balance=bal["cash_balance"],
-                margin_used=bal["margin_used"],
-                unrealized_pnl=bal["unrealized_pnl"],
-                realized_pnl_cum=bal["realized_pnl_cum"],
-            )
-            await trading_repo.record_equity_snapshot(self.bot_id, snapshot)
-        except Exception as nav_err:
-            logger.warning("[Bot %s · 对账补记成交] 刷新净值快照失败: %s", self.bot_id, nav_err)
-        if snapshot is not None:
-            for _, trade in events:
-                try:
-                    await alert_gateway.notify_trade_filled(bot_id=self.bot_id, trade=trade, latest_nav=snapshot.nav)
-                except Exception as notify_err:
-                    logger.warning("[Bot %s · 对账补记成交] 发送成交通知失败: %s", self.bot_id, notify_err)
-        try:
-            self._expected_positions = await self.executor.get_open_positions()
-        except Exception as pos_err:
-            logger.warning("[Bot %s · 对账补记成交] 读取最新持仓失败: %s", self.bot_id, pos_err)
-            return None
-        return self._expected_positions
 
     async def reconcile_once(self) -> Dict[str, Any]:
-        """执行一次对账，并把异常写入运行事件（L4 Shadow Mode 报告）"""
+        """执行一次对账，并把异常、不一致、保护告警写入运行事件（L4 Shadow Mode 报告）"""
         try:
-            rep = await self._reconcile_impl()
+            rep = await self.reconcile_service.run()
         except Exception as exc:
+            logger.error("[Bot %s · 定时对账] 对账异常: %s: %s", self.bot_id, type(exc).__name__, exc)
             await self._record_run_event("RECONCILE_ERROR", {"error": f"{type(exc).__name__}: {exc}"})
             raise
         if isinstance(rep, dict):
@@ -1639,53 +402,62 @@ class TradingBotInstance:
                 })
         return rep
 
-    async def _reconcile_impl(self) -> Dict[str, Any]:
-        """
-        执行一次 OMS 过期挂单治理 + 交易所持仓/挂单对账：
-        0. E6：重启恢复后的首次对账，以交易所持仓作为本地基线；
-        1. 撤销超过 TTL 的限价开仓单并释放组合敞口（E3：异常不阻塞后续对账）；
-        2. 恢复 UNKNOWN 订单、推进活动挂单，查单发现的新成交补写成交记录（E2）；
-        3. 比对交易所真实持仓（幽灵持仓自动暂停 Bot，外部平仓自动撤销残留条件单）。
-        E7：独立账本模式（TESTNET / MAINNET）走 _reconcile_ledger_mode。
-        """
-        if self.uses_bot_ledger:
-            return await self._reconcile_ledger_mode()
-        baseline_adopted: Optional[List[Dict[str, Any]]] = None
-        if self._adopt_exchange_baseline:
-            try:
-                self._expected_positions = await self.executor.get_open_positions()
-                self._adopt_exchange_baseline = False
-                baseline_adopted = list(self._expected_positions)
-                if baseline_adopted:
-                    logger.warning(
-                        "[Bot %s · 重启对账] 以交易所当前持仓作为本地基线（请人工确认这些仓位属于本机器人）: %s",
-                        self.bot_id,
-                        [(p.get("symbol"), p.get("side"), p.get("quantity")) for p in baseline_adopted],
-                    )
-            except Exception as base_err:
-                logger.warning("[Bot %s · 重启对账] 读取交易所持仓作为基线失败，下轮重试: %s", self.bot_id, base_err)
+    # ==========================================================================
+    # 兼容层：拆分前的属性 / 方法名，转发到子服务（新代码请直接使用子服务）
+    # ==========================================================================
 
-        try:
-            expired = await self.oms.cancel_expired_limit_orders(portfolio_coordinator=self.portfolio_coordinator)
-            if expired:
-                logger.info("[Bot %s · 定时对账] 已清理 %d 笔超时未成交限价单", self.bot_id, len(expired))
-        except Exception as ttl_err:
-            logger.error("[Bot %s · 定时对账] 清理超时限价单异常（不影响后续对账）: %s", self.bot_id, ttl_err)
+    async def _ensure_instrument_specs(self) -> None:
+        """兼容旧名：等价于 ``self.spec_service.ensure()``"""
+        await self.spec_service.ensure()
 
-        report = await self.reconciler.reconcile(
-            bot_id=self.bot_id,
-            local_positions=self._expected_positions,
-            bot_instance=self,
-            on_oms_fills=self._apply_oms_fill_events,
-        )
-        # 若发生外部平仓或数量微调（且未触发高危暂停），将本地持仓基线对齐到交易所最新真相
-        if not report.is_clean and not report.bot_paused:
-            self._expected_positions = await self.executor.get_open_positions()
-            logger.info("[Bot %s · 定时对账] 已同步最新交易所持仓基线 (持仓条数=%d)", self.bot_id, len(self._expected_positions))
-        self.last_reconciliation = report.model_dump(mode="json")
-        if baseline_adopted is not None:
-            self.last_reconciliation["baseline_adopted_positions"] = baseline_adopted
-        return self.last_reconciliation
+    async def _record_trades(self, trades: List[TradeExecutionResult], notify: bool = True) -> None:
+        """兼容旧名：等价于 ``self.trade_recorder.record_trades(trades, notify)``"""
+        await self.trade_recorder.record_trades(trades, notify=notify)
+
+    # 决策循环相关的旧名（实现已迁移到 proposal_review / decision_audit）
+    _CLOSE_INTENT_PREFIXES = CLOSE_INTENT_PREFIXES
+
+    def _is_risk_reducing(
+        self,
+        prop: TradeProposal,
+        open_positions: List[Dict[str, Any]],
+        latest_price: float,
+        action_type: Optional[str] = None,
+    ) -> bool:
+        """兼容旧名：等价于 ``proposal_review.is_risk_reducing_close``"""
+        return is_risk_reducing_close(prop, open_positions, latest_price, action_type)
+
+    async def _load_lessons(self) -> Optional[str]:
+        """兼容旧名：等价于 ``self.decision_audit.load_lessons()``"""
+        return await self.decision_audit.load_lessons()
+
+    def _shadow_fills(self, trades: List[TradeExecutionResult], orderbook: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """兼容旧名：等价于 ``self.decision_audit.shadow_fills()``"""
+        return self.decision_audit.shadow_fills(trades, orderbook)
+
+    async def _persist_decision(self, decision_record: Dict[str, Any], proposal: Optional[TradeProposal], risk_result: Any) -> None:
+        """兼容旧名：等价于 ``self.decision_audit.persist()``"""
+        await self.decision_audit.persist(decision_record, proposal, risk_result)
+
+    # 独立账本
+    ledger = _ServiceAttr("ledger_service", "ledger")
+    # 对账状态
+    _expected_positions = _ServiceAttr("reconcile_service", "expected_positions")
+    last_reconciliation = _ServiceAttr("reconcile_service", "last_reconciliation")
+    # 标记价格（P4）
+    _last_mark_price = _ServiceAttr("mark_tracker", "last_price")
+    _mark_price_source = _ServiceAttr("mark_tracker", "source")
+    # 标的规格（P1）
+    spec_refresh_seconds = _ServiceAttr("spec_service", "refresh_seconds")
+    _spec_refreshed_at = _ServiceAttr("spec_service", "refreshed_at")
+    _spec_retry_after = _ServiceAttr("spec_service", "retry_after")
+    # 止损保护
+    fallback_stop_loss_pct = _ServiceAttr("protection_service", "fallback_stop_loss_pct")
+    coverage_grace_seconds = _ServiceAttr("protection_service", "grace_seconds")
+    coverage_max_failures = _ServiceAttr("protection_service", "max_failures")
+    _last_exec_activity = _ServiceAttr("protection_service", "last_exec_activity")
+
+
 
 
 class BotManager:
