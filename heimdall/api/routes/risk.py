@@ -1,7 +1,9 @@
 """
 风控与急停路由（Risk & Circuit Breaker）
 
-- 一键急停：急停指定机器人或全部机器人（撤普通挂单与 Algo 条件单、注销调度循环），并推送 WebSocket 事件；
+- 一键急停：急停指定机器人或全部机器人（注销调度循环 → 锁定全部目标 → 逐个容错撤普通挂单与 Algo 条件单），
+  并推送 WebSocket 事件。部分机器人撤单失败时：``success=false``、``failed`` 列出明细，并发送 CRITICAL 告警
+  （2026-11-22 修复：此前任一机器人撤单出错会中断整个急停并返回 500）；
 - 风险雷达：聚合 7 条硬风控规则的实时状态（跨所偏离、资金费率、宏观静默期、插针、RPC 延迟、组合敞口等），
   供前端"风险雷达"页面展示。
 
@@ -10,7 +12,7 @@
 - ``POST /api/v1/emergency/kill`` → ``emergency_kill``：【紧急熔断急停总开关】！
 - ``GET /api/v1/market/radar`` → ``get_risk_radar_telemetry``：聚合 7 大极端行情硬风控雷达动态数据
 
-说明：端点函数体、路径、标签、状态码、依赖注入与拆分前的 ``heimdall/api/server.py`` 完全一致，
+说明：除 ``emergency_kill`` 的返回内容（见上）外，端点函数体、路径、标签、状态码、依赖注入与拆分前的 ``heimdall/api/server.py`` 完全一致，
 只把 ``@app.<method>`` 换成本模块的 ``@router.<method>``；``heimdall.api.server`` 仍重新导出这些名字，
 原有的 ``from heimdall.api.server import ...`` 不需要修改。
 
@@ -25,6 +27,7 @@ from typing import Any, Dict, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from heimdall.alert.heartbeat import dead_man_switch
+from heimdall.alert.notifier import alert_gateway
 from heimdall.api.runtime import bot_manager
 from heimdall.api.websocket import EventType as WsEventType, manager as ws_manager
 from heimdall.auth.dependencies import require_authenticated_wallet
@@ -51,7 +54,27 @@ async def emergency_kill(
     else:
         await scheduler.shutdown_all()
 
-    await bot_manager.emergency_kill_switch(bot_id)
+    # 先锁定全部目标机器人，再逐个容错撤单（某个机器人撤单失败不再中断其他机器人的急停）
+    report = await bot_manager.emergency_kill_switch(bot_id) or {}
+    failed = report.get("failed") or []
+    target_label = "所有机器人" if not bot_id else bot_id
+    if failed:
+        failed_ids = "、".join(f["bot_id"] for f in failed)
+        message = (
+            f"已锁定 {target_label}并关停后台任务，但 {len(failed)} 个机器人撤单未完成（{failed_ids}），"
+            "请立即到交易所确认并手动撤单"
+        )
+        logger.critical("[紧急急停] 授权者=%s | %s | 明细=%s", caller_wallet, message, failed)
+        try:
+            await alert_gateway.send_notification(
+                "🚨 紧急急停：部分撤单未完成",
+                message + "\n" + "\n".join(f"• {f['bot_id']}: {'；'.join(f['errors'])}" for f in failed),
+                level="CRITICAL",
+            )
+        except Exception as notify_err:
+            logger.warning("[紧急急停] 发送撤单未完成告警失败: %s", notify_err)
+    else:
+        message = f"已对 {target_label} 执行紧急急停与全撤单，后台任务已关停"
 
     try:
         await ws_manager.broadcast("risk", {
@@ -60,7 +83,8 @@ async def emergency_kill(
                 "action": "EMERGENCY_KILL",
                 "bot_id": bot_id,
                 "operator": caller_wallet,
-                "message": f"已对 {'所有机器人' if not bot_id else bot_id} 执行紧急急停与全撤单 (授权者: {caller_wallet})",
+                "message": f"{message} (授权者: {caller_wallet})",
+                "failed": failed,
                 "timestamp": datetime.now(timezone.utc).isoformat()
             }
         })
@@ -68,9 +92,12 @@ async def emergency_kill(
         logger.warning("[WebSocket] 广播急停失败: %s", ex)
 
     return {
-        "success": True,
+        # 全部撤单成功才为 True；机器人在任何情况下都已锁定、后台任务都已关停
+        "success": not failed,
         "operator": caller_wallet,
-        "message": f"已对 {'所有机器人' if not bot_id else bot_id} 执行紧急急停与全撤单，后台任务已关停",
+        "message": message,
+        "locked_bots": report.get("targets", []),
+        "failed": failed,
     }
 
 

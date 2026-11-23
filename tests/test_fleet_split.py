@@ -203,10 +203,54 @@ def test_lifecycle_start_stop_and_kill():
     assert a.status == AgentStatus.RUNNING
     mgr.stop_bot("bot_a")
     assert a.status == AgentStatus.STOPPED
-    asyncio.run(mgr.emergency_kill_switch("bot_b"))
+    rep_one = asyncio.run(mgr.emergency_kill_switch("bot_b"))
     assert (a.status, b.status) == (AgentStatus.STOPPED, AgentStatus.CIRCUIT_BROKEN)
-    asyncio.run(mgr.emergency_kill_switch())
+    assert rep_one["scope"] == "bot_b" and rep_one["targets"] == ["bot_b"] and rep_one["failed"] == []
+    rep_all = asyncio.run(mgr.emergency_kill_switch())
     assert a.status == AgentStatus.CIRCUIT_BROKEN
+    assert rep_all["scope"] == "ALL" and set(rep_all["targets"]) == {"bot_a", "bot_b"}
+    # 不存在的编号按"全部"处理（与修复前一致）
+    assert asyncio.run(mgr.emergency_kill_switch("nope"))["scope"] == "ALL"
+
+
+def test_emergency_kill_continues_after_one_bot_fails():
+    """修复：某个机器人撤单抛异常时，其余机器人照常锁定并撤单，失败明细写入报告"""
+    from unittest.mock import AsyncMock
+
+    mgr = BotManager()
+    a, b, c = _sim(mgr, "bot_k1"), _sim(mgr, "bot_k2"), _sim(mgr, "bot_k3")
+    a.executor.cancel_all_orders = AsyncMock(side_effect=RuntimeError("exchange down"))
+    b.executor.cancel_all_orders = AsyncMock(return_value=None)
+    c.executor.cancel_all_orders = AsyncMock(return_value=None)
+    c.executor.cancel_all_conditional_orders = AsyncMock(side_effect=RuntimeError("algo api error"))
+
+    report = asyncio.run(mgr.emergency_kill_switch())
+
+    assert all(x.status == AgentStatus.CIRCUIT_BROKEN for x in (a, b, c))
+    b.executor.cancel_all_orders.assert_awaited_once_with("ETH")       # a 失败后 b 仍然撤单
+    c.executor.cancel_all_conditional_orders.assert_awaited_once()
+    failed = {f["bot_id"]: f["errors"] for f in report["failed"]}
+    assert set(failed) == {"bot_k1", "bot_k3"}
+    assert "exchange down" in failed["bot_k1"][0]
+    assert "撤 Algo 条件单失败" in failed["bot_k3"][0]
+    by_id = {r["bot_id"]: r for r in report["results"]}
+    assert by_id["bot_k2"]["orders_canceled"] is True and by_id["bot_k2"]["errors"] == []
+    assert by_id["bot_k3"]["orders_canceled"] is True and by_id["bot_k3"]["conditional_canceled"] is False
+
+
+def test_emergency_kill_times_out_hanging_cancel():
+    mgr = BotManager()
+    slow, fast = _sim(mgr, "bot_slow"), _sim(mgr, "bot_fast")
+
+    async def _hang(symbol):
+        await asyncio.sleep(5)
+
+    slow.executor.cancel_all_orders = _hang
+    mgr.lifecycle.cancel_timeout_seconds = 0.05
+    report = asyncio.run(mgr.emergency_kill_switch())
+    assert [f["bot_id"] for f in report["failed"]] == ["bot_slow"]
+    assert "超时" in report["failed"][0]["errors"][0]
+    assert fast.status == AgentStatus.CIRCUIT_BROKEN
 
 
 # -----------------------------------------------------------------------------

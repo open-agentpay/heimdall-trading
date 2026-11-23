@@ -164,9 +164,12 @@ class FleetManager:
         """安全停止并从内存注册表移除指定机器人"""
         return await self.lifecycle.delete(bot_id)
 
-    async def emergency_kill_switch(self, bot_id: Optional[str] = None) -> None:
-        """一键急停：指定 bot_id 则急停该机器人，否则急停全部"""
-        await self.lifecycle.emergency_kill(bot_id)
+    async def emergency_kill_switch(self, bot_id: Optional[str] = None) -> Dict[str, Any]:
+        """
+        一键急停：指定 bot_id 则急停该机器人，否则急停全部。
+        先锁定全部目标，再逐个容错撤单；返回急停报告（``failed`` 非空表示有机器人撤单未完成）。
+        """
+        return await self.lifecycle.emergency_kill(bot_id)
 
     # ------------------------------------------------------------------
     # 同账户冲突（account_guard）
