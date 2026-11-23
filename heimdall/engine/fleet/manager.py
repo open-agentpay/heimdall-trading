@@ -17,6 +17,8 @@ get_portfolio_capital_distrib…  CapitalAllocator                        capita
 bootstrap_default_bots          DefaultBotBootstrapper                  bootstrap
 restore_persisted_bots          PersistedBotRestorer                    restore
 list_bots_overview              FleetOverview                           overview
+reload_llm_credentials          CredentialReloader                      credentials
+reload_exchange_credentials     CredentialReloader                      credentials
 ==============================  ======================================  =====================
 
 与具体机器人类解耦
@@ -42,6 +44,7 @@ from heimdall.engine.fleet.account_guard import AccountConflictGuard
 from heimdall.engine.fleet.base import get_fleet_logger
 from heimdall.engine.fleet.bootstrap import DefaultBotBootstrapper
 from heimdall.engine.fleet.capital import CapitalAllocator
+from heimdall.engine.fleet.credentials import CredentialReloader
 from heimdall.engine.fleet.lifecycle import BotLifecycleService
 from heimdall.engine.fleet.overview import FleetOverview
 from heimdall.engine.fleet.restore import PersistedBotRestorer
@@ -83,6 +86,7 @@ class FleetManager:
         self.bootstrapper = DefaultBotBootstrapper(self)
         self.restorer = PersistedBotRestorer(self)
         self.overview = FleetOverview(self)
+        self.credentials = CredentialReloader(self)
 
     # ------------------------------------------------------------------
     # 基础
@@ -219,3 +223,15 @@ class FleetManager:
     def list_bots_overview(self, caller_wallet: Optional[str] = None) -> List[Dict[str, Any]]:
         """机器人运行概览（多租户可见性过滤）"""
         return self.overview.list_overview(caller_wallet)
+
+    # ------------------------------------------------------------------
+    # 凭证热重载（credentials）
+    # ------------------------------------------------------------------
+
+    async def reload_llm_credentials(self, wallet: Optional[str], reason: str = "") -> Dict[str, Any]:
+        """钱包的 LLM 密钥变化后，强制重载其名下机器人的全部 LLM 服务；返回汇总，不抛出异常"""
+        return (await self.credentials.reload_llm(wallet, reason)).to_dict()
+
+    async def reload_exchange_credentials(self, wallet: Optional[str], provider: str, reason: str = "") -> Dict[str, Any]:
+        """钱包编辑当前激活的交易所密钥后，重新注入其名下对应交易所机器人的凭证；返回汇总，不抛出异常"""
+        return (await self.credentials.reload_exchange(wallet, provider, reason)).to_dict()

@@ -14,6 +14,7 @@
 ``bootstrap``      首次部署注入系统预置机器人（被删除的绝不复活）                 —
 ``restore``        服务重启时从数据库恢复机器人、未完成订单、账本与净值曲线       P0-4 / E6
 ``overview``       机器人运行概览（多租户过滤）                                   —
+``credentials``    密钥变化后热重载运行中机器人的 LLM / 交易所凭证                 —
 ``manager``        FleetManager 门面：注册表 + 委托上述服务，方法名与原 BotManager 一致  —
 =================  =============================================================  ==========
 
@@ -22,12 +23,13 @@
 - fleet 模块不 import ``heimdall.engine.bot_manager``，也不 import ``heimdall.engine.bot_services``：
   只经 ``FleetHost`` / ``ManagedBot`` 协议访问编队管理器和机器人；
 - 只有 ``manager`` 可以依赖其他 fleet 服务模块；服务模块之间只允许 ``lifecycle → account_guard``。
+- fleet 不 import ``heimdall.llm``：``credentials`` 按"有 ensure_credentials 方法"识别 LLM 服务。
 
 具体的 ``BotManager``（绑定 TradingBotInstance 与 trading_repo）仍在 ``heimdall.engine.bot_manager``，
 应用代码与测试的导入路径不变。
 
 日志：所有 fleet 服务的 logger 为 ``heimdall.engine.bot_manager.fleet.<子名称>``
-（account / lifecycle / capital / bootstrap / restore / overview / manager）。
+（account / lifecycle / capital / bootstrap / restore / overview / credentials / manager）。
 """
 
 from heimdall.engine.fleet.base import (
@@ -46,12 +48,14 @@ from heimdall.engine.fleet.capital import CapitalAllocator
 from heimdall.engine.fleet.bootstrap import DEFAULT_BOTS, DefaultBotBootstrapper, DefaultBotSpec
 from heimdall.engine.fleet.restore import PersistedBotRestorer, RestoreSpec, RestoreSummary
 from heimdall.engine.fleet.overview import FleetOverview
+from heimdall.engine.fleet.credentials import CredentialReloader, ReloadSummary, collect_llm_services
 from heimdall.engine.fleet.manager import FleetManager
 
 __all__ = [
     "AccountConflictGuard",
     "BotLifecycleService",
     "CapitalAllocator",
+    "CredentialReloader",
     "DEFAULT_BOTS",
     "DefaultBotBootstrapper",
     "DefaultBotSpec",
@@ -63,7 +67,9 @@ __all__ = [
     "ManagedBot",
     "PersistedBotRestorer",
     "RestoreSpec",
+    "ReloadSummary",
     "RestoreSummary",
+    "collect_llm_services",
     "get_fleet_logger",
     "is_visible_to",
     "normalize_wallet",

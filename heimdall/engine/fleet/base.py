@@ -96,6 +96,11 @@ class ManagedBot(Protocol):
 
     async def step(self, force: bool = False) -> Dict[str, Any]: ...
 
+    async def hydrate_exchange_credentials_from_vault(self, force_refresh: bool = False) -> bool: ...
+
+    # 凭证热重载（credentials）通过 getattr 读取以下可选属性：
+    # llm_service、pipeline(.llm / .llm_router)、strategy.pipeline
+
 
 @runtime_checkable
 class FleetHost(Protocol):

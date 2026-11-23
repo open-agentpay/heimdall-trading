@@ -26,6 +26,7 @@ from heimdall.engine.fleet import (
     AccountConflictGuard,
     BotLifecycleService,
     CapitalAllocator,
+    CredentialReloader,
     DefaultBotBootstrapper,
     FleetManager,
     FleetOverview,
@@ -69,7 +70,9 @@ def test_services_are_wired():
     assert isinstance(mgr.bootstrapper, DefaultBotBootstrapper)
     assert isinstance(mgr.restorer, PersistedBotRestorer)
     assert isinstance(mgr.overview, FleetOverview)
-    for svc in (mgr.account_guard, mgr.lifecycle, mgr.capital, mgr.bootstrapper, mgr.restorer, mgr.overview):
+    assert isinstance(mgr.credentials, CredentialReloader)
+    for svc in (mgr.account_guard, mgr.lifecycle, mgr.capital, mgr.bootstrapper, mgr.restorer, mgr.overview,
+                mgr.credentials):
         assert svc.host is mgr
         assert svc.log.name.startswith(FLEET_LOGGER_NAME + ".")
 
@@ -78,7 +81,7 @@ def test_services_are_wired():
     "create_bot", "start_bot", "stop_bot", "delete_bot", "emergency_kill_switch",
     "find_account_conflict", "check_account_conflict", "reallocate_capital",
     "get_portfolio_capital_distribution", "bootstrap_default_bots", "restore_persisted_bots",
-    "list_bots_overview", "_account_key",
+    "list_bots_overview", "_account_key", "reload_llm_credentials", "reload_exchange_credentials",
 ])
 def test_legacy_api_surface(name):
     assert callable(getattr(BotManager(), name))
@@ -251,6 +254,72 @@ def test_emergency_kill_times_out_hanging_cancel():
     assert [f["bot_id"] for f in report["failed"]] == ["bot_slow"]
     assert "超时" in report["failed"][0]["errors"][0]
     assert fast.status == AgentStatus.CIRCUIT_BROKEN
+
+
+# -----------------------------------------------------------------------------
+# 6b. 凭证热重载
+# -----------------------------------------------------------------------------
+
+class _FakeLLM:
+    def __init__(self, ok=True, error=None):
+        self.ok, self.error, self.calls = ok, error, []
+
+    async def ensure_credentials(self, force_refresh=False, owner_wallet=None):
+        self.calls.append((force_refresh, owner_wallet))
+        if self.error:
+            raise self.error
+        return self.ok
+
+
+def _llm_bot(bot_id, owner, default, roles=None):
+    router = SimpleNamespace(default_service=default, role_services=dict(roles or {}))
+    pipeline = SimpleNamespace(llm=default, llm_router=router)
+    return SimpleNamespace(bot_id=bot_id, owner_wallet=owner, llm_service=default, pipeline=pipeline,
+                           strategy=SimpleNamespace(pipeline=pipeline))
+
+
+def test_collect_llm_services_dedupes_and_includes_role_models():
+    from heimdall.engine.fleet import collect_llm_services
+
+    default, fast, judge = _FakeLLM(), _FakeLLM(), _FakeLLM()
+    bot = _llm_bot("b", "0xabc", default, {"fast": fast, "debate": default, "judge": judge})
+    assert collect_llm_services(bot) == [default, fast, judge]
+    assert collect_llm_services(SimpleNamespace(bot_id="x")) == []
+
+
+def test_reload_llm_only_touches_callers_bots_and_survives_failures():
+    mgr = BotManager()
+    mine_ok, mine_role, mine_bad = _FakeLLM(), _FakeLLM(ok=False), _FakeLLM(error=RuntimeError("db"))
+    other, system = _FakeLLM(), _FakeLLM()
+    mgr.bots = {
+        "m1": _llm_bot("m1", "0xabc", mine_ok, {"fast": mine_role}),
+        "m2": _llm_bot("m2", "0xABC", mine_bad),
+        "o1": _llm_bot("o1", "0xdef", other),
+        "s1": _llm_bot("s1", "system", system),
+    }
+    summary = asyncio.run(mgr.reload_llm_credentials(" 0xAbC ", reason="test"))
+    assert mine_ok.calls == [(True, "0xabc")] and mine_role.calls == [(True, "0xabc")]
+    assert mine_bad.calls == [(True, "0xabc")]
+    assert other.calls == [] and system.calls == []           # 其他租户与系统机器人不受影响
+    assert summary["bots"] == ["m1", "m2"] and summary["services"] == 3
+    assert (summary["enabled"], summary["unavailable"]) == (1, 1)
+    assert [f["bot_id"] for f in summary["failed"]] == ["m2"]
+    assert asyncio.run(mgr.reload_llm_credentials(None))["bots"] == []
+
+
+def test_reload_exchange_matches_provider():
+    from unittest.mock import AsyncMock
+
+    mgr = BotManager()
+    bn = SimpleNamespace(bot_id="bn", owner_wallet="0xabc", exchange=ExchangeType.BINANCE,
+                         hydrate_exchange_credentials_from_vault=AsyncMock(return_value=True))
+    hl = SimpleNamespace(bot_id="hl", owner_wallet="0xabc", exchange=ExchangeType.HYPERLIQUID,
+                         hydrate_exchange_credentials_from_vault=AsyncMock(return_value=True))
+    mgr.bots = {"bn": bn, "hl": hl}
+    summary = asyncio.run(mgr.reload_exchange_credentials("0xabc", "Binance", reason="test"))
+    bn.hydrate_exchange_credentials_from_vault.assert_awaited_once_with(force_refresh=True)
+    hl.hydrate_exchange_credentials_from_vault.assert_not_awaited()
+    assert summary["bots"] == ["bn"] and summary["enabled"] == 1
 
 
 # -----------------------------------------------------------------------------
