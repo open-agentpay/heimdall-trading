@@ -31,6 +31,8 @@
 - WARN    ：删除前撤单失败、释放组合敞口失败；
 - ERROR   ：急停时某个机器人撤普通挂单 / Algo 条件单失败或超时；
 - CRITICAL：急停开始（范围、目标数）、全部目标已锁定、单个机器人撤单完成或未完成、急停汇总。
+
+急停后会把 CIRCUIT_BROKEN 写回数据库并关闭自动调度记录（2026-11-23），重启后不会被自动恢复。
 """
 
 from __future__ import annotations
@@ -39,6 +41,7 @@ import asyncio
 from typing import Any, Dict, List, Optional
 
 from heimdall.models.schemas import AgentStatus
+from heimdall.engine.schedule_state import persist_stopped_state
 from heimdall.engine.fleet.account_guard import AccountConflictGuard
 from heimdall.engine.fleet.base import FleetHost, FleetService, get_fleet_logger
 
@@ -134,6 +137,11 @@ class BotLifecycleService(FleetService):
 
         # 2. 并发撤单，逐个容错
         results: List[Dict[str, Any]] = list(await asyncio.gather(*(self._cancel_everything(b) for b in targets)))
+
+        # 3. 状态写回数据库并关闭自动调度记录（2026-11-23：否则数据库仍是 RUNNING，重启后会被自动恢复）
+        repo = self.host.repo()
+        for bot in targets:
+            await persist_stopped_state(bot, repo, "一键急停")
         failed = [{"bot_id": r["bot_id"], "errors": r["errors"]} for r in results if r["errors"]]
         self.log.critical(
             "[BotManager 紧急急停] 完成：范围=%s | 锁定 %d 个 | 撤单成功 %d 个 | 撤单未完成 %d 个%s",

@@ -5,6 +5,7 @@
 - 启动：MAINNET 部署安全复核（M4）→ 凭证注入（失败即关闭）→ 同账户冲突检查（E7，冲突返回 409）
   → 更新状态 → 启动后台调度循环 → 持久化状态；
 - 停止：注销后台调度循环并持久化状态；
+- 启动 / 停止都会写入自动调度记录（``config_json.schedule``），服务重启后据此恢复后台循环（2026-11-23）；
 - 单步：强制执行一轮决策周期，并通过 WebSocket 推送结果；
 - 调度任务列表：查看当前正在运行的后台循环。
 
@@ -35,6 +36,7 @@ from heimdall.api.runtime import bot_manager
 from heimdall.api.websocket import EventType as WsEventType, manager as ws_manager
 from heimdall.auth.dependencies import require_authenticated_wallet
 from heimdall.database.repository import trading_repo
+from heimdall.engine.schedule_state import save_schedule
 from heimdall.engine.scheduler import scheduler
 from heimdall.models.schemas import ExecutionMode
 from heimdall.utils.security_preflight import assert_mainnet_ready, InsecureDeploymentError
@@ -116,8 +118,9 @@ async def start_bot(
     # 2. 启动后台守护调度循环
     await scheduler.start_bot_loop(bot, interval_seconds=interval)
 
-    # 3. 同步数据库状态
+    # 3. 同步数据库状态，并记录自动调度（服务重启后据此自动恢复后台循环；实盘恢复前需人工确认）
     await trading_repo.update_agent_status(bot_id, "RUNNING")
+    await save_schedule(bot, trading_repo, enabled=True, interval_seconds=interval, reason=f"钱包 {caller_wallet} 启动")
 
     return {
         "success": True,
@@ -152,8 +155,9 @@ async def stop_bot(
     # 2. 更新内存状态
     bot_manager.stop_bot(bot_id)
 
-    # 3. 同步数据库状态
+    # 3. 同步数据库状态，并关闭自动调度记录（重启后不再自动恢复）
     await trading_repo.update_agent_status(bot_id, "STOPPED")
+    await save_schedule(bot, trading_repo, enabled=False, reason=f"钱包 {caller_wallet} 停止")
 
     return {"success": True, "bot_id": bot_id, "status": "STOPPED", "operator": caller_wallet}
 

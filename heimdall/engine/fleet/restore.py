@@ -28,7 +28,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from heimdall.models.schemas import AgentStatus, ExchangeType, MarketType, StrategyType
 from heimdall.execution.factory import ExecutionAdapterFactory
@@ -58,6 +58,8 @@ class RestoreSpec:
     market_type: Any
     execution_mode: Any
     strategy_config: Dict[str, Any] = field(default_factory=dict)
+    #: 自动调度记录（config_json["schedule"]），升级前启动的机器人为 None
+    schedule: Optional[Dict[str, Any]] = None
 
 
 @dataclass
@@ -75,6 +77,8 @@ class PersistedBotRestorer(FleetService):
 
     def __init__(self, host: FleetHost):
         super().__init__(host, logger)
+        # 最近一次 restore() 恢复的机器人编号（供重启后自动恢复定时决策使用）
+        self.last_restored_ids: List[str] = []
 
     async def restore(self, repo: Optional[Any] = None) -> int:
         """
@@ -83,6 +87,7 @@ class PersistedBotRestorer(FleetService):
         """
         target_repo = repo or self.host.repo()
         summary = RestoreSummary()
+        self.last_restored_ids = []
         try:
             rows = await target_repo.get_all_agents()
         except Exception as exc:
@@ -103,6 +108,7 @@ class PersistedBotRestorer(FleetService):
             if await self._restore_one(spec, target_repo):
                 summary.demoted_conflicts += 1
             summary.restored += 1
+            self.last_restored_ids.append(spec.agent_id)
 
         self.log.info("[BotManager 重启恢复] 完成，共恢复 %d 个持久化机器人", summary.restored)
         self.log.info(
@@ -156,6 +162,7 @@ class PersistedBotRestorer(FleetService):
             market_type=mt,
             execution_mode=em,
             strategy_config=strategy_cfg,
+            schedule=dict(row_cfg["schedule"]) if isinstance(row_cfg.get("schedule"), dict) else None,
         )
 
     # ------------------------------------------------------------------
@@ -178,6 +185,9 @@ class PersistedBotRestorer(FleetService):
             market_type=spec.market_type,
         )
         bot.status = spec.status
+        # 自动调度记录随机器人恢复（TradingBotInstance 会重新生成 config，需要单独带回）
+        if spec.schedule is not None and isinstance(getattr(bot, "config", None), dict):
+            bot.config["schedule"] = dict(spec.schedule)
 
         await self._restore_open_orders(bot, repo)
         # E6：首次对账时以交易所持仓作为本地基线

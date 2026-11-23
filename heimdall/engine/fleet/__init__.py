@@ -15,6 +15,7 @@
 ``restore``        服务重启时从数据库恢复机器人、未完成订单、账本与净值曲线       P0-4 / E6
 ``overview``       机器人运行概览（多租户过滤）                                   —
 ``credentials``    密钥变化后热重载运行中机器人的 LLM / 交易所凭证                 —
+``schedule_resume`` 重启后恢复定时决策（本地模拟 / 测试网自动恢复，实盘需人工确认）   —
 ``manager``        FleetManager 门面：注册表 + 委托上述服务，方法名与原 BotManager 一致  —
 =================  =============================================================  ==========
 
@@ -29,7 +30,7 @@
 应用代码与测试的导入路径不变。
 
 日志：所有 fleet 服务的 logger 为 ``heimdall.engine.bot_manager.fleet.<子名称>``
-（account / lifecycle / capital / bootstrap / restore / overview / credentials / manager）。
+（account / lifecycle / capital / bootstrap / restore / overview / credentials / schedule / manager）。
 """
 
 from heimdall.engine.fleet.base import (
@@ -49,9 +50,13 @@ from heimdall.engine.fleet.bootstrap import DEFAULT_BOTS, DefaultBotBootstrapper
 from heimdall.engine.fleet.restore import PersistedBotRestorer, RestoreSpec, RestoreSummary
 from heimdall.engine.fleet.overview import FleetOverview
 from heimdall.engine.fleet.credentials import CredentialReloader, ReloadSummary, collect_llm_services
+from heimdall.engine.fleet.schedule_resume import AUTO_RESUME_MODES, ResumeSummary, ScheduleResumer
 from heimdall.engine.fleet.manager import FleetManager
 
 __all__ = [
+    "AUTO_RESUME_MODES",
+    "ResumeSummary",
+    "ScheduleResumer",
     "AccountConflictGuard",
     "BotLifecycleService",
     "CapitalAllocator",

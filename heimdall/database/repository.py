@@ -74,6 +74,28 @@ class TradingRepository:
         )
         logger.info("[Repository] 机器人档案已更新落库: %s (%s, 归属=%s)", agent_id, status, clean_owner)
 
+    async def update_agent_config_key(self, agent_id: str, key: str, value: Any) -> bool:
+        """
+        只更新机器人档案 config_json 里的一个键（读取 → 合并 → 写回），不影响其他配置项。
+        档案不存在时返回 False。用于保存自动调度记录（heimdall.engine.schedule_state）。
+        """
+        rows = await self.db.execute_query("SELECT config_json FROM trading_agents WHERE agent_id = ?;", (agent_id,))
+        if not rows:
+            return False
+        try:
+            cfg = json.loads(rows[0].get("config_json") or "{}")
+        except (TypeError, ValueError):
+            cfg = {}
+        if not isinstance(cfg, dict):
+            cfg = {}
+        cfg[key] = value
+        now = datetime.now(timezone.utc).isoformat()
+        await self.db.execute_commit(
+            "UPDATE trading_agents SET config_json = ?, updated_at = ? WHERE agent_id = ?;",
+            (json.dumps(cfg, ensure_ascii=False, default=str), now, agent_id),
+        )
+        return True
+
     async def update_agent_status(self, agent_id: str, new_status: str):
         """快速切换机器人运行状态（如 RUNNING, STOPPED, CIRCUIT_BROKEN）"""
         now = datetime.now(timezone.utc).isoformat()

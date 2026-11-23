@@ -13,7 +13,8 @@ Heimdall 交易平台 - FastAPI REST 服务端模块 (Web Console Backend)
 结构说明（2026-11-22 拆分）：
 本文件只负责"装配"，按顺序做五件事：
 1. 全局日志格式与敏感信息脱敏过滤器（必须在导入其他 heimdall 模块之前完成）；
-2. 生命周期 lifespan：部署安全预检 → 建表 → 单实例锁 → 恢复机器人 → 首次引导 → 心跳；关停时逆序释放；
+2. 生命周期 lifespan：部署安全预检 → 建表 → 单实例锁 → 恢复机器人 → 首次引导 → 恢复定时决策 → 心跳；
+   关停时逆序释放；
 3. 创建 FastAPI 应用并配置 CORS 白名单；
 4. 挂载路由：鉴权与密钥金库（auth_router）→ 工作台（workbench_router）→ 业务路由（heimdall/api/routes/）；
 5. 兼容导出：bot_manager、各端点函数与请求模型仍可 from heimdall.api.server import。
@@ -74,6 +75,12 @@ async def lifespan(app: FastAPI):
     restored = await bot_manager.restore_persisted_bots()
     logger.info(">>> [Heimdall 启动恢复] 已从数据库恢复 %d 个历史持久化机器人", restored)
     await bot_manager.bootstrap_default_bots()
+    # 2026-11-23：恢复重启前在运行的机器人的后台决策与对账循环（本地模拟 / 测试网自动恢复，实盘需人工确认）
+    resume = await bot_manager.resume_schedules(scheduler)
+    logger.info(
+        ">>> [Heimdall 自动恢复] 已恢复 %d 个机器人的定时决策；实盘待人工确认 %d 个；升级前未记录调度 %d 个",
+        len(resume["resumed"]), len(resume["mainnet_pending"]), len(resume["legacy_stopped"]),
+    )
     dead_man_switch.start()
     logger.info(">>> [Heimdall 引导完毕] 默认机器人已注册并就绪，后台调度与外部心跳中枢待命。")
     yield

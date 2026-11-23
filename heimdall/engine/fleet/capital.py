@@ -67,6 +67,11 @@ class CapitalAllocator(FleetService):
             status=bot.status.value,
             allocated_capital=bot.allocated_capital,
             max_drawdown_limit=bot.max_drawdown_limit,
+            # 2026-11-23 修复：upsert_agent 会整体覆盖 config_json 与 owner_wallet，
+            # 原来不传这两项，调资后数据库配置被清空（重启时因缺少运行路由而不恢复该机器人）、
+            # 私有机器人的归属被改成 system（变成全平台可见）
+            config=getattr(bot, "config", None) or {},
+            owner_wallet=getattr(bot, "owner_wallet", "system"),
         )
 
         self.log.info(

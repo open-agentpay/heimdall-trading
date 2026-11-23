@@ -19,6 +19,7 @@ restore_persisted_bots          PersistedBotRestorer                    restore
 list_bots_overview              FleetOverview                           overview
 reload_llm_credentials          CredentialReloader                      credentials
 reload_exchange_credentials     CredentialReloader                      credentials
+resume_schedules                ScheduleResumer                         schedule_resume
 ==============================  ======================================  =====================
 
 与具体机器人类解耦
@@ -48,6 +49,7 @@ from heimdall.engine.fleet.credentials import CredentialReloader
 from heimdall.engine.fleet.lifecycle import BotLifecycleService
 from heimdall.engine.fleet.overview import FleetOverview
 from heimdall.engine.fleet.restore import PersistedBotRestorer
+from heimdall.engine.fleet.schedule_resume import ScheduleResumer
 
 logger = get_fleet_logger("manager")
 
@@ -87,6 +89,7 @@ class FleetManager:
         self.restorer = PersistedBotRestorer(self)
         self.overview = FleetOverview(self)
         self.credentials = CredentialReloader(self)
+        self.schedule_resumer = ScheduleResumer(self)
 
     # ------------------------------------------------------------------
     # 基础
@@ -215,6 +218,19 @@ class FleetManager:
     async def restore_persisted_bots(self, repo: Optional[Any] = None) -> int:
         """服务启动时从数据库恢复机器人，返回恢复数量"""
         return await self.restorer.restore(repo)
+
+    async def resume_schedules(
+        self,
+        scheduler: Any,
+        bot_ids: Optional[List[str]] = None,
+        repo: Optional[Any] = None,
+    ) -> Dict[str, Any]:
+        """
+        重启后恢复重启前在运行的机器人的后台决策与对账循环（只恢复本地模拟与测试网，实盘需人工确认）。
+        bot_ids 为空时处理最近一次 restore_persisted_bots 恢复的机器人。返回汇总，不抛出异常。
+        """
+        ids = list(bot_ids) if bot_ids is not None else list(self.restorer.last_restored_ids)
+        return (await self.schedule_resumer.resume(scheduler, ids, repo)).to_dict()
 
     # ------------------------------------------------------------------
     # 概览（overview）

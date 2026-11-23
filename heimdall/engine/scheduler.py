@@ -25,6 +25,7 @@ from heimdall.models.schemas import AgentStatus
 from heimdall.engine.bot_manager import TradingBotInstance
 from heimdall.database.repository import trading_repo
 from heimdall.api.websocket import manager as ws_manager, EventType as WsEventType
+from heimdall.engine.schedule_state import persist_stopped_state
 
 logger = logging.getLogger(__name__)
 
@@ -256,6 +257,13 @@ class BotScheduler:
                     sleep_duration,
                 )
                 await asyncio.sleep(sleep_duration)
+
+            # 循环自然退出（熔断 / 对账暂停 / 状态被改为非 RUNNING）：把状态写回数据库并关闭自动调度记录。
+            # 2026-11-23：原来只改内存状态，数据库仍是 RUNNING，重启后会被当成"运行中"自动恢复。
+            # 被取消（停止接口、急停、服务关停）时不会走到这里：服务关停时要保留调度记录以便重启后恢复。
+            await persist_stopped_state(
+                bot, trading_repo, f"决策循环因状态 {getattr(bot.status, 'value', bot.status)} 退出",
+            )
 
         except asyncio.CancelledError:
             logger.info("[Scheduler] 协程循环收到 Cancelled 取消信号，正常退出循环")
