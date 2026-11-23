@@ -145,7 +145,9 @@ $$\text{NAV}_{t^+} = \frac{\text{Total Equity}_t + \Delta C}{\text{Total Shares}
 │   │   ├── notifier.py                # Telegram / 飞书 / Discord 告警
 │   │   └── heartbeat.py               # 外部死信心跳
 │   ├── api/
-│   │   ├── server.py                  # FastAPI 控制台接口
+│   │   ├── server.py                  # FastAPI 应用装配（生命周期、CORS、挂载路由）
+│   │   ├── runtime.py                 # 进程级单例：BotManager、单实例运行锁
+│   │   ├── routes/                    # 业务接口：机器人管理 / 控制 / 绩效审计 / 模拟下单 / 风控急停 / 行情 / 推流
 │   │   ├── workbench_router.py        # OMS、对账、影子报告、回测接口
 │   │   └── websocket.py               # 实时事件推送
 │   ├── auth/                          # 钱包登录（SIWE）与 AES-256-GCM 密钥金库
@@ -153,7 +155,9 @@ $$\text{NAV}_{t^+} = \frac{\text{Total Equity}_t + \Delta C}{\text{Total Shares}
 │   ├── bifrost/ · data/               # 多源行情（Binance → OKX → Hyperliquid）与情绪数据
 │   ├── database/                      # SQLite / PostgreSQL 持久化与仓储
 │   ├── engine/
-│   │   ├── bot_manager.py             # 机器人生命周期、决策循环、对账、止损覆盖
+│   │   ├── bot_manager.py             # TradingBotInstance（单个机器人入口）与 BotManager
+│   │   ├── bot_services/              # 单个机器人：决策周期、提案复审、下单、账本、对账、止损保护、规格、标记价格
+│   │   ├── fleet/                     # 平台级：启停与急停、同账户冲突、资金划拨、重启恢复、首次引导、凭证热重载
 │   │   ├── scheduler.py               # 后台决策与对账循环
 │   │   └── shadow.py                  # 影子模式运行报告与晋级门控
 │   ├── execution/

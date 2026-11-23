@@ -145,7 +145,9 @@ $$\text{NAV}_{t^+} = \frac{\text{Total Equity}_t + \Delta C}{\text{Total Shares}
 │   │   ├── notifier.py                # Telegram / Feishu / Discord alerts
 │   │   └── heartbeat.py               # External dead man's switch
 │   ├── api/
-│   │   ├── server.py                  # FastAPI control plane
+│   │   ├── server.py                  # FastAPI app assembly (lifespan, CORS, router mounting)
+│   │   ├── runtime.py                 # Process singletons: BotManager, single-instance lock
+│   │   ├── routes/                    # Domain routers: bots / control / analytics / paper orders / risk / market / stream
 │   │   ├── workbench_router.py        # OMS, reconciliation, shadow report, backtest APIs
 │   │   └── websocket.py               # Real-time event stream
 │   ├── auth/                          # Wallet sign-in (SIWE) and AES-256-GCM key vault
@@ -153,7 +155,9 @@ $$\text{NAV}_{t^+} = \frac{\text{Total Equity}_t + \Delta C}{\text{Total Shares}
 │   ├── bifrost/ · data/               # Multi-source market data (Binance → OKX → Hyperliquid), sentiment
 │   ├── database/                      # SQLite / PostgreSQL persistence and repositories
 │   ├── engine/
-│   │   ├── bot_manager.py             # Bot lifecycle, decision cycle, reconciliation, stop coverage
+│   │   ├── bot_manager.py             # TradingBotInstance (per-bot entry point) and BotManager
+│   │   ├── bot_services/              # Per bot: decision cycle, proposal review, execution, ledger, reconciliation, stop protection
+│   │   ├── fleet/                     # Platform: start/stop & kill switch, account conflicts, capital, restore, bootstrap, credential reload
 │   │   ├── scheduler.py               # Background decision and reconciliation loops
 │   │   └── shadow.py                  # Shadow Mode run report and promotion gate
 │   ├── execution/
