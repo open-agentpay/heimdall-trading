@@ -26,6 +26,7 @@
 ``decision_audit``         平仓反思读取、影子成交估算、决策记录组装与落库      M1 / L4
 ``order_execution``        对冲 / OMS / 直连下单、成交落地、下单宽限期         E7 / E8 / P1
 ``decision_cycle``         决策周期分阶段编排、各阶段耗时与终止日志            —
+``exposure_sync``          按实际持仓 + 挂单刷新组合风控登记（2026-11-24）     第 16 节
 =========================  ==================================================  ==========
 
 依赖方向（只允许自上而下，禁止反向 import）
@@ -44,7 +45,7 @@
              │
     层 2  TradeRecorder            DecisionAuditService
              │
-    层 1  InstrumentSpecService    MarkPriceTracker    ProposalReviewer
+    层 1  InstrumentSpecService    MarkPriceTracker    ProposalReviewer    PortfolioExposureSync
              │
     层 0  base（BotHost 协议、日志命名）
 
@@ -55,7 +56,7 @@
 ----
 所有服务的 logger 都是 ``heimdall.engine.bot_manager`` 的子 logger：
 ``.specs`` / ``.mark_price`` / ``.trades`` / ``.ledger`` / ``.protection`` / ``.reconcile`` /
-``.review`` / ``.audit`` / ``.execution`` / ``.cycle``。
+``.review`` / ``.audit`` / ``.execution`` / ``.cycle`` / ``.exposure``。
 挂在父 logger 上的处理器能收到全部子服务日志；也可以按子名称单独调级别。
 """
 
@@ -86,6 +87,7 @@ from heimdall.engine.bot_services.proposal_review import (
 from heimdall.engine.bot_services.decision_audit import DecisionAuditService
 from heimdall.engine.bot_services.order_execution import ExecutionOutcome, OrderExecutionService
 from heimdall.engine.bot_services.decision_cycle import CycleState, DecisionCycle
+from heimdall.engine.bot_services.exposure_sync import PortfolioExposureSync
 
 _logger = get_service_logger("wiring")
 
@@ -104,6 +106,7 @@ class BotServices:
     audit: DecisionAuditService
     execution: OrderExecutionService
     cycle: DecisionCycle
+    exposure: PortfolioExposureSync
 
 
 def build_bot_services(host: BotHost, repo_getter: RepoGetter, alert_getter: AlertGetter) -> BotServices:
@@ -116,13 +119,16 @@ def build_bot_services(host: BotHost, repo_getter: RepoGetter, alert_getter: Ale
     """
     specs = InstrumentSpecService(host)
     mark_price = MarkPriceTracker(host)
+    exposure = PortfolioExposureSync(host)
     trades = TradeRecorder(host, repo_getter, alert_getter)
     ledger = BotLedgerService(host, mark_price, trades, repo_getter)
     protection = ProtectionService(host, ledger, trades, specs, mark_price, repo_getter, alert_getter)
-    reconcile = ReconcileService(host, ledger, protection, trades, mark_price)
+    reconcile = ReconcileService(host, ledger, protection, trades, mark_price, exposure=exposure)
     reviewer = ProposalReviewer(host)
     audit = DecisionAuditService(host, repo_getter)
-    execution = OrderExecutionService(host, specs, ledger, trades, protection, reconcile, repo_getter, alert_getter)
+    execution = OrderExecutionService(
+        host, specs, ledger, trades, protection, reconcile, repo_getter, alert_getter, exposure=exposure,
+    )
     cycle = DecisionCycle(
         host,
         ledger_service=ledger,
@@ -134,6 +140,7 @@ def build_bot_services(host: BotHost, repo_getter: RepoGetter, alert_getter: Ale
         reconcile=reconcile,
         repo_getter=repo_getter,
         alert_getter=alert_getter,
+        exposure=exposure,
     )
     _logger.debug(
         "[Bot %s · 子服务] 已装配：规格 / 标记价格 / 成交记录 / 独立账本(%s) / 保护单(兜底止损 %.2f%%) / 对账 / "
@@ -151,6 +158,7 @@ def build_bot_services(host: BotHost, repo_getter: RepoGetter, alert_getter: Ale
         audit=audit,
         execution=execution,
         cycle=cycle,
+        exposure=exposure,
     )
 
 
@@ -162,6 +170,7 @@ __all__ = [
     "DecisionCycle",
     "ExecutionOutcome",
     "OrderExecutionService",
+    "PortfolioExposureSync",
     "ProposalReviewer",
     "ReviewOutcome",
     "is_risk_reducing_close",

@@ -92,6 +92,8 @@ class FleetOverview(FleetService):
             "exchange": getattr(b, "exchange", ExchangeType.BINANCE).value,
             "market_type": _enum_value(b, "market_type", MarketType, MarketType.USDM_FUTURES.value),
             "execution_mode": _enum_value(b, "execution_mode", ExecutionMode, ExecutionMode.LOCAL_SIM.value),
+            # 合约保证金模式（ISOLATED / CROSSED）；None 表示沿用交易所账户设置（2026-11-24）
+            "margin_mode": getattr(b, "margin_mode", None),
             "macro_bias": (
                 b.macro_bias.model_dump(mode="json")
                 if getattr(b, "macro_bias", None) and b.macro_bias.is_active()

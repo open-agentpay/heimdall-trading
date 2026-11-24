@@ -43,6 +43,7 @@ from heimdall.execution.base import TradeExecutionResult
 from heimdall.execution.oms import ManagedOrder, OrderLifecycleState
 from heimdall.models.schemas import TradeProposal
 from heimdall.engine.bot_services.base import AlertGetter, BotHost, BotService, RepoGetter, get_service_logger
+from heimdall.engine.bot_services.exposure_sync import PortfolioExposureSync
 from heimdall.engine.bot_services.instrument_specs import InstrumentSpecService
 from heimdall.engine.bot_services.ledger_service import BotLedgerService
 from heimdall.engine.bot_services.protection_service import ProtectionService
@@ -256,8 +257,10 @@ class OrderExecutionService(BotService):
         reconcile: ReconcileService,
         repo_getter: RepoGetter,
         alert_getter: AlertGetter,
+        exposure: Optional[PortfolioExposureSync] = None,
     ):
         super().__init__(host, logger)
+        self._exposure = exposure or PortfolioExposureSync(host)
         self._specs = specs
         self._ledger = ledger_service
         self._recorder = recorder
@@ -327,6 +330,8 @@ class OrderExecutionService(BotService):
         out.executed = executed
         out.report = executed[0] if executed else None
         self._reconcile.expected_positions = await h.get_bot_positions()
+        # 组合风控登记按下单后的实际持仓 + 未成交挂单刷新（发单前拦截 / 拒单的预留在这里一并撤回）
+        await self._exposure.sync(self._reconcile.expected_positions, reason="下单后")
         self._protection.mark_exec_activity()  # 成交后重新起算宽限期
 
         out.snapshot = await self._persist_fills(executed, decision_id, regime, out.snapshot)
@@ -374,12 +379,6 @@ class OrderExecutionService(BotService):
             self._last_orders.append(order_entry_from_fill(prop, rep))
         return executed
 
-    async def _release(self, prop: TradeProposal) -> None:
-        """释放该提案在组合协调器中预留的敞口额度"""
-        coordinator = self.host.portfolio_coordinator
-        if coordinator is not None:
-            await coordinator.release_exposure(self.bot_id, prop.trade_action.symbol)
-
     async def _submit_via_oms(
         self, decision: Any, approved: List[TradeProposal], decision_id: str,
     ) -> List[TradeExecutionResult]:
@@ -399,8 +398,7 @@ class OrderExecutionService(BotService):
                 self.log.warning("[Bot %s · OMS 发单前拦截] 提案=%s | 原因=%s", self.bot_id, prop.proposal_id, pre_err)
                 decision.thinking_logs.append(f"[OMS 发单前拦截]: {pre_err}")
                 self._last_orders.append(order_entry_blocked(prop, str(pre_err)))
-                await self._release(prop)
-                continue
+                continue  # 预留的组合敞口由下单后的敞口同步撤回
             self._last_orders.append(order_entry_from_managed(prop, managed_order))
             if exec_res is not None:
                 executed.append(exec_res)
@@ -410,10 +408,9 @@ class OrderExecutionService(BotService):
                 )
             elif managed_order.state == OrderLifecycleState.REJECTED:
                 self.log.warning(
-                    "[Bot %s · OMS 拒单回滚] cid=%s | 原因=%s | 正在释放组合敞口",
+                    "[Bot %s · OMS 拒单回滚] cid=%s | 原因=%s | 组合敞口由下单后的敞口同步撤回",
                     self.bot_id, managed_order.client_order_id, managed_order.error_message,
                 )
-                await self._release(prop)
             elif managed_order.state == OrderLifecycleState.UNKNOWN:
                 self.log.warning(
                     "[Bot %s · OMS 超时挂起] cid=%s 进入 UNKNOWN，等待定时对账协程查单确认",

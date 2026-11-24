@@ -30,7 +30,7 @@ from heimdall.alert.heartbeat import dead_man_switch
 from heimdall.alert.notifier import alert_gateway
 from heimdall.api.runtime import bot_manager
 from heimdall.api.websocket import EventType as WsEventType, manager as ws_manager
-from heimdall.auth.dependencies import require_authenticated_wallet
+from heimdall.auth.dependencies import require_authenticated_wallet, resolve_caller_wallet
 from heimdall.engine.scheduler import scheduler
 
 logger = logging.getLogger("heimdall.api.server.risk")
@@ -101,9 +101,45 @@ async def emergency_kill(
     }
 
 
+#: 组合敞口使用率达到该比例时第 6 条规则显示告警
+PORTFOLIO_WARNING_RATIO = 0.8
+_MODE_LABELS = {"MAINNET": "实盘", "TESTNET": "测试网", "LOCAL_SIM": "本地模拟"}
+
+
+def _portfolio_exposure_rule(caller_wallet: Optional[str]) -> Dict[str, Any]:
+    """
+    第 6 条规则：当前用户各运行模式敞口池的登记总敞口 / 上限（2026-11-24 起按用户分池，
+    未登录时显示系统演示机器人的池）。任一池超过上限为 TRIGGERED，达到 80% 为 WARNING。
+    """
+    owner = caller_wallet if isinstance(caller_wallet, str) and caller_wallet.strip() else "system"
+    pools = bot_manager.portfolio_registry.snapshot(owner=owner)
+    parts, worst, total = [], 0.0, 0.0
+    for p in pools:
+        cur, cap = float(p["current_total_exposure_usd"]), float(p["max_total_exposure_usd"])
+        total += cur
+        worst = max(worst, cur / cap if cap > 0 else (1.0 if cur > 0 else 0.0))
+        parts.append(f"{_MODE_LABELS.get(p['execution_mode'], p['execution_mode'])} ${cur:,.2f} / ${cap:,.2f}")
+    status = "TRIGGERED" if worst >= 1.0 else ("WARNING" if worst >= PORTFOLIO_WARNING_RATIO else "HEALTHY")
+    desc = (
+        "当前账户已登记敞口（同一用户各交易所合并计算）：" + "；".join(parts) if parts
+        else f"当前账户暂无登记敞口（每个运行模式上限 ${bot_manager.portfolio_registry.default_limit_usd:,.2f}）"
+    )
+    return {
+        "id": 6,
+        "name": "全局组合敞口与反向对敲守卫 (Portfolio Exposure Guard)",
+        "status": status,
+        "desc": desc,
+        "value": f"${total:,.0f} 敞口",
+        "valueColor": "text-[#C24D4D]" if status == "TRIGGERED" else (
+            "text-[#C28B38]" if status == "WARNING" else "text-[#3D784E]"),
+        "icon": "🌊",
+    }
+
+
 @router.get("/api/v1/market/radar", tags=["Risk & Circuit Breaker"])
 async def get_risk_radar_telemetry(
         symbol: str = Query(default="ETH", description="标的代码"),
+        caller_wallet: Optional[str] = Depends(resolve_caller_wallet),
 ) -> Dict[str, Any]:
     """
     聚合 7 大极端行情硬风控雷达动态数据：
@@ -224,15 +260,7 @@ async def get_risk_radar_telemetry(
                 "valueColor": "text-[#C28B38]" if funding_status != "HEALTHY" else "text-[#3D784E]",
                 "icon": "💸",
             },
-            {
-                "id": 6,
-                "name": "全局组合敞口与反向对敲守卫 (Portfolio Exposure Guard)",
-                "status": "HEALTHY",
-                "desc": f"当前组合已登记总敞口 ${bot_manager.portfolio_coordinator.total_exposure_usd():,.2f} / 上限 ${bot_manager.portfolio_coordinator.max_total_exposure_usd:,.2f}",
-                "value": f"${bot_manager.portfolio_coordinator.total_exposure_usd():,.0f} 敞口",
-                "valueColor": "text-[#3D784E]",
-                "icon": "🌊",
-            },
+            _portfolio_exposure_rule(caller_wallet),
             {
                 "id": 7,
                 "name": "底层网关 RPC 延迟与心跳健康度 (Gateway Heartbeat)",

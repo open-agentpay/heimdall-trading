@@ -109,7 +109,8 @@ class FleetHost(Protocol):
 
     bots: Dict[str, Any]
     bifrost_client: Any
-    portfolio_coordinator: Any
+    portfolio_coordinator: Any   # 兼容旧名，等于 portfolio_registry
+    portfolio_registry: Any      # PortfolioCoordinatorRegistry：按 (用户, 运行模式) 分池
 
     def repo(self) -> Any: ...
 

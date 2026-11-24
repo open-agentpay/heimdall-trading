@@ -10,8 +10,10 @@
 2. **硬风控复审**：其余提案 **无条件** 重跑 ``HardRiskGuard.review_proposal``（代码层一票否决）。
    策略层 / 多 Agent 流水线返回的 ``risk_review`` 只作为审计信息保留（upstream_risk_review），
    不再被信任——这是审计 H3 的修复：此前单提案时直接采用上游结论，导致执行的提案与被审核的提案可能不是同一个；
-3. **组合协调锁**：通过前两关的提案向 ``PortfolioCoordinator`` 申请全局敞口额度，
-   与其他机器人的方向 / 敞口冲突时拦截。
+3. **组合协调锁**：通过前两关的**开仓**提案向 ``PortfolioCoordinator`` 申请敞口额度，
+   与其他机器人的方向 / 敞口冲突时拦截。降风险平仓单不申请额度、不参与反向对敲检查
+   （2026-11-24 修复：原来平仓单也进来预留，会被其他机器人的同向持仓以"反向对敲"拦下，并被登记成一笔新敞口；
+   平仓后的登记由组合敞口同步服务按实际持仓刷新）。
 
 被拦截的原因会追加到 ``decision.thinking_logs``，进入决策审计（前端思维链可见）。
 
@@ -144,10 +146,12 @@ class ProposalReviewer(BotService):
 
         # 第 1、2 关：降风险豁免 / 硬风控无条件复审
         passed: List[TradeProposal] = []
+        exempt_ids = set()  # 降风险平仓单：不进组合协调器
         for prop in proposals:
             if is_risk_reducing_close(prop, open_positions, latest_price, decision.action_type):
                 out.risk_result = RiskReviewResult(approved=True, checked_rules={"risk_reducing_close": True})
                 passed.append(prop)
+                exempt_ids.add(prop.proposal_id)
                 out.exempted += 1
                 self.log.info(
                     "[Bot %s] 提案 %s 经持仓核验为降风险平仓单，豁免开仓类硬风控规则",
@@ -175,10 +179,14 @@ class ProposalReviewer(BotService):
                 decision.thinking_logs.append(f"[HardRiskGuard 执行前复审拦截]: {rev.rejection_reason}")
                 out.reasons.append(f"硬风控拦截：{rev.rejection_reason or '未返回原因'}")
 
-        # 第 3 关：组合协调器全局敞口锁（预留额度；后续发单失败时由执行服务释放）
+        # 第 3 关：组合协调器敞口锁（只针对开仓：在已登记的"持仓 + 挂单"上累加预留；
+        #         发单失败或未成交撤单后，由组合敞口同步服务按实际持仓刷新登记）
         if passed and h.portfolio_coordinator is not None:
             reserved: List[TradeProposal] = []
             for prop in passed:
+                if prop.proposal_id in exempt_ids:
+                    reserved.append(prop)
+                    continue
                 ok, coord_reason = await h.portfolio_coordinator.check_and_reserve(
                     agent_id=self.bot_id,
                     symbol=prop.trade_action.symbol,

@@ -13,7 +13,9 @@
    并标记"首次对账以交易所持仓作为本地基线"（E6，避免把已有仓位误判为幽灵持仓）；
 4. 读入已存在的独立账本；若恢复为 RUNNING 且同账户同标的已有活动机器人，
    后恢复的这个改为 STOPPED 并写回数据库（E7，避免两个机器人同时交易）；
-5. 回放最近 50 条净值快照（携带原始时间戳，NAVEngine 据此识别 UTC 日切、还原当日回撤基准）。
+5. 回放最近 50 条净值快照（携带原始时间戳，NAVEngine 据此识别 UTC 日切、还原当日回撤基准）；
+6. 按读回的账本持仓与未完成订单重建组合风控登记（2026-11-24；原来登记只在内存，重启后清空，
+   直到每个机器人重新开仓前总敞口上限都形同虚设）。保证金模式随 config_json 一并恢复。
 
 单个机器人的任一步失败只影响它自己（告警后继续下一个），读取档案列表失败时返回 0。
 
@@ -60,6 +62,8 @@ class RestoreSpec:
     strategy_config: Dict[str, Any] = field(default_factory=dict)
     #: 自动调度记录（config_json["schedule"]），升级前启动的机器人为 None
     schedule: Optional[Dict[str, Any]] = None
+    #: 合约保证金模式（config_json["margin_mode"]），None 表示沿用交易所账户设置
+    margin_mode: Optional[str] = None
 
 
 @dataclass
@@ -163,6 +167,7 @@ class PersistedBotRestorer(FleetService):
             execution_mode=em,
             strategy_config=strategy_cfg,
             schedule=dict(row_cfg["schedule"]) if isinstance(row_cfg.get("schedule"), dict) else None,
+            margin_mode=row_cfg.get("margin_mode") or None,
         )
 
     # ------------------------------------------------------------------
@@ -183,6 +188,7 @@ class PersistedBotRestorer(FleetService):
             strategy_config=spec.strategy_config,
             execution_mode=spec.execution_mode,
             market_type=spec.market_type,
+            margin_mode=spec.margin_mode,
         )
         bot.status = spec.status
         # 自动调度记录随机器人恢复（TradingBotInstance 会重新生成 config，需要单独带回）
@@ -196,6 +202,9 @@ class PersistedBotRestorer(FleetService):
         await bot.load_persisted_ledger(repo)
         demoted = await self._demote_on_conflict(bot, repo)
         self._replay_nav(bot, await self._load_nav_rows(bot, repo), spec.capital)
+        exposure = await bot.rebuild_portfolio_exposure()
+        if exposure:
+            self.log.info("[BotManager 重启恢复] Bot=%s 已按账本持仓与未完成订单重建组合敞口登记 $%.2f", spec.agent_id, exposure)
 
         self.log.info(
             "[BotManager 重启恢复] 已从数据库恢复 Bot=%s | 标的=%s | 策略=%s | 状态=%s | 归属=%s",

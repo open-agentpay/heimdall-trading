@@ -97,7 +97,7 @@ class BotLifecycleService(FleetService):
         except Exception as exc:
             self.log.warning("[BotManager 删除前撤单告警] bot_id=%s | err=%s", bot_id, exc)
 
-        coordinator = self.host.portfolio_coordinator
+        coordinator = getattr(bot, "portfolio_coordinator", None)   # 机器人所在的敞口池
         if coordinator is not None:
             try:
                 await coordinator.release_exposure(bot_id, bot.symbol)

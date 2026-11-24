@@ -38,6 +38,7 @@ from heimdall.auth.dependencies import require_authenticated_wallet, resolve_cal
 from heimdall.auth.vault import resolve_exchange_credentials
 from heimdall.database.repository import trading_repo
 from heimdall.engine.scheduler import scheduler
+from heimdall.execution.base import normalize_margin_mode
 from heimdall.execution.factory import ExecutionAdapterFactory
 from heimdall.models.schemas import ExchangeType, ExecutionMode, MarketType, StrategyType
 
@@ -69,6 +70,10 @@ class CreateBotRequest(BaseModel):
     )
     allocated_capital: float = Field(default=10000.0, description="初始划拨本金 (USD)")
     max_drawdown_limit: float = Field(default=0.05, description="单日最大回撤熔断阈值 (0.05=5%)")
+    margin_mode: Optional[str] = Field(
+        default=None,
+        description="合约保证金模式：ISOLATED（逐仓）/ CROSSED（全仓）；留空表示沿用交易所账户里该交易对的当前设置",
+    )
 
 
 class UpdateCapitalRequest(BaseModel):
@@ -93,8 +98,11 @@ async def create_bot(
     try:
         # 1 & 2. 校验枚举与交易所/市场/环境路由组合
         ex, mt, em = ExecutionAdapterFactory.validate_route(req.exchange, req.market_type, req.execution_mode)
-        # 3. 校验策略在该市场是否允许运行
+        # 3. 校验策略在该市场是否允许运行；保证金模式只接受 ISOLATED / CROSSED 且只用于合约
         ExecutionAdapterFactory.validate_strategy_market(req.strategy_type, mt)
+        margin_mode = normalize_margin_mode(req.margin_mode)
+        if margin_mode and mt != MarketType.USDM_FUTURES:
+            raise ValueError(f"保证金模式只适用于合约市场，{mt.value} 机器人不能设置 {margin_mode}")
         # 4. 非 LOCAL_SIM 必须校验当前钱包拥有精确匹配的活动凭证
         if em != ExecutionMode.LOCAL_SIM:
             matched_cred = await resolve_exchange_credentials(
@@ -125,6 +133,7 @@ async def create_bot(
             strategy_config=req.strategy_config,
             execution_mode=em,
             market_type=mt,
+            margin_mode=margin_mode,
         )
 
         await trading_repo.upsert_agent(
@@ -140,6 +149,7 @@ async def create_bot(
                 "market_type": bot.market_type.value,
                 "execution_mode": bot.execution_mode.value,
                 "strategy_config": bot.strategy_config,
+                **({"margin_mode": bot.margin_mode} if bot.margin_mode else {}),
             },
             owner_wallet=caller_wallet,
         )
@@ -165,6 +175,7 @@ async def create_bot(
             "exchange": bot.exchange.value,
             "market_type": bot.market_type.value,
             "execution_mode": bot.execution_mode.value,
+            "margin_mode": bot.margin_mode,
             "allocated_capital": bot.allocated_capital,
             "message": f"机器人 '{bot.name}' 创建成功，路由={bot.exchange.value}/{bot.market_type.value}/{bot.execution_mode.value}",
         }

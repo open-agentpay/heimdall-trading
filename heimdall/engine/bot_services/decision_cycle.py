@@ -57,6 +57,7 @@ from heimdall.engine.bot_services.base import (
     utc_now,
 )
 from heimdall.engine.bot_services.decision_audit import DecisionAuditService
+from heimdall.engine.bot_services.exposure_sync import PortfolioExposureSync
 from heimdall.engine.bot_services.ledger_service import BotLedgerService
 from heimdall.engine.bot_services.mark_price import MarkPriceTracker
 from heimdall.engine.bot_services.order_execution import ExecutionOutcome, OrderExecutionService
@@ -144,8 +145,10 @@ class DecisionCycle(BotService):
         reconcile: ReconcileService,
         repo_getter: RepoGetter,
         alert_getter: AlertGetter,
+        exposure: Optional[PortfolioExposureSync] = None,
     ):
         super().__init__(host, logger)
+        self._exposure = exposure or PortfolioExposureSync(host)
         self._ledger = ledger_service
         self._recorder = recorder
         self._mark = mark_price
@@ -326,6 +329,8 @@ class DecisionCycle(BotService):
             self.tag(), st.balance["total_equity"], st.balance["cash_balance"], st.balance["margin_used"],
             st.balance["unrealized_pnl"], len(st.open_positions or []),
         )
+        # 提案复审前，组合风控登记先对齐本机器人的实际持仓 + 未成交挂单（开仓预留在此基础上累加）
+        await self._exposure.sync(st.open_positions, price=st.latest_price, reason="决策前")
         return None
 
     # ------------------------------------------------------------------

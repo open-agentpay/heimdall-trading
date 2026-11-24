@@ -16,7 +16,8 @@
     "strategy": "Strategy template",
     "params": "Strategy parameters (passed to StrategyRouter)",
     "capital": "Initial allocated capital (USD)",
-    "capitalPlaceholder": "Custom initial capital"
+    "capitalPlaceholder": "Custom initial capital",
+    "marginMode": "Margin mode"
   },
   "options": {
     "binance": "BINANCE",
@@ -24,11 +25,20 @@
     "usdmFutures": "USDM_FUTURES (USDT-margined futures)",
     "localSim": "LOCAL_SIM (local simulation)",
     "testnet": "TESTNET",
-    "mainnet": "MAINNET (live)"
+    "mainnet": "MAINNET (live)",
+    "marginAccount": "Keep account setting (no change)",
+    "marginIsolated": "ISOLATED",
+    "marginCrossed": "CROSSED (cross margin)"
   },
   "hints": {
     "spot": "ℹ️ Spot market: <strong>no shorting</strong>, no leverage or reduce-only; you can only buy spot and sell existing holdings.",
-    "futures": "ℹ️ USDT-margined futures: long/short opening and closing with configurable leverage. The account's position mode (Hedge / One-way) is detected automatically, and native conditional stop-loss/take-profit orders are attached only for the actually filled quantity."
+    "futures": "ℹ️ USDT-margined futures: long/short opening and closing with configurable leverage. The account's position mode (Hedge / One-way) is detected automatically, and native conditional stop-loss/take-profit orders are attached only for the actually filled quantity.",
+    "isolatedName": "isolated",
+    "crossedName": "cross",
+    "marginAccount": "The symbol's margin mode on the exchange account is left unchanged. Before opening a position, the symbol's leverage is set to the leverage in the strategy proposal.",
+    "marginSet": "Before opening a position, the symbol's margin mode is switched to {{mode}} and its leverage is set to the leverage in the strategy proposal. If the symbol already has a position or open orders on the exchange, the margin mode cannot be changed; that order is blocked and the reason is shown on the audit page.",
+    "marginLocalSim": "Local simulation does not use margin modes, so this option is unavailable.",
+    "marginUnsupported": "{{exchange}} does not support setting the margin mode yet; the exchange account setting is kept."
   },
   "strategies": {
     "bullBearDebate": "⚔️ Bull vs. bear debate",

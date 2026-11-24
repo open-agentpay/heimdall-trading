@@ -142,6 +142,7 @@ _LAYER = {
     "instrument_specs": 1,
     "mark_price": 1,
     "proposal_review": 1,
+    "exposure_sync": 1,
     "trade_recorder": 2,
     "decision_audit": 2,
     "ledger_service": 3,

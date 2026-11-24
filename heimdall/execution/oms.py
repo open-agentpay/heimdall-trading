@@ -392,6 +392,11 @@ class OrderManagementSystem:
         if norm.take_profit_price is not None:
             norm_proposal.trade_action.take_profit_price = float(norm.take_profit_price)
 
+        # 2026-11-24：发单前账户设置（合约杠杆 / 保证金模式）。失败抛 ValueError → 调用方记为发单前拦截，
+        # 此时尚未落库、未发单。只对真实适配器调用（测试里的 Mock 适配器跳过）。
+        if isinstance(self.adapter, BaseExecutionAdapter):
+            await self.adapter.prepare_order(norm_proposal)
+
         order = ManagedOrder(
             client_order_id=cid,
             bot_id=bot_id,

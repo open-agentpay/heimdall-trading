@@ -16,7 +16,8 @@
     "strategy": "核心决策策略模板",
     "params": "策略专属超参 (透传至 StrategyRouter)",
     "capital": "初始分配资金 (USD)",
-    "capitalPlaceholder": "自定义初始资金"
+    "capitalPlaceholder": "自定义初始资金",
+    "marginMode": "保证金模式"
   },
   "options": {
     "binance": "BINANCE (币安)",
@@ -24,11 +25,20 @@
     "usdmFutures": "USDM_FUTURES U 本位合约",
     "localSim": "LOCAL_SIM 本地模拟",
     "testnet": "TESTNET 测试网",
-    "mainnet": "MAINNET 实盘"
+    "mainnet": "MAINNET 实盘",
+    "marginAccount": "沿用账户设置（不修改）",
+    "marginIsolated": "ISOLATED 逐仓",
+    "marginCrossed": "CROSSED 全仓"
   },
   "hints": {
     "spot": "ℹ️ 现货市场提示：<strong>不可开空</strong>，不支持杠杆与 reduceOnly；仅允许买入现货及卖出已有持仓。",
-    "futures": "ℹ️ U 本位合约说明：支持多空双向开平仓与杠杆配置；系统将自动探测账户单向/双向持仓模式（Hedge / One-way），并仅按真实成交数量挂载原生条件止损止盈。"
+    "futures": "ℹ️ U 本位合约说明：支持多空双向开平仓与杠杆配置；系统将自动探测账户单向/双向持仓模式（Hedge / One-way），并仅按真实成交数量挂载原生条件止损止盈。",
+    "isolatedName": "逐仓",
+    "crossedName": "全仓",
+    "marginAccount": "不修改交易所账户里该交易对的保证金模式。开仓前会把该交易对的杠杆设为策略提案的杠杆。",
+    "marginSet": "开仓前会把该交易对的保证金模式改为{{mode}}，杠杆设为策略提案的杠杆。该交易对在交易所上已有持仓或挂单时无法修改保证金模式，这笔开仓会被拦截，审计页会显示原因。",
+    "marginLocalSim": "本地模拟不区分保证金模式，此项不可选。",
+    "marginUnsupported": "{{exchange}} 暂不支持设置保证金模式，将沿用交易所账户设置。"
   },
   "strategies": {
     "bullBearDebate": "⚔️ 多空博弈激辩",

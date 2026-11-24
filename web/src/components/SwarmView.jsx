@@ -303,7 +303,7 @@ export default function SwarmView({
                       <div>
                         <span className="text-xs text-ink-3">{t('card.route')}</span>
                         <div className="font-semibold text-ink mt-0.5 text-xs font-mono">
-                          {bot.exchange || 'BINANCE'} · {bot.market_type || 'USDM_FUTURES'} · {bot.execution_mode || 'LOCAL_SIM'}
+                      {bot.exchange || 'BINANCE'} · {bot.market_type || 'USDM_FUTURES'} · {bot.execution_mode || 'LOCAL_SIM'}{bot.margin_mode ? ` · ${bot.margin_mode}` : ''}
                         </div>
                       </div>
                       <div>

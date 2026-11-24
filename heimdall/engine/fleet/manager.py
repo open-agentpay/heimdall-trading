@@ -40,7 +40,7 @@ from typing import Any, Callable, Dict, List, Optional, Union
 
 from heimdall.models.schemas import ExchangeType, ExecutionMode, MarketType, StrategyType
 from heimdall.bifrost.client import BifrostClient
-from heimdall.risk.portfolio_guard import PortfolioCoordinator
+from heimdall.risk.portfolio_guard import PortfolioCoordinator, PortfolioCoordinatorRegistry
 from heimdall.engine.fleet.account_guard import AccountConflictGuard
 from heimdall.engine.fleet.base import get_fleet_logger
 from heimdall.engine.fleet.bootstrap import DefaultBotBootstrapper
@@ -74,9 +74,11 @@ class FleetManager:
         *,
         repo_getter: Optional[Callable[[], Any]] = None,
     ):
-        # 全部机器人共享的行情客户端与组合协调器
+        # 全部机器人共享的行情客户端
         self.bifrost_client = bifrost_client or BifrostClient()
-        self.portfolio_coordinator = portfolio_coordinator or PortfolioCoordinator()
+        # 组合风控：按 (用户钱包, 运行模式) 分池（2026-11-24；原来整个平台共用一个协调器与一个额度）。
+        # 显式传入 portfolio_coordinator 时所有机器人共用它（兼容旧调用方式与测试）
+        self.portfolio_registry = PortfolioCoordinatorRegistry(shared=portfolio_coordinator)
         # 机器人注册表：bot_id -> 机器人实例（create_bot 写入，delete_bot 移除）
         self.bots: Dict[str, Any] = {}
         self._repo_getter = repo_getter or _default_repo
@@ -98,6 +100,14 @@ class FleetManager:
     def repo(self) -> Any:
         """当前数据仓储（每次调用时取，支持测试替换）"""
         return self._repo_getter()
+
+    @property
+    def portfolio_coordinator(self) -> PortfolioCoordinatorRegistry:
+        """
+        兼容旧名：返回分池注册表。旧代码读取的 ``total_exposure_usd()`` / ``max_total_exposure_usd``
+        在注册表上分别是全部池合计与默认上限；按用户查看请用 ``portfolio_registry.snapshot(owner)``。
+        """
+        return self.portfolio_registry
 
     def require_bot(self, bot_id: str) -> Any:
         """取已注册的机器人；不存在时抛出 KeyError（消息与拆分前一致）"""
@@ -122,10 +132,13 @@ class FleetManager:
         execution_mode: Union[ExecutionMode, str] = ExecutionMode.LOCAL_SIM,
         market_type: Union[MarketType, str] = MarketType.USDM_FUTURES,
         persistent: bool = True,
+        margin_mode: Optional[str] = None,
     ) -> Any:
         """
         注册并创建新的交易机器人实例（强制校验 exchange + market_type + execution_mode 路由）。
         persistent=False 创建只在内存运行的演示机器人（不写数据库，重启后不恢复）。
+        margin_mode 为合约保证金模式（ISOLATED / CROSSED），None 表示沿用交易所账户设置。
+        机器人使用其归属用户、运行模式对应的组合风控池。
         """
         if self.bot_class is None:
             raise TypeError("FleetManager 未绑定 bot_class，请使用 heimdall.engine.bot_manager.BotManager")
@@ -145,18 +158,20 @@ class FleetManager:
             bifrost_client=self.bifrost_client,
             llm_service=llm_service,
             owner_wallet=owner_wallet,
-            portfolio_coordinator=self.portfolio_coordinator,
+            portfolio_coordinator=self.portfolio_registry.get(owner_wallet, execution_mode),
             strategy_config=strategy_config,
             execution_mode=execution_mode,
             market_type=market_type,
             persistent=persistent,
+            margin_mode=margin_mode,
         )
         self.bots[bot_id] = bot
         # E7：机器人每轮决策开头通过该回调检查同账户冲突
         bot._account_conflict_fn = lambda b=bot: self.find_account_conflict(b)
         logger.info(
-            "[BotManager] 成功创建机器人: %s (%s) | 标的: %s | 路由: %s/%s/%s | 归属: %s%s",
+            "[BotManager] 成功创建机器人: %s (%s) | 标的: %s | 路由: %s/%s/%s | 归属: %s | 敞口池: %s | 保证金模式: %s%s",
             bot_id, name, symbol, bot.exchange.value, bot.market_type.value, bot.execution_mode.value, bot.owner_wallet,
+            getattr(bot.portfolio_coordinator, "pool_label", "-"), getattr(bot, "margin_mode", None) or "沿用账户设置",
             "" if persistent else " | 演示机器人（只在内存运行，不写数据库）",
         )
         return bot

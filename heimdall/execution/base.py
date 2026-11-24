@@ -4,6 +4,9 @@ Heimdall 交易平台 - 交易所执行适配器抽象基类 (Execution Adapter 
 - ExchangeOrderResult: 订单事实回报（不将未成交/受理态伪装为成交）；
 - TradeExecutionResult: 仅代表真实已发生的成交；
 - BaseExecutionAdapter: 统一执行、查单、撤单、凭证重建与市场边界接口。
+
+2026-11-24：新增 ``margin_mode`` 属性与 ``prepare_order()`` 钩子。OMS 在精度归一化之后、Write-Ahead 落库之前调用
+``prepare_order``，合约适配器在这里按提案设置杠杆与保证金模式（失败抛 ValueError → 发单前拦截，不落库、不发单）。
 """
 
 from abc import ABC, abstractmethod
@@ -20,6 +23,45 @@ from heimdall.models.schemas import (
     PositionSide,
     TradeProposal,
 )
+
+
+#: 支持的保证金模式（交易所无关的写法；各适配器自行映射到交易所参数）
+MARGIN_MODES = ("ISOLATED", "CROSSED")
+
+
+def normalize_margin_mode(value: Any) -> Optional[str]:
+    """
+    保证金模式统一为 ISOLATED / CROSSED；空值返回 None（沿用交易所账户当前设置）。
+    接受 isolated / cross / crossed（大小写不限）；其他值抛 ValueError。
+    """
+    if value is None:
+        return None
+    raw = str(getattr(value, "value", value)).strip().upper()
+    if not raw:
+        return None
+    if raw == "CROSS":
+        raw = "CROSSED"
+    if raw not in MARGIN_MODES:
+        raise ValueError(f"不支持的保证金模式 '{value}'，仅允许 ISOLATED（逐仓）/ CROSSED（全仓），留空表示沿用账户设置")
+    return raw
+
+
+#: 声明"平仓意图"的 rationale.intent 前缀（与策略层 / ProposalReviewer 的约定一致）
+CLOSE_INTENT_PREFIXES = ("CLOSE", "DEBATE_REVERSE_CLOSE", "ARB_EXIT", "REDUCE", "STOP", "TAKE_PROFIT")
+
+
+def is_closing_proposal(proposal: TradeProposal) -> bool:
+    """
+    提案是否为平仓 / 减仓单：reduce_only、显式 CLOSE / REDUCE 意图，或 rationale.intent 以平仓前缀开头。
+    合约适配器据此决定发单前是否设置杠杆（平仓单不改杠杆：降杠杆可能因保证金不足失败，反而挡住平仓）。
+    """
+    action = proposal.trade_action
+    if action.reduce_only:
+        return True
+    intent = getattr(action, "intent", None)
+    if str(getattr(intent, "value", intent) or "").upper() in ("CLOSE", "REDUCE"):
+        return True
+    return str((proposal.rationale or {}).get("intent", "")).upper().startswith(CLOSE_INTENT_PREFIXES)
 
 
 class ExchangeOrderResult(BaseModel):
@@ -87,6 +129,10 @@ class BaseExecutionAdapter(ABC):
     exchange: ExchangeType = ExchangeType.BINANCE
     market_type: MarketType = MarketType.USDM_FUTURES
     execution_mode: ExecutionMode = ExecutionMode.LOCAL_SIM
+    #: 保证金模式 ISOLATED / CROSSED；None 表示沿用交易所账户里该标的的当前设置（机器人创建时注入）
+    margin_mode: Optional[str] = None
+    #: 是否会在 prepare_order() 中按 margin_mode 设置保证金模式；为 False 的适配器在测试网 / 实盘不接受 margin_mode
+    supports_margin_settings: bool = False
 
     @property
     def supports_native_conditional_orders(self) -> bool:
@@ -113,6 +159,14 @@ class BaseExecutionAdapter(ABC):
             raise ValueError(
                 f"凭证运行环境不匹配: 适配器={self.execution_mode.value}, 凭证={execution_mode.value}"
             )
+
+    async def prepare_order(self, proposal: TradeProposal) -> None:
+        """
+        发单前的账户设置（2026-11-24）：OMS 在精度归一化之后、Write-Ahead 落库之前调用。
+        合约适配器在这里按提案设置杠杆 / 保证金模式；失败必须抛出 ValueError（OMS 记为发单前拦截，不发单）。
+        默认什么都不做（现货、本地模拟、尚未接入杠杆设置的交易所）。
+        """
+        return None
 
     async def submit_order(
         self,

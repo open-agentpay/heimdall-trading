@@ -41,6 +41,7 @@ from typing import Any, Dict, List, Optional
 from heimdall.models.schemas import AgentStatus
 from heimdall.accounting.ledger import base_asset
 from heimdall.engine.bot_services.base import BotHost, BotService, get_service_logger
+from heimdall.engine.bot_services.exposure_sync import PortfolioExposureSync
 from heimdall.engine.bot_services.ledger_service import BotLedgerService
 from heimdall.engine.bot_services.mark_price import MarkPriceTracker
 from heimdall.engine.bot_services.protection_service import ALERT_ACTIONS, ProtectionService
@@ -64,8 +65,10 @@ class ReconcileService(BotService):
         protection: ProtectionService,
         recorder: TradeRecorder,
         mark_price: MarkPriceTracker,
+        exposure: Optional[PortfolioExposureSync] = None,
     ):
         super().__init__(host, logger)
+        self._exposure = exposure or PortfolioExposureSync(host)
         self._ledger = ledger_service
         self._protection = protection
         self._recorder = recorder
@@ -88,8 +91,21 @@ class ReconcileService(BotService):
             report = await self._reconcile_ledger_mode()
         else:
             report = await self._reconcile_legacy_mode()
+        # 组合风控登记按对账后的持仓刷新（独立账本模式读账本，不访问交易所；传统模式用对账后的持仓基线）
+        await self._sync_exposure_after_reconcile()
         self._log_summary(report, mode, (time.monotonic() - started) * 1000.0)
         return report
+
+    async def _sync_exposure_after_reconcile(self) -> None:
+        """对账后刷新组合风控登记；没有协调器时跳过，读取持仓失败只告警（2026-11-24）"""
+        if getattr(self.host, "portfolio_coordinator", None) is None:
+            return
+        try:
+            positions = await self.host.get_bot_positions() if self.host.uses_bot_ledger else self.expected_positions
+        except Exception as exc:
+            self.log.warning("%s 对账后读取持仓失败，组合敞口下次再同步: %s", self.tag(), exc)
+            return
+        await self._exposure.sync(positions, price=self._mark.last_price, reason="对账后")
 
     def _log_summary(self, report: Dict[str, Any], mode: str, elapsed_ms: float) -> None:
         """每轮对账一行汇总：有差异或保护动作时 INFO，一切正常时 DEBUG"""
@@ -109,10 +125,14 @@ class ReconcileService(BotService):
     # ------------------------------------------------------------------
 
     async def _cancel_expired_limit_orders(self) -> None:
-        """撤销超过 TTL 的限价开仓单并释放组合敞口（E3：异常不阻塞后续对账）"""
+        """
+        撤销超过 TTL 的限价开仓单（E3：异常不阻塞后续对账）。
+        不再让 OMS 直接释放组合敞口：那会把该标的整条登记删掉（连已有持仓一起清零），
+        改为对账结束后由组合敞口同步服务按实际持仓刷新（2026-11-24）。
+        """
         h = self.host
         try:
-            expired = await h.oms.cancel_expired_limit_orders(portfolio_coordinator=h.portfolio_coordinator)
+            expired = await h.oms.cancel_expired_limit_orders()
             if expired:
                 self.log.info("[Bot %s · 定时对账] 已清理 %d 笔超时未成交限价单", self.bot_id, len(expired))
         except Exception as ttl_err:

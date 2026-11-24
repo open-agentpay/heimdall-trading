@@ -38,7 +38,7 @@ from heimdall.agents.graph import MultiAgentPipeline
 from heimdall.strategies import StrategyRouter, MacroBias
 from heimdall.accounting.nav import NAVEngine, EquitySnapshot
 from heimdall.accounting.ledger import BotLedger
-from heimdall.execution.base import BaseExecutionAdapter, TradeExecutionResult
+from heimdall.execution.base import BaseExecutionAdapter, TradeExecutionResult, normalize_margin_mode
 from heimdall.execution.factory import ExecutionAdapterFactory
 from heimdall.execution.hyperliquid import HyperliquidAdapter
 from heimdall.execution.precision import InstrumentRegistry
@@ -115,8 +115,14 @@ class TradingBotInstance:
         execution_mode: Union[ExecutionMode, str] = ExecutionMode.LOCAL_SIM,
         market_type: Union[MarketType, str] = MarketType.USDM_FUTURES,
         persistent: bool = True,
+        margin_mode: Optional[str] = None,
     ):
         ex, mt, em = ExecutionAdapterFactory.validate_route(exchange, market_type, execution_mode)
+        # 保证金模式（2026-11-24）：ISOLATED / CROSSED；None 表示沿用交易所账户里该标的的当前设置。
+        # 只对合约有意义，现货机器人配置了也会被拒绝
+        self.margin_mode: Optional[str] = normalize_margin_mode(margin_mode)
+        if self.margin_mode and mt != MarketType.USDM_FUTURES:
+            raise ValueError(f"保证金模式只适用于合约市场，{mt.value} 机器人不能设置 {self.margin_mode}")
         # 是否写数据库：False 为只在内存运行的演示机器人（系统预置机器人），所有写库走 MemoryOnlyRepository，
         # 读库返回空；重启后不恢复，由首次引导重新创建（2026-11-23）
         self.persistent: bool = bool(persistent)
@@ -136,6 +142,8 @@ class TradingBotInstance:
             "execution_mode": em.value,
             "strategy_config": self.strategy_config,
         }
+        if self.margin_mode:
+            self.config["margin_mode"] = self.margin_mode
         self.status: AgentStatus = AgentStatus.STOPPED
         self.allocated_capital: float = allocated_capital
         self.max_drawdown_limit: float = max_drawdown_limit
@@ -162,6 +170,18 @@ class TradingBotInstance:
                 market_type=self.market_type,
                 execution_mode=self.execution_mode,
                 initial_cash=allocated_capital,
+            )
+        # 下单前由适配器的 prepare_order() 按此设置保证金模式（None = 不修改）
+        if isinstance(self.executor, BaseExecutionAdapter):
+            self.executor.margin_mode = self.margin_mode
+        # 适配器不会设置保证金模式时：测试网 / 实盘直接拒绝（避免配置被悄悄忽略）；本地模拟只记录配置
+        if self.margin_mode and not getattr(self.executor, "supports_margin_settings", False):
+            if em != ExecutionMode.LOCAL_SIM:
+                raise ValueError(
+                    f"{ex.value} {mt.value} 暂不支持设置保证金模式，请留空（沿用交易所账户设置）后再创建"
+                )
+            logger.info(
+                "[Bot %s] 本地模拟不区分保证金模式，已记录配置 %s（不影响撮合）", bot_id, self.margin_mode,
             )
         self._exchange_creds_hydrated: bool = False
 
@@ -199,6 +219,7 @@ class TradingBotInstance:
         # - decision_audit     ：平仓反思、影子成交、决策记录与落库（M1、L4）
         # - order_execution    ：下单路由与成交落地（E7、E8、P1）
         # - decision_cycle     ：决策周期分阶段编排（step() 的实现）
+        # - exposure_sync      ：按实际持仓 + 挂单刷新组合风控登记（2026-11-24）
         # 仓储通过 self.repository 每次调用时获取（测试 monkeypatch 本模块的 trading_repo 后立即生效；
         # 演示机器人返回 MemoryOnlyRepository），告警通过 lambda 延迟获取本模块的全局对象
         services = build_bot_services(
@@ -216,6 +237,7 @@ class TradingBotInstance:
         self.decision_audit = services.audit
         self.order_execution = services.execution
         self.decision_cycle = services.cycle
+        self.exposure_sync = services.exposure
 
         # 挂载 Bifrost 数据客户端
         self.bifrost = bifrost_client or BifrostClient()
@@ -387,6 +409,18 @@ class TradingBotInstance:
         if self.uses_bot_ledger:
             return await self.ledger_service.positions()
         return await self.executor.get_open_positions()
+
+    async def rebuild_portfolio_exposure(self) -> Optional[float]:
+        """
+        重启恢复（2026-11-24）：按数据库里读回的账本持仓与未完成订单，重建组合风控登记（不访问交易所）。
+        - 独立账本模式：读 ``load_persisted_ledger`` 已载入的账本（没有账本视为无持仓）；
+        - 本地模拟：撮合器的仓位不跨重启保留，只登记读回的未完成订单；
+        - 其他模式（尚未支持独立账本的交易所）：同上，首次决策 / 对账时再按交易所持仓补齐。
+        """
+        positions: List[Dict[str, Any]] = []
+        if self.uses_bot_ledger and self.ledger_service.ledger is not None:
+            positions = self.ledger_service.ledger.positions(None)
+        return await self.exposure_sync.sync(positions=positions, reason="重启恢复")
 
     async def load_persisted_ledger(self, repo: Optional[Any] = None) -> Optional[BotLedger]:
         """只从数据库读取已存在的账本（不访问交易所、不新建），供重启恢复与同账户冲突检查使用"""

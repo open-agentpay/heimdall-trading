@@ -24,11 +24,12 @@ import asyncio
 import hashlib
 import hmac
 import logging
+import math
 import time
 import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlencode
 
 import httpx
@@ -45,6 +46,7 @@ from heimdall.execution.base import (
     BaseExecutionAdapter,
     ExchangeOrderResult,
     TradeExecutionResult,
+    is_closing_proposal,
 )
 from heimdall.models.schemas import (
     ExchangeType,
@@ -604,6 +606,16 @@ class BinanceUSDMFuturesAdapter(BinanceAdapterBase):
     _MARK_PRICE_PATH = "/fapi/v1/premiumIndex"
     _MARK_PRICE_FIELD = "markPrice"
 
+    #: 同一标的、同一杠杆与保证金模式在该时间内不重复设置（秒）；凭证重建时清空
+    LEVERAGE_CACHE_SECONDS = 300.0
+    #: 币安允许的杠杆范围
+    MIN_LEVERAGE = 1
+    MAX_LEVERAGE = 125
+    #: 保证金模式已是目标值时币安返回的错误码（No need to change margin type.）
+    MARGIN_TYPE_UNCHANGED_CODE = "-4046"
+    #: prepare_order() 会按 margin_mode 设置保证金模式
+    supports_margin_settings = True
+
     def __init__(
         self,
         *,
@@ -614,6 +626,8 @@ class BinanceUSDMFuturesAdapter(BinanceAdapterBase):
         rest_base: Optional[str] = None,
     ):
         self._dual_side_position: Optional[bool] = None
+        # 已成功设置的账户参数：币安交易对 -> (杠杆, 保证金模式, 设置时间 monotonic)
+        self._applied_settings: Dict[str, Tuple[int, Optional[str], float]] = {}
         self.um_client: Optional[Any] = None
         resolved_base = rest_base or (
             BINANCE_FUTURES_TESTNET_REST
@@ -635,6 +649,7 @@ class BinanceUSDMFuturesAdapter(BinanceAdapterBase):
 
     def _reset_account_caches(self) -> None:
         self._dual_side_position = None
+        self._applied_settings = {}
 
     def _rebuild_client(self) -> None:
         if not UMFutures:
@@ -671,6 +686,78 @@ class BinanceUSDMFuturesAdapter(BinanceAdapterBase):
                 return False
         self._dual_side_position = False
         return False
+
+    # ------------------------------------------------------------------
+    # 发单前设置杠杆与保证金模式（2026-11-24）
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def target_leverage(cls, value: Any) -> int:
+        """提案杠杆 → 币安整数杠杆：向下取整（不放大风险），限制在 1–125"""
+        try:
+            lev = int(math.floor(float(value or 1)))
+        except (TypeError, ValueError):
+            lev = 1
+        return max(cls.MIN_LEVERAGE, min(cls.MAX_LEVERAGE, lev))
+
+    async def prepare_order(self, proposal: TradeProposal) -> None:
+        """
+        开仓单发出前，把该交易对的杠杆设为提案杠杆；配置了保证金模式时先设置保证金模式。
+
+        - 原来从不设置，实际使用账户里该交易对的当前杠杆（币安默认 20 倍），提案里的杠杆只在风控审查时用到；
+        - 平仓 / 减仓单不设置（降杠杆可能因保证金不足失败，反而挡住平仓）；
+        - ``margin_mode`` 为 None 时不改保证金模式（沿用账户设置，避免改变现有机器人的行为）；
+        - 同一交易对、同一参数 5 分钟内不重复设置；
+        - 任一步失败抛 ValueError：OMS 记为发单前拦截，本笔不发单（失败即关闭）；
+        - 测试替身接管 ``_signed_request`` 时不发设置请求（与 ``get_dual_side_position`` 的约定一致）。
+        """
+        if is_closing_proposal(proposal):
+            return
+        action = proposal.trade_action
+        sym = self._binance_symbol(action.symbol)
+        lev = self.target_leverage(action.leverage)
+        mode = self.margin_mode
+        if self._is_method_mocked(self._signed_request):
+            logger.debug("[BinanceUSDMFutures] 测试替身接管请求，跳过杠杆设置 | %s %sx", sym, lev)
+            return
+        cached = self._applied_settings.get(sym)
+        now = time.monotonic()
+        if cached and cached[0] == lev and cached[1] == mode and now - cached[2] < self.LEVERAGE_CACHE_SECONDS:
+            return
+        try:
+            self._require_credentials()
+            if mode:
+                await self._set_margin_type(sym, mode)
+            await self._set_leverage(sym, lev)
+        except Exception as exc:
+            self._applied_settings.pop(sym, None)
+            detail = f"杠杆 {lev}x" + (f"、保证金模式 {mode}" if mode else "")
+            logger.warning("[BinanceUSDMFutures] 设置 %s %s 失败，本笔不发单: %s", sym, detail, exc)
+            raise ValueError(f"设置 {sym} {detail} 失败，未发单: {exc}") from exc
+        self._applied_settings[sym] = (lev, mode, now)
+        logger.info(
+            "[BinanceUSDMFutures] 已设置 %s 杠杆=%sx 保证金模式=%s（%s）",
+            sym, lev, mode or "沿用账户设置", self.execution_mode.value,
+        )
+
+    async def _set_leverage(self, symbol: str, leverage: int) -> Any:
+        """POST /fapi/v1/leverage（同一杠杆重复设置也会成功返回）"""
+        if self.um_client is not None:
+            return await self._run_sdk(self.um_client.change_leverage, symbol=symbol, leverage=leverage)
+        return await self._signed_request("POST", "/fapi/v1/leverage", {"symbol": symbol, "leverage": leverage}, timeout=5.0)
+
+    async def _set_margin_type(self, symbol: str, margin_mode: str) -> None:
+        """POST /fapi/v1/marginType；已是目标模式（-4046）视为成功。有持仓或挂单时币安会拒绝修改，向上抛出。"""
+        try:
+            if self.um_client is not None:
+                await self._run_sdk(self.um_client.change_margin_type, symbol=symbol, marginType=margin_mode)
+            else:
+                await self._signed_request("POST", "/fapi/v1/marginType", {"symbol": symbol, "marginType": margin_mode}, timeout=5.0)
+        except Exception as exc:
+            text = str(exc)
+            if self.MARGIN_TYPE_UNCHANGED_CODE in text or "No need to change margin type" in text:
+                return
+            raise
 
     async def _send_futures_order(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if self._is_method_mocked(self._signed_request):

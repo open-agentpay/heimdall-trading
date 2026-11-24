@@ -8,6 +8,10 @@
  * - 市场类型：SPOT (现货) / USDM_FUTURES (U 本位合约)
  * - 运行模式：LOCAL_SIM (本地模拟) / TESTNET (测试网) / MAINNET (实盘)
  * 不再展示历史 PAPER 或 DEMO 选项。
+ *
+ * 保证金模式（2026-11-24）：仅合约显示；只有支持设置保证金模式的交易所（目前为币安）在测试网 / 实盘可选，
+ * 默认"沿用账户设置"（不传 margin_mode）。不可选时下拉框禁用并说明原因，提交时也不发送该字段。
+ * 交易所是否支持目前在前端写死（MARGIN_MODE_EXCHANGES），接入交易所注册表接口后改为由后端返回。
  */
 
 import React, { useState, useEffect } from 'react';
@@ -16,6 +20,9 @@ import { fmt } from '../i18n';
 import { X, Bot, ShieldCheck, ArrowRight, CheckCircle2, XCircle } from 'lucide-react';
 import { createBot, getStrategiesCatalog, checkLiveReadiness } from '../api/endpoints';
 import { MAINSTREAM_SYMBOLS } from '../data/symbols';
+
+// 适配器会在开仓前设置保证金模式的交易所（与后端 supports_margin_settings 一致）
+const MARGIN_MODE_EXCHANGES = ['BINANCE'];
 
 export default function CreateBotModal({ isOpen, onClose, onCreated, prefill = null }) {
   const { t } = useTranslation('createBot');
@@ -30,6 +37,8 @@ export default function CreateBotModal({ isOpen, onClose, onCreated, prefill = n
     execution_mode: 'LOCAL_SIM',
     allocated_capital: 10000.0,
     max_drawdown_limit: 0.05,
+    // 空字符串 = 沿用交易所账户设置（不发送 margin_mode）
+    margin_mode: '',
   });
   const [strategyConfig, setStrategyConfig] = useState({});
   const [readiness, setReadiness] = useState(null);
@@ -85,6 +94,19 @@ export default function CreateBotModal({ isOpen, onClose, onCreated, prefill = n
     (formData.execution_mode === 'TESTNET' && readiness && !readiness.ready_for_testnet) ||
     (formData.execution_mode === 'MAINNET' && readiness && !readiness.ready_for_mainnet);
 
+  // 保证金模式：只对合约显示；本地模拟或交易所不支持时禁用
+  const isFutures = formData.market_type === 'USDM_FUTURES';
+  const marginDisabledReason = !isFutures
+    ? null
+    : formData.execution_mode === 'LOCAL_SIM'
+    ? t('hints.marginLocalSim')
+    : !MARGIN_MODE_EXCHANGES.includes(formData.exchange)
+    ? t('hints.marginUnsupported', { exchange: formData.exchange })
+    : null;
+  const marginEnabled = isFutures && !marginDisabledReason;
+  const effectiveMarginMode = marginEnabled ? formData.margin_mode : '';
+  const marginModeName = effectiveMarginMode === 'ISOLATED' ? t('hints.isolatedName') : t('hints.crossedName');
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setLoading(true);
@@ -101,6 +123,8 @@ export default function CreateBotModal({ isOpen, onClose, onCreated, prefill = n
         strategy_config: strategyConfig,
         allocated_capital: Number(formData.allocated_capital),
         max_drawdown_limit: Number(formData.max_drawdown_limit),
+        // 只在可选且明确选择时发送；不发送即沿用交易所账户设置
+        ...(effectiveMarginMode ? { margin_mode: effectiveMarginMode } : {}),
       });
       onCreated && onCreated(formData.bot_id);
       onClose();
@@ -226,6 +250,29 @@ export default function CreateBotModal({ isOpen, onClose, onCreated, prefill = n
               </select>
             </div>
           </div>
+
+          {/* 合约保证金模式（只对合约显示；不可选时禁用并说明原因） */}
+          {isFutures && (
+            <div>
+              <label className="block text-xs font-semibold text-ink-2 mb-1">{t('form.marginMode')}</label>
+              <select
+                value={effectiveMarginMode}
+                disabled={!marginEnabled}
+                onChange={(e) => setFormData({ ...formData, margin_mode: e.target.value })}
+                className="w-full px-3 py-2 bg-surface border border-line-strong rounded-xl text-xs font-mono font-bold disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                <option value="">{t('options.marginAccount')}</option>
+                <option value="ISOLATED">{t('options.marginIsolated')}</option>
+                <option value="CROSSED">{t('options.marginCrossed')}</option>
+              </select>
+              <p className={`mt-1 text-xs ${effectiveMarginMode ? 'text-warning-strong' : 'text-ink-3'}`}>
+                {marginDisabledReason
+                  || (effectiveMarginMode
+                    ? t('hints.marginSet', { mode: marginModeName })
+                    : t('hints.marginAccount'))}
+              </p>
+            </div>
+          )}
 
           {/* 市场规则提示 */}
           {formData.market_type === 'SPOT' ? (
