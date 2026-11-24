@@ -25,6 +25,7 @@ from heimdall.models.schemas import AgentStatus
 from heimdall.engine.bot_manager import TradingBotInstance
 from heimdall.database.repository import trading_repo
 from heimdall.api.websocket import manager as ws_manager, EventType as WsEventType
+from heimdall.engine.schedule_state import persist_stopped_state
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +72,17 @@ class BotScheduler:
         bot_id = bot.bot_id
 
         if self.is_running(bot_id):
-            logger.warning("[Scheduler] 机器人 %s 的后台调度器已经在运行中，无需重复启动", bot_id)
+            # 决策循环可能正处于休眠中，而对账循环已因暂停 / 熔断退出（两者独立检查状态）。
+            # 此时恢复运行要补建对账循环，否则恢复后不再对账、不再检查止损覆盖（2026-11-23 修复）。
+            if not self.is_reconciling(bot_id):
+                interval_r = self._reconcile_intervals.get(bot_id, reconcile_interval_seconds)
+                self._reconcile_tasks[bot_id] = asyncio.create_task(
+                    self._reconcile_loop(bot, interval_r),
+                    name=f"reconcile_{bot_id}",
+                )
+                logger.info("[Scheduler] 机器人 %s 的决策循环仍在运行，已补建对账循环（周期=%d秒）", bot_id, interval_r)
+            else:
+                logger.warning("[Scheduler] 机器人 %s 的后台调度器已经在运行中，无需重复启动", bot_id)
             return True
 
         bot.status = AgentStatus.RUNNING
@@ -256,6 +267,13 @@ class BotScheduler:
                     sleep_duration,
                 )
                 await asyncio.sleep(sleep_duration)
+
+            # 循环自然退出（熔断 / 对账暂停 / 状态被改为非 RUNNING）：把状态写回数据库并关闭自动调度记录。
+            # 2026-11-23：原来只改内存状态，数据库仍是 RUNNING，重启后会被当成"运行中"自动恢复。
+            # 被取消（停止接口、急停、服务关停）时不会走到这里：服务关停时要保留调度记录以便重启后恢复。
+            await persist_stopped_state(
+                bot, trading_repo, f"决策循环因状态 {getattr(bot.status, 'value', bot.status)} 退出",
+            )
 
         except asyncio.CancelledError:
             logger.info("[Scheduler] 协程循环收到 Cancelled 取消信号，正常退出循环")

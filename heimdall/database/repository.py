@@ -13,7 +13,7 @@ Heimdall 交易平台 - 业务数据仓储层 (Data Repository)
 import json
 import logging
 import uuid
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Sequence
 from datetime import datetime, timezone
 from heimdall.database.db import DatabaseManager, db_manager
 from heimdall.models.schemas import TradeProposal, RiskReviewResult
@@ -73,6 +73,28 @@ class TradingRepository:
             ),
         )
         logger.info("[Repository] 机器人档案已更新落库: %s (%s, 归属=%s)", agent_id, status, clean_owner)
+
+    async def update_agent_config_key(self, agent_id: str, key: str, value: Any) -> bool:
+        """
+        只更新机器人档案 config_json 里的一个键（读取 → 合并 → 写回），不影响其他配置项。
+        档案不存在时返回 False。用于保存自动调度记录（heimdall.engine.schedule_state）。
+        """
+        rows = await self.db.execute_query("SELECT config_json FROM trading_agents WHERE agent_id = ?;", (agent_id,))
+        if not rows:
+            return False
+        try:
+            cfg = json.loads(rows[0].get("config_json") or "{}")
+        except (TypeError, ValueError):
+            cfg = {}
+        if not isinstance(cfg, dict):
+            cfg = {}
+        cfg[key] = value
+        now = datetime.now(timezone.utc).isoformat()
+        await self.db.execute_commit(
+            "UPDATE trading_agents SET config_json = ?, updated_at = ? WHERE agent_id = ?;",
+            (json.dumps(cfg, ensure_ascii=False, default=str), now, agent_id),
+        )
+        return True
 
     async def update_agent_status(self, agent_id: str, new_status: str):
         """快速切换机器人运行状态（如 RUNNING, STOPPED, CIRCUIT_BROKEN）"""
@@ -166,45 +188,72 @@ class TradingRepository:
         thinking_logs: List[str],
         proposal: Optional[TradeProposal],
         risk_review: Optional[RiskReviewResult],
+        execution: Optional[Dict[str, Any]] = None,
     ):
         """
         保存单次周期的完整决策切片（包含大模型思考链、多空辩论结论与风控核准结果）
+
+        :param execution: 本轮执行结果（状态、原因、每笔订单，2026-11-24 新增 execution_json 列）；
+                          旧调用方不传时为 NULL，审计流会从思维链推断
         """
         now = datetime.now(timezone.utc).isoformat()
         logs_json = json.dumps(thinking_logs, ensure_ascii=False)
         proposal_json = proposal.model_dump_json() if proposal else None
         approved_int = 1 if (risk_review and risk_review.approved) else 0
         rejection_reason = risk_review.rejection_reason if risk_review else None
+        execution_json = json.dumps(execution, ensure_ascii=False, default=str) if execution is not None else None
 
         sql = """
         INSERT INTO agent_decisions (
             decision_id, agent_id, symbol, timestamp, market_regime,
-            thinking_logs_json, proposal_json, risk_approved, rejection_reason, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+            thinking_logs_json, proposal_json, risk_approved, rejection_reason, created_at, execution_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
         """
         await self.db.execute_commit(
             sql,
             (
                 decision_id, agent_id, symbol, timestamp, market_regime,
-                logs_json, proposal_json, approved_int, rejection_reason, now
+                logs_json, proposal_json, approved_int, rejection_reason, now, execution_json
             ),
         )
 
-    async def get_decision_history(self, agent_id: str, limit: int = 50) -> List[Dict[str, Any]]:
-        """查询指定机器人最近 N 轮决策审计日志"""
-        sql = """
-        SELECT * FROM agent_decisions
-        WHERE agent_id = ?
-        ORDER BY timestamp DESC
-        LIMIT ?;
-        """
-        rows = await self.db.execute_query(sql, (agent_id, limit))
+    async def get_decision_history(self, agent_id: str, limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
+        """查询指定机器人最近 N 轮决策审计日志（支持 offset 分页）"""
+        if offset > 0:
+            sql = """
+            SELECT * FROM agent_decisions
+            WHERE agent_id = ?
+            ORDER BY timestamp DESC
+            LIMIT ? OFFSET ?;
+            """
+            rows = await self.db.execute_query(sql, (agent_id, limit, offset))
+        else:
+            sql = """
+            SELECT * FROM agent_decisions
+            WHERE agent_id = ?
+            ORDER BY timestamp DESC
+            LIMIT ?;
+            """
+            rows = await self.db.execute_query(sql, (agent_id, limit))
         for r in rows:
             if "thinking_logs_json" in r and r["thinking_logs_json"]:
                 r["thinking_logs"] = json.loads(r["thinking_logs_json"])
             if "proposal_json" in r and r["proposal_json"]:
                 r["proposal"] = json.loads(r["proposal_json"])
+            if r.get("execution_json"):
+                try:
+                    r["execution"] = json.loads(r["execution_json"])
+                except (TypeError, ValueError) as exc:
+                    logger.warning("[Repository] 决策 %s 的 execution_json 无法解析，按未记录处理: %s", r.get("decision_id"), exc)
         return rows
+
+    async def count_decisions(self, agent_id: str) -> int:
+        """统计指定机器人的决策历史总条数"""
+        sql = "SELECT COUNT(*) as cnt FROM agent_decisions WHERE agent_id = ?;"
+        rows = await self.db.execute_query(sql, (agent_id,))
+        if rows and "cnt" in rows[0]:
+            return int(rows[0]["cnt"])
+        return 0
 
     # -------------------------------------------------------------------------
     # 3. 真实/模拟成交流水记录 (Trades)
@@ -491,6 +540,18 @@ class TradingRepository:
         sql = f"SELECT * FROM oms_orders {where} ORDER BY created_at DESC;"
         return await self.db.execute_query(sql, tuple(params))
 
+    async def get_oms_orders_by_client_ids(self, client_order_ids: List[str]) -> List[Dict[str, Any]]:
+        """
+        按客户端订单号批量读取 OMS 订单（审计页用来显示决策时下的单"现在"是什么状态，
+        例如已挂单的限价单之后被超时撤销）。空列表直接返回，不查库。
+        """
+        ids = [str(c) for c in (client_order_ids or []) if c]
+        if not ids:
+            return []
+        placeholders = ",".join("?" for _ in ids)
+        sql = f"SELECT * FROM oms_orders WHERE client_order_id IN ({placeholders});"
+        return await self.db.execute_query(sql, tuple(ids))
+
 
     # -------------------------------------------------------------------------
     # E7：机器人独立账本
@@ -536,6 +597,26 @@ class TradingRepository:
         rows = await self.db.execute_query(
             "SELECT * FROM bot_run_events WHERE bot_id = ? AND created_at >= ? ORDER BY created_at ASC;",
             (bot_id, since_iso),
+        )
+        for r in rows:
+            try:
+                r["detail"] = json.loads(r.get("detail_json") or "{}")
+            except (TypeError, ValueError):
+                r["detail"] = {}
+        return rows
+
+    async def list_run_events_by_kind(self, bot_id: str, kinds: Sequence[str], limit: int = 50) -> List[Dict[str, Any]]:
+        """
+        按事件类型取最近 N 条运行事件（新的在前），供审计页展示被拒绝 / 出错的决策轮次。
+        kinds 为空时返回空列表。
+        """
+        kinds = [k for k in kinds or [] if k]
+        if not kinds:
+            return []
+        placeholders = ", ".join("?" for _ in kinds)
+        rows = await self.db.execute_query(
+            f"SELECT * FROM bot_run_events WHERE bot_id = ? AND kind IN ({placeholders}) ORDER BY created_at DESC LIMIT ?;",
+            (bot_id, *kinds, int(limit)),
         )
         for r in rows:
             try:

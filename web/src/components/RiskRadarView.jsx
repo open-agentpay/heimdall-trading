@@ -85,9 +85,13 @@ export default function RiskRadarView({
     try {
       const res = await triggerBotReconcile(activeBotId, resumeIfClean);
       const isClean = res?.report?.is_clean;
+      // 对账一致但恢复被拒绝（凭证缺失 / 同账户冲突 / 实盘安全预检未通过）时如实提示，不显示“已恢复”
+      const resumeRefused = isClean && resumeIfClean && !res.resumed && res.resume_error;
       setReconcileMsg({
-        ok: Boolean(isClean),
-        text: isClean
+        ok: Boolean(isClean) && !resumeRefused,
+        text: resumeRefused
+          ? t('reconcile.resumeRefused', { reason: res.resume_error })
+          : isClean
           ? (res.resumed ? t('reconcile.resumed') : t('reconcile.clean'))
           : `${Array.isArray(res?.report?.discrepancies) ? t('reconcile.foundCount', { n: res.report.discrepancies.length }) : t('reconcile.found')}${res?.report?.bot_paused ? t('reconcile.autoPaused') : ''}`,
       });

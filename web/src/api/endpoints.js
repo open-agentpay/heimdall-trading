@@ -178,9 +178,26 @@ export async function getBotNav(botId) {
   return apiRequest(`/api/v1/bots/${encodeURIComponent(botId)}/nav`, { method: 'GET' });
 }
 
-/** 获取思维链决策与辩论历史记录 */
-export async function getBotDecisions(botId, limit = 20) {
-  return apiRequest(`/api/v1/bots/${encodeURIComponent(botId)}/decisions?limit=${limit}`, { method: 'GET' });
+/** 获取思维链决策与辩论历史记录（支持分页与多维筛选） */
+export async function getBotDecisions(botId, params = 20) {
+  if (typeof params === 'number') {
+    return apiRequest(`/api/v1/bots/${encodeURIComponent(botId)}/decisions?limit=${params}`, { method: 'GET' });
+  }
+  const query = new URLSearchParams();
+  if (params.page !== undefined) query.set('page', params.page);
+  if (params.pageSize !== undefined) query.set('page_size', params.pageSize);
+  if (params.limit !== undefined) query.set('limit', params.limit);
+  if (params.action && params.action !== 'ALL') query.set('action', params.action);
+  if (params.status && params.status !== 'ALL') query.set('status', params.status);
+  if (params.executionStatus && params.executionStatus !== 'ALL') query.set('execution_status', params.executionStatus);
+  if (params.search && params.search.trim()) query.set('search', params.search.trim());
+  if (params.paginate !== undefined) {
+    query.set('paginate', params.paginate ? 'true' : 'false');
+  } else {
+    query.set('paginate', 'true');
+  }
+  const qs = query.toString();
+  return apiRequest(`/api/v1/bots/${encodeURIComponent(botId)}/decisions${qs ? `?${qs}` : ''}`, { method: 'GET' });
 }
 
 /** 查询成交流水记录 */

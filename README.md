@@ -16,6 +16,8 @@
 
 [English](README.md) | [中文说明](README_ZH.md)
 
+📘 **[Product Guide: features & screenshots (Chinese)](docs/PRODUCT.md)**
+
 [![Python Version](https://img.shields.io/badge/Python-3.10+-3776AB?style=flat&logo=python)](https://python.org)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.110+-009688?style=flat&logo=fastapi)](https://fastapi.tiangolo.com)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
@@ -34,6 +36,7 @@
 - [5. Project Directory Structure](#5-project-directory-structure)
 - [6. Quick Start & CLI Demo](#6-quick-start--cli-demo)
 - [7. Web REST API Contract](#7-web-rest-api-contract)
+- [Product Guide (features & screenshots, Chinese)](docs/PRODUCT.md)
 
 ---
 
@@ -145,7 +148,9 @@ $$\text{NAV}_{t^+} = \frac{\text{Total Equity}_t + \Delta C}{\text{Total Shares}
 │   │   ├── notifier.py                # Telegram / Feishu / Discord alerts
 │   │   └── heartbeat.py               # External dead man's switch
 │   ├── api/
-│   │   ├── server.py                  # FastAPI control plane
+│   │   ├── server.py                  # FastAPI app assembly (lifespan, CORS, router mounting)
+│   │   ├── runtime.py                 # Process singletons: BotManager, single-instance lock
+│   │   ├── routes/                    # Domain routers: bots / control / analytics / paper orders / risk / market / stream
 │   │   ├── workbench_router.py        # OMS, reconciliation, shadow report, backtest APIs
 │   │   └── websocket.py               # Real-time event stream
 │   ├── auth/                          # Wallet sign-in (SIWE) and AES-256-GCM key vault
@@ -153,7 +158,9 @@ $$\text{NAV}_{t^+} = \frac{\text{Total Equity}_t + \Delta C}{\text{Total Shares}
 │   ├── bifrost/ · data/               # Multi-source market data (Binance → OKX → Hyperliquid), sentiment
 │   ├── database/                      # SQLite / PostgreSQL persistence and repositories
 │   ├── engine/
-│   │   ├── bot_manager.py             # Bot lifecycle, decision cycle, reconciliation, stop coverage
+│   │   ├── bot_manager.py             # TradingBotInstance (per-bot entry point) and BotManager
+│   │   ├── bot_services/              # Per bot: decision cycle, proposal review, execution, ledger, reconciliation, stop protection
+│   │   ├── fleet/                     # Platform: start/stop & kill switch, account conflicts, capital, restore, bootstrap, credential reload
 │   │   ├── scheduler.py               # Background decision and reconciliation loops
 │   │   └── shadow.py                  # Shadow Mode run report and promotion gate
 │   ├── execution/
@@ -197,6 +204,23 @@ python3 -m heimdall.cli serve --host 0.0.0.0 --port 8000
 ```
 
 Access the interactive OpenAPI / Swagger console at `http://localhost:8000/docs`.
+
+### Docker Deployment & Ports
+
+```bash
+./deploy.sh up      # or: docker compose up -d
+```
+
+| Container | Service | Container port | Notes |
+| :--- | :--- | :---: | :--- |
+| `heimdall-web` | Nginx + static frontend | 80 | Internal entry (behind a reverse proxy); proxies `/api/`, `/v1/`, `/ws/`, `/health` to `backend:8000` |
+| `heimdall-backend` | FastAPI (uvicorn, `--workers 1`) | 8000 | Reachable only inside the Compose network `heimdall-network` |
+| `heimdall-postgres` | PostgreSQL 16 | 5432 | Used by the backend only |
+
+- No container publishes a host port. For public access, attach a reverse proxy (or gateway) container to `heimdall-network`, forward to `heimdall-web:80`, and add the public origin to `HEIMDALL_CORS_ORIGINS`.
+- Health check after deployment (through the frontend Nginx to the backend): `docker exec heimdall-backend python -c "import urllib.request;print(urllib.request.urlopen('http://web/health').read().decode())"`.
+- Local development: the backend (`heimdall.cli serve`) listens on 8000; the frontend (`cd web && npm run dev`) listens on 3000 and proxies `/api` and `/ws` to 8000.
+- The Bifrost URL `localhost:8080` in `config/default.yaml` is a placeholder (Bifrost is not integrated yet) and is unrelated to the ports above.
 
 ### Run the Automated Test Suite
 

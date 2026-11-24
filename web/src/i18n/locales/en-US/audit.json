@@ -5,7 +5,37 @@
     "subtitle": "End-to-end record of multi-agent debate chain-of-thought (COT), StepTrace latency, idempotency keys and dual-track hard risk veto rationale"
   },
   "filter": {
-    "all": "All directions"
+    "all": "All directions",
+    "long": "Long",
+    "short": "Short",
+    "neutral": "Neutral",
+    "statusLabel": "Audit Status",
+    "statusAll": "All Statuses",
+    "statusCompleted": "Risk approved",
+    "statusRejected": "Risk rejected",
+    "statusHalted": "No proposal",
+    "statusFailure": "Failure / Error",
+    "execLabel": "Execution",
+    "execAll": "All Executions",
+    "execFilled": "Filled",
+    "execSubmitted": "Submitted",
+    "execBlocked": "Blocked before sending",
+    "execRejected": "Rejected by exchange",
+    "execCanceled": "Canceled / Unrecorded",
+    "searchPlaceholder": "Search Decision ID / Symbol / Error / Verdict...",
+    "searchClear": "Clear search",
+    "reset": "Reset filters",
+    "activeFilters": "{{count}} matching"
+  },
+  "pagination": {
+    "showing": "Showing {{from}} - {{to}} of {{total}} records",
+    "pageSize": "{{size}} / page",
+    "first": "First",
+    "prev": "Prev",
+    "next": "Next",
+    "last": "Last",
+    "jumpTo": "Go to",
+    "page": "page"
   },
   "empty": {
     "noRecords": "No decision audit records for this bot yet. Real decision traces will appear here after the first run.",
@@ -15,7 +45,9 @@
     "completed": "Risk approved",
     "rejected": "Risk rejected",
     "halted": "No proposal",
-    "unknown": "Outcome unknown"
+    "unknown": "Outcome unknown",
+    "refused": "Cycle refused",
+    "error": "Cycle error"
   },
   "row": {
     "verdict": "Verdict: {{action}}",
@@ -34,7 +66,11 @@
     "riskCheck": "Dual-track Risk Enforcement Check",
     "rejectReason": "Rejection reason: {{reason}}",
     "noRules": "No per-rule results returned for this round",
-    "noSteps": "No StepTrace details for this record (database history only stores the chain-of-thought, proposal and risk outcome)."
+    "noSteps": "No StepTrace details for this record (database history only stores the chain-of-thought, proposal and risk outcome).",
+    "cycleRefused": "This cycle was refused before deciding (fail-closed)",
+    "cycleError": "This cycle raised an uncaught exception",
+    "noFailureReason": "No reason recorded",
+    "failureHint": "No decision, proposal or order was produced in this cycle; the reason comes from the bot run events."
   },
   "steps": {
     "inspectHint": "Click to inspect the actual prompt sent to the LLM and its raw output",
@@ -57,5 +93,38 @@
     "idempotencyKey": "Idempotency key:",
     "dataSource": "Source: backend StepTrace records",
     "done": "Done"
+  },
+  "execution": {
+    "badge": "Execution: {{status}}",
+    "title": "Order Execution",
+    "decisionTime": "At decision",
+    "now": "Now",
+    "status": {
+      "filled": "Filled",
+      "partial": "Partially filled",
+      "submitted": "Order placed",
+      "canceled": "Canceled",
+      "blocked": "Blocked before sending",
+      "rejected": "Rejected by exchange",
+      "unknown": "Unknown (awaiting reconciliation)",
+      "noProposal": "Not sent (no proposal)",
+      "riskRejected": "Not sent (risk rejected)",
+      "unrecorded": "Not recorded"
+    },
+    "reason": "Reason: {{reason}}",
+    "inferred": "This record predates execution tracking; the status above is inferred from the proposal, risk outcome and chain-of-thought.",
+    "unrecordedHint": "Risk approved, but this record did not save an execution result, so it is unknown whether an order was sent. Check the trades on the NAV page.",
+    "submittedHint": "The limit order is on the exchange and not yet filled; unfilled orders are canceled automatically during reconciliation after the timeout. Rely on the \"Now\" status.",
+    "blockedHint": "The order was never sent to the exchange, so no position, fill or stop order was created.",
+    "orderCount": "{{n}} order(s)",
+    "noOrders": "No order details for this cycle.",
+    "col": {
+      "order": "Order ID",
+      "type": "Type",
+      "status": "Status",
+      "qty": "Filled / requested",
+      "price": "Limit / avg fill price"
+    },
+    "noOrderId": "Not created"
   }
 }

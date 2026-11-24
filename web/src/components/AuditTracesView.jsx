@@ -7,7 +7,9 @@
  * 1. 完整展示历史任务时间轴（Task ID, Trace ID, 标的, 周期, 最终结论）；
  * 2. 深入审查每个决策的证据链：Analyst 研报、多空对抗辩论要点、裁判判词；
  * 3. 审查两道风控规则核验明细与物理硬拦截记录；
- * 4. 展示 StepTrace 耗时流水线（微秒级可观测性）与本地降级标记。
+ * 4. 展示 StepTrace 耗时流水线（微秒级可观测性）与本地降级标记；
+ * 5. 下单执行结果（2026-11-24）：与"风控结论"分开显示每轮是否真的下了单——已成交 / 已挂单 / 发单前拦截 /
+ *    拒单 / 待对账，以及每笔订单"决策时"与"当前"的状态（后端 execution 字段）。
  */
 
 import React, { useState, useEffect } from 'react';
@@ -26,6 +28,15 @@ export default function AuditTracesView({ activeBotId = "bot_eth_debate_01" }) {
   const [decisions, setDecisions] = useState([]);
   const [loading, setLoading] = useState(false);
   const [filterStance, setFilterStance] = useState('ALL'); // ALL | LONG | SHORT | NEUTRAL
+  const [filterStatus, setFilterStatus] = useState('ALL'); // ALL | COMPLETED | REJECTED | HALTED | FAILURE
+  const [filterExecution, setFilterExecution] = useState('ALL'); // ALL | FILLED | SUBMITTED | BLOCKED | REJECTED | CANCELED
+  const [searchKeyword, setSearchKeyword] = useState('');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+  const [total, setTotal] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
+  const [filterCounts, setFilterCounts] = useState({});
+  const [jumpPageInput, setJumpPageInput] = useState('');
   const [expandedTraceId, setExpandedTraceId] = useState(null);
   const [selectedStepDetail, setSelectedStepDetail] = useState(null); // 查看指定 Step 的 Prompt 与 LLM 输出详情
 
@@ -35,6 +46,33 @@ export default function AuditTracesView({ activeBotId = "bot_eth_debate_01" }) {
   // 不再内置演示用的假历史轨迹，也不再推断“非观望即放行”、补全“全部规则 PASS”或编造 42ms 等耗时。
   const normalizeDecision = (item, idx) => {
     if (!item) return null;
+    // 被拒绝（CYCLE_REFUSED）或出错（CYCLE_ERROR）的轮次：后端来自运行事件，只有时间与原因，没有决策内容
+    if (item.record_type === 'CYCLE_REFUSED' || item.record_type === 'CYCLE_ERROR') {
+      return {
+        rowKey: item.event_id || `evt_${item.timestamp || idx}`,
+        isFailure: true,
+        decisionId: null,
+        symbol: item.symbol || '--',
+        timeframe: null,
+        action: null,
+        confidence: null,
+        regime: null,
+        verdict: null,
+        bullThesis: null,
+        bearThesis: null,
+        checkedRules: {},
+        riskApproved: null,
+        status: item.record_type === 'CYCLE_ERROR' ? 'ERROR' : 'REFUSED',
+        stepTraces: [],
+        totalLatencyMs: null,
+        idempotencyKey: null,
+        rejectionReason: null,
+        failureReason: item.error || null,
+        execution: null,
+        timestamp: item.timestamp ? String(item.timestamp).replace('T', ' ').slice(0, 19) : '--',
+        timestampRaw: item.timestamp ?? null,
+      };
+    }
     const synthesis = item.debate_synthesis || {};
     const analyst = item.analyst_brief || {};
     const bull = item.bull_thesis || {};
@@ -98,6 +136,29 @@ export default function AuditTracesView({ activeBotId = "bot_eth_debate_01" }) {
       ? Math.round(knownLatencies.reduce((a, b) => a + b, 0) * 10) / 10
       : null;
 
+    // 执行结果：后端 execution 字段（新记录由决策周期写入；升级前的记录由后端推断，带 inferred）。
+    // 订单的 current_* 字段是接口返回前从 OMS 补上的"当前"状态（例如已挂单的限价单之后被超时撤销）。
+    const exec = item.execution && typeof item.execution === 'object' ? item.execution : null;
+    const execution = exec ? {
+      status: exec.status || null,
+      currentStatus: exec.current_status || null,
+      reason: exec.reason || null,
+      inferred: Boolean(exec.inferred),
+      orders: (Array.isArray(exec.orders) ? exec.orders : []).map((o) => ({
+        proposalId: o.proposal_id || null,
+        clientOrderId: o.client_order_id || null,
+        orderType: o.order_type || null,
+        side: o.side || null,
+        status: o.status || null,
+        currentState: o.current_state || null,
+        reason: o.current_reason || o.reason || null,
+        requestedQty: o.requested_qty ?? null,
+        filledQty: o.current_filled_qty ?? o.filled_qty ?? null,
+        limitPrice: o.limit_price ?? null,
+        avgFillPrice: o.avg_fill_price ?? null,
+      })),
+    } : null;
+
     return {
       rowKey: item.decision_id || item.timestamp || `row_${idx}`,
       decisionId: item.decision_id || null,
@@ -116,108 +177,279 @@ export default function AuditTracesView({ activeBotId = "bot_eth_debate_01" }) {
       totalLatencyMs,
       idempotencyKey: proposal.idempotency_key || null,
       rejectionReason: risk.rejection_reason || risk.rejection_rule || item.rejection_reason || null,
+      execution,
       timestamp: item.timestamp ? String(item.timestamp).replace('T', ' ').slice(0, 19) : '--',
       timestampRaw: item.timestamp ?? null,
     };
   };
 
+  // 执行结果状态 → 文案（键名写全，便于多语言静态检查核对）
+  const execLabel = (s) => ({
+    FILLED: t('execution.status.filled'),
+    PARTIAL: t('execution.status.partial'),
+    SUBMITTED: t('execution.status.submitted'),
+    CANCELED: t('execution.status.canceled'),
+    BLOCKED: t('execution.status.blocked'),
+    REJECTED: t('execution.status.rejected'),
+    UNKNOWN: t('execution.status.unknown'),
+    NO_PROPOSAL: t('execution.status.noProposal'),
+    RISK_REJECTED: t('execution.status.riskRejected'),
+  }[s] || t('execution.status.unrecorded'));
+
+  // 执行结果状态 → 配色：成交绿、挂单中蓝、没发出去 / 被拒红、待确认 / 已撤销 / 未记录黄
+  const execStyle = (s) => (
+    s === 'FILLED' ? 'bg-success-soft text-success border-success-line'
+      : (s === 'PARTIAL' || s === 'SUBMITTED') ? 'bg-info-soft text-info border-info-line'
+      : (s === 'BLOCKED' || s === 'REJECTED') ? 'bg-danger-soft text-danger border-danger-line'
+      : (s === 'UNKNOWN' || s === 'CANCELED' || s === 'UNRECORDED') ? 'bg-warning-soft text-warning border-warning-line'
+      : 'bg-canvas text-ink-3 border-line'
+  );
+
+  // 没有进入下单的两种结果（无提案 / 风控拦截）已由风控徽章表达，不再重复显示执行结果
+  const NOT_SENT = ['NO_PROPOSAL', 'RISK_REJECTED'];
+
   const fetchTraces = async () => {
     setLoading(true);
     try {
-      const data = await getBotDecisions(activeBotId, 20);
-      if (Array.isArray(data) && data.length > 0) {
-        setDecisions(data.map((d, idx) => normalizeDecision(d, idx)).filter(Boolean));
+      const res = await getBotDecisions(activeBotId, {
+        page,
+        pageSize,
+        action: filterStance,
+        status: filterStatus,
+        executionStatus: filterExecution,
+        search: searchKeyword,
+        paginate: true,
+      });
+      if (res && Array.isArray(res.items)) {
+        setDecisions(res.items.map((d, idx) => normalizeDecision(d, idx)).filter(Boolean));
+        setTotal(res.total ?? res.items.length);
+        setTotalPages(res.total_pages ?? Math.max(1, Math.ceil((res.total || 0) / pageSize)));
+        setFilterCounts(res.counts || {});
+      } else if (Array.isArray(res)) {
+        setDecisions(res.map((d, idx) => normalizeDecision(d, idx)).filter(Boolean));
+        setTotal(res.length);
+        setTotalPages(Math.max(1, Math.ceil(res.length / pageSize)));
       } else {
         setDecisions([]);
+        setTotal(0);
+        setTotalPages(1);
       }
     } catch (err) {
       console.warn('[AuditTracesView] 加载真实决策审计记录异常:', err);
       setDecisions([]);
+      setTotal(0);
+      setTotalPages(1);
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    fetchTraces();
+    const timer = setTimeout(() => {
+      fetchTraces();
+    }, 200);
+    return () => clearTimeout(timer);
+  }, [activeBotId, page, pageSize, filterStance, filterStatus, filterExecution, searchKeyword]);
+
+  useEffect(() => {
+    setPage(1);
   }, [activeBotId]);
 
-  const filtered = decisions.filter(item => {
-    if (filterStance === 'ALL') return true;
-    return item.action === filterStance;
-  });
+  const hasActiveFilter = filterStance !== 'ALL' || filterStatus !== 'ALL' || filterExecution !== 'ALL' || Boolean(searchKeyword.trim());
+
+  const handleResetFilters = () => {
+    setFilterStance('ALL');
+    setFilterStatus('ALL');
+    setFilterExecution('ALL');
+    setSearchKeyword('');
+    setPage(1);
+  };
+
+  const getPageNumbers = () => {
+    if (totalPages <= 7) {
+      return Array.from({ length: totalPages }, (_, i) => i + 1);
+    }
+    if (page <= 4) {
+      return [1, 2, 3, 4, 5, '...', totalPages];
+    }
+    if (page >= totalPages - 3) {
+      return [1, '...', totalPages - 4, totalPages - 3, totalPages - 2, totalPages - 1, totalPages];
+    }
+    return [1, '...', page - 1, page, page + 1, '...', totalPages];
+  };
 
   return (
     <div className="flex-1 flex flex-col bg-canvas overflow-hidden">
       
       {/* 顶部控制栏 */}
-      <div className="h-14 bg-panel border-b border-line px-6 flex items-center justify-between shrink-0">
-        <div className="flex items-center space-x-3">
-          <div className="w-8 h-8 rounded-lg bg-muted border border-line-strong flex items-center justify-center text-brand">
-            <History className="w-4 h-4" />
+      <div className="bg-panel border-b border-line px-6 py-3 shrink-0 space-y-3">
+        {/* 第一行：标题与全局搜索、刷新 */}
+        <div className="flex items-center justify-between">
+          <div className="flex items-center space-x-3">
+            <div className="w-8 h-8 rounded-lg bg-muted border border-line-strong flex items-center justify-center text-brand">
+              <History className="w-4 h-4" />
+            </div>
+            <div>
+              <h1 className="text-sm font-bold text-ink flex items-center space-x-2">
+                <span>{t('header.title')}</span>
+                <span className="text-xs font-mono bg-muted text-ink-3 border border-line-strong px-2 py-0.5 rounded-full font-semibold">
+                  {t('header.sourceBadge')}
+                </span>
+              </h1>
+              <p className="text-xs text-ink-3">
+                {t('header.subtitle')}
+              </p>
+            </div>
           </div>
-          <div>
-            <h1 className="text-sm font-bold text-ink flex items-center space-x-2">
-              <span>{t('header.title')}</span>
-              <span className="text-xs font-mono bg-muted text-ink-3 border border-line-strong px-2 py-0.5 rounded-full font-semibold">
-                {t('header.sourceBadge')}
-              </span>
-            </h1>
-            <p className="text-xs text-ink-3">
-              {t('header.subtitle')}
-            </p>
+
+          <div className="flex items-center space-x-3">
+            {/* 关键词搜索框 */}
+            <div className="relative w-64">
+              <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-ink-4" />
+              <input
+                type="text"
+                value={searchKeyword}
+                onChange={(e) => { setSearchKeyword(e.target.value); setPage(1); }}
+                placeholder={t('filter.searchPlaceholder')}
+                className="w-full pl-8 pr-7 py-1.5 text-xs bg-surface border border-line rounded-lg text-ink placeholder:text-ink-4 focus:outline-hidden focus:border-brand transition shadow-2xs font-mono"
+              />
+              {searchKeyword && (
+                <button
+                  onClick={() => { setSearchKeyword(''); setPage(1); }}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-ink-4 hover:text-ink text-xs font-bold"
+                  title={t('filter.searchClear')}
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+
+            {/* 刷新按钮 */}
+            <button 
+              onClick={fetchTraces}
+              disabled={loading}
+              className="p-1.5 bg-surface border border-line-strong hover:border-brand rounded-lg text-xs font-semibold text-ink-2 flex items-center space-x-1.5 shadow-2xs transition"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin text-brand' : ''}`} />
+              <span>{t('common:refresh')}</span>
+            </button>
           </div>
         </div>
 
-        {/* 筛选与刷新 */}
-        <div className="flex items-center space-x-2">
-          <div className="flex bg-muted p-0.5 rounded-lg border border-line-strong text-xs">
-            {['ALL', 'LONG', 'SHORT', 'NEUTRAL'].map((stance) => (
-              <button
-                key={stance}
-                onClick={() => setFilterStance(stance)}
-                className={`px-2.5 py-1 rounded-md font-semibold transition ${
-                  filterStance === stance
-                    ? "bg-surface text-ink shadow-xs"
-                    : "text-ink-3 hover:text-ink"
-                }`}
+        {/* 第二行：多维筛选器 */}
+        <div className="flex items-center justify-between text-xs pt-2 border-t border-line/60">
+          <div className="flex items-center space-x-3 flex-wrap gap-y-2">
+            {/* 1. 多空方向 */}
+            <div className="flex bg-muted p-0.5 rounded-lg border border-line-strong text-xs">
+              {[
+                { id: 'ALL', label: t('filter.all') },
+                { id: 'LONG', label: t('filter.long') },
+                { id: 'SHORT', label: t('filter.short') },
+                { id: 'NEUTRAL', label: t('filter.neutral') },
+              ].map((stance) => (
+                <button
+                  key={stance.id}
+                  onClick={() => { setFilterStance(stance.id); setPage(1); }}
+                  className={`px-2.5 py-1 rounded-md font-semibold transition ${
+                    filterStance === stance.id
+                      ? "bg-surface text-ink shadow-2xs"
+                      : "text-ink-3 hover:text-ink"
+                  }`}
+                >
+                  {stance.label}
+                  {filterCounts?.actions?.[stance.id] !== undefined && stance.id !== 'ALL' && (
+                    <span className="ml-1 opacity-60 font-mono text-[10px]">({filterCounts.actions[stance.id]})</span>
+                  )}
+                </button>
+              ))}
+            </div>
+
+            {/* 2. 结论状态下拉 */}
+            <div className="flex items-center space-x-1.5">
+              <span className="text-ink-4 font-medium">{t('filter.statusLabel')}:</span>
+              <select
+                value={filterStatus}
+                onChange={(e) => { setFilterStatus(e.target.value); setPage(1); }}
+                className="bg-surface border border-line text-ink rounded-lg px-2.5 py-1 text-xs focus:outline-hidden focus:border-brand font-medium shadow-2xs cursor-pointer"
               >
-                {stance === 'ALL' ? t('filter.all') : stance}
-              </button>
-            ))}
+                <option value="ALL">{t('filter.statusAll')}</option>
+                <option value="COMPLETED">{t('filter.statusCompleted')}</option>
+                <option value="REJECTED">{t('filter.statusRejected')}</option>
+                <option value="HALTED">{t('filter.statusHalted')}</option>
+                <option value="FAILURE">{t('filter.statusFailure')}</option>
+              </select>
+            </div>
+
+            {/* 3. 执行结果下拉 */}
+            <div className="flex items-center space-x-1.5">
+              <span className="text-ink-4 font-medium">{t('filter.execLabel')}:</span>
+              <select
+                value={filterExecution}
+                onChange={(e) => { setFilterExecution(e.target.value); setPage(1); }}
+                className="bg-surface border border-line text-ink rounded-lg px-2.5 py-1 text-xs focus:outline-hidden focus:border-brand font-medium shadow-2xs cursor-pointer"
+              >
+                <option value="ALL">{t('filter.execAll')}</option>
+                <option value="FILLED">{t('filter.execFilled')}</option>
+                <option value="SUBMITTED">{t('filter.execSubmitted')}</option>
+                <option value="BLOCKED">{t('filter.execBlocked')}</option>
+                <option value="REJECTED">{t('filter.execRejected')}</option>
+                <option value="CANCELED">{t('filter.execCanceled')}</option>
+              </select>
+            </div>
           </div>
 
-          <button 
-            onClick={fetchTraces}
-            disabled={loading}
-            className="p-1.5 bg-surface border border-line-strong hover:border-brand rounded-lg text-xs font-semibold text-ink-2 flex items-center space-x-1.5 shadow-xs transition"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
-            <span>{t('common:refresh')}</span>
-          </button>
+          {/* 筛选重置 */}
+          {hasActiveFilter && (
+            <button
+              onClick={handleResetFilters}
+              className="px-2.5 py-1 text-xs text-brand hover:text-brand-hover hover:bg-brand-soft rounded-lg font-semibold flex items-center space-x-1 transition"
+            >
+              <span>✕</span>
+              <span>{t('filter.reset')}</span>
+            </button>
+          )}
         </div>
       </div>
 
       {/* 痕迹时间轴列表 */}
       <div className="flex-1 overflow-y-auto p-6 space-y-4">
-        {!loading && filtered.length === 0 && (
+        {loading && (
+          <div className="p-3 text-center text-xs text-ink-3 bg-surface/70 rounded-xl border border-line flex items-center justify-center space-x-2">
+            <RefreshCw className="w-3.5 h-3.5 animate-spin text-brand" />
+            <span>{t('common:loading', '加载中...')}</span>
+          </div>
+        )}
+        {!loading && decisions.length === 0 && (
           <div className="p-8 text-center text-xs text-ink-3 bg-surface rounded-xl border border-dashed border-line-strong">
-            {decisions.length === 0
+            {total === 0 && !hasActiveFilter
               ? t('empty.noRecords')
               : t('empty.noMatch')}
           </div>
         )}
-        {filtered.map((item) => {
+        {decisions.map((item) => {
           const isExpanded = expandedTraceId === item.rowKey;
           const isApproved = item.status === "COMPLETED";
           const isHalted = item.status === "HALTED";
           const isRejected = item.status === "REJECTED";
+          const isFailed = item.status === "ERROR" || item.status === "REFUSED";
           const statusStyle = isApproved
             ? 'bg-success-soft text-success border-success-line'
-            : isRejected
+            : (isRejected || isFailed)
             ? 'bg-danger-soft text-danger border-danger-line'
             : 'bg-canvas text-ink-3 border-line';
-          const statusText = isApproved ? t('status.completed') : isRejected ? t('status.rejected') : isHalted ? t('status.halted') : t('status.unknown');
+          const statusText = isApproved
+            ? t('status.completed')
+            : isRejected
+            ? t('status.rejected')
+            : item.status === 'ERROR'
+            ? t('status.error')
+            : item.status === 'REFUSED'
+            ? t('status.refused')
+            : isHalted
+            ? t('status.halted')
+            : t('status.unknown');
+          // 执行结果徽章：优先显示订单"当前"状态，没有则显示决策时的状态
+          const execShown = item.execution ? (item.execution.currentStatus || item.execution.status) : null;
 
           return (
             <div 
@@ -270,9 +502,14 @@ export default function AuditTracesView({ activeBotId = "bot_eth_debate_01" }) {
                 {/* 状态指示与折叠箭头 */}
                 <div className="flex items-center space-x-3">
                   <div className={`px-2.5 py-1 rounded-full text-xs font-bold border flex items-center space-x-1.5 ${statusStyle}`}>
-                    {isApproved ? <CheckCircle2 className="w-3.5 h-3.5" /> : isRejected ? <XCircle className="w-3.5 h-3.5" /> : <Minus className="w-3.5 h-3.5" />}
+                    {isApproved ? <CheckCircle2 className="w-3.5 h-3.5" /> : (isRejected || isFailed) ? <XCircle className="w-3.5 h-3.5" /> : <Minus className="w-3.5 h-3.5" />}
                     <span>{statusText}</span>
                   </div>
+                  {execShown && !item.isFailure && !NOT_SENT.includes(execShown) && (
+                    <div className={`px-2.5 py-1 rounded-full text-xs font-bold border ${execStyle(execShown)}`}>
+                      {t('execution.badge', { status: execLabel(execShown) })}
+                    </div>
+                  )}
 
                   <div className="text-ink-4">
                     {isExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
@@ -283,7 +520,20 @@ export default function AuditTracesView({ activeBotId = "bot_eth_debate_01" }) {
               {/* 展开的深度细节 */}
               {isExpanded && (
                 <div className="px-6 py-4 bg-panel border-t border-line space-y-4 text-xs animate-in fade-in duration-100">
-                  
+                  {item.isFailure ? (
+                    /* 失败轮次：只有原因，没有裁决、辩论、风控与步骤明细 */
+                    <div className="bg-surface p-3.5 rounded-xl border border-danger-line space-y-2">
+                      <div className="font-bold text-danger flex items-center space-x-1.5">
+                        <XCircle className="w-4 h-4" />
+                        <span>{item.status === 'ERROR' ? t('detail.cycleError') : t('detail.cycleRefused')}</span>
+                      </div>
+                      <p className="text-ink-2 leading-relaxed bg-panel p-2.5 rounded-lg border border-line-soft break-all">
+                        {item.failureReason || t('detail.noFailureReason')}
+                      </p>
+                      <p className="text-xs text-ink-4">{t('detail.failureHint')}</p>
+                    </div>
+                  ) : (<>
+
                   {/* 1. 裁判裁决书与幂等控制 */}
                   <div className="bg-surface p-3.5 rounded-xl border border-line space-y-2">
                     <div className="flex items-center justify-between text-ink font-bold">
@@ -357,6 +607,79 @@ export default function AuditTracesView({ activeBotId = "bot_eth_debate_01" }) {
                     </div>
                   </div>
 
+                  {/* 3.5 下单执行结果：风控通过之后订单到底发没发出去、成交没有 */}
+                  {item.execution && !NOT_SENT.includes(item.execution.status) && (
+                    <div className="bg-surface p-3.5 rounded-xl border border-line space-y-2">
+                      <div className="font-bold text-ink flex items-center justify-between">
+                        <span className="flex items-center space-x-1.5">
+                          <Activity className="w-4 h-4 text-brand" />
+                          <span>{t('execution.title')}</span>
+                        </span>
+                        <span className="flex items-center space-x-1.5 text-xs font-medium">
+                          <span className="text-ink-4">{t('execution.decisionTime')}</span>
+                          <span className={`px-2 py-0.5 rounded-full border font-bold ${execStyle(item.execution.status)}`}>
+                            {execLabel(item.execution.status)}
+                          </span>
+                          {item.execution.currentStatus && item.execution.currentStatus !== item.execution.status && (
+                            <>
+                              <span className="text-ink-4">→ {t('execution.now')}</span>
+                              <span className={`px-2 py-0.5 rounded-full border font-bold ${execStyle(item.execution.currentStatus)}`}>
+                                {execLabel(item.execution.currentStatus)}
+                              </span>
+                            </>
+                          )}
+                        </span>
+                      </div>
+
+                      {item.execution.reason && (
+                        <p className="text-danger leading-relaxed bg-panel p-2.5 rounded-lg border border-line-soft break-all">
+                          {t('execution.reason', { reason: item.execution.reason })}
+                        </p>
+                      )}
+                      {execShown === 'BLOCKED' && <p className="text-xs text-ink-3">{t('execution.blockedHint')}</p>}
+                      {execShown === 'SUBMITTED' && <p className="text-xs text-ink-3">{t('execution.submittedHint')}</p>}
+                      {execShown === 'UNRECORDED' && <p className="text-xs text-ink-3">{t('execution.unrecordedHint')}</p>}
+                      {item.execution.inferred && <p className="text-xs text-ink-4">{t('execution.inferred')}</p>}
+
+                      {item.execution.orders.length === 0 && !item.execution.inferred && (
+                        <div className="text-xs text-ink-4">{t('execution.noOrders')}</div>
+                      )}
+                      {item.execution.orders.length > 0 && (
+                        <div className="space-y-1.5 font-mono text-xs">
+                          {item.execution.orders.length > 1 && (
+                            <div className="text-ink-4">{t('execution.orderCount', { n: item.execution.orders.length })}</div>
+                          )}
+                          <div className="grid grid-cols-12 gap-2 text-ink-4 px-2">
+                            <span className="col-span-4">{t('execution.col.order')}</span>
+                            <span className="col-span-2">{t('execution.col.type')}</span>
+                            <span className="col-span-2">{t('execution.col.status')}</span>
+                            <span className="col-span-2">{t('execution.col.qty')}</span>
+                            <span className="col-span-2">{t('execution.col.price')}</span>
+                          </div>
+                          {item.execution.orders.map((o, oi) => {
+                            const shown = o.currentState || o.status;
+                            return (
+                              <div key={o.clientOrderId || `${o.proposalId}_${oi}`} className="bg-panel rounded-lg border border-line-soft p-2 space-y-1">
+                                <div className="grid grid-cols-12 gap-2 items-center">
+                                  <span className="col-span-4 truncate" title={o.clientOrderId || ''}>{o.clientOrderId || t('execution.noOrderId')}</span>
+                                  <span className="col-span-2">{[o.orderType, o.side].filter(Boolean).join(' · ') || '--'}</span>
+                                  <span className="col-span-2">
+                                    <span className={`px-1.5 py-0.5 rounded border ${execStyle(shown)}`}>{execLabel(shown)}</span>
+                                  </span>
+                                  <span className="col-span-2">{o.filledQty ?? '--'} / {o.requestedQty ?? '--'}</span>
+                                  <span className="col-span-2">{o.limitPrice ?? '--'} / {o.avgFillPrice ?? '--'}</span>
+                                </div>
+                                {o.reason && (
+                                  <div className="text-ink-3 break-all">{t('execution.reason', { reason: o.reason })}</div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
                   {/* 4. 微秒级 StepTrace 可观测流水线 */}
                   {(!item.stepTraces || item.stepTraces.length === 0) && (
                     <div className="p-3 rounded-xl border border-dashed border-line-strong bg-surface text-xs text-ink-4">
@@ -405,6 +728,7 @@ export default function AuditTracesView({ activeBotId = "bot_eth_debate_01" }) {
                       </div>
                     </div>
                   )}
+                  </>)}
 
                 </div>
               )}
@@ -412,6 +736,126 @@ export default function AuditTracesView({ activeBotId = "bot_eth_debate_01" }) {
             </div>
           );
         })}
+      </div>
+
+      {/* 底部翻页控制栏 */}
+      <div className="h-14 bg-panel border-t border-line px-6 flex items-center justify-between shrink-0 text-xs text-ink-2 select-none">
+        {/* 左侧：条数信息与每页大小切换 */}
+        <div className="flex items-center space-x-3">
+          <span className="text-ink-3">
+            {t('pagination.showing', {
+              from: total === 0 ? 0 : (page - 1) * pageSize + 1,
+              to: Math.min(total, page * pageSize),
+              total,
+            })}
+          </span>
+          <div className="h-3.5 w-px bg-line" />
+          <div className="flex items-center space-x-1 text-ink-3">
+            <select
+              value={pageSize}
+              onChange={(e) => { setPageSize(Number(e.target.value)); setPage(1); }}
+              className="bg-surface border border-line text-ink rounded-md px-2 py-0.5 text-xs focus:outline-hidden focus:border-brand font-mono shadow-2xs cursor-pointer"
+            >
+              {[10, 20, 50, 100].map((sz) => (
+                <option key={sz} value={sz}>
+                  {t('pagination.pageSize', { size: sz })}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        {/* 右侧：页码切换与直达 */}
+        <div className="flex items-center space-x-2">
+          {/* 首页 */}
+          <button
+            onClick={() => setPage(1)}
+            disabled={page <= 1 || loading}
+            className="px-2 py-1 bg-surface border border-line rounded-md text-xs font-medium text-ink-3 hover:text-ink disabled:opacity-40 disabled:cursor-not-allowed transition shadow-2xs"
+            title={t('pagination.first')}
+          >
+            «
+          </button>
+          {/* 上一页 */}
+          <button
+            onClick={() => setPage((p) => Math.max(1, p - 1))}
+            disabled={page <= 1 || loading}
+            className="px-2.5 py-1 bg-surface border border-line rounded-md text-xs font-semibold text-ink hover:text-brand disabled:opacity-40 disabled:cursor-not-allowed transition shadow-2xs"
+          >
+            {t('pagination.prev')}
+          </button>
+
+          {/* 数字页码列表 */}
+          <div className="flex items-center space-x-1">
+            {getPageNumbers().map((pNum, idx) => {
+              if (pNum === '...') {
+                return (
+                  <span key={`dots_${idx}`} className="px-1.5 py-0.5 text-ink-4 font-mono">
+                    ...
+                  </span>
+                );
+              }
+              const isCur = pNum === page;
+              return (
+                <button
+                  key={pNum}
+                  onClick={() => setPage(pNum)}
+                  disabled={loading}
+                  className={`w-7 h-7 rounded-md font-mono text-xs font-bold transition flex items-center justify-center ${
+                    isCur
+                      ? 'bg-brand text-white shadow-xs'
+                      : 'bg-surface border border-line text-ink-2 hover:border-brand hover:text-brand shadow-2xs'
+                  }`}
+                >
+                  {pNum}
+                </button>
+              );
+            })}
+          </div>
+
+          {/* 下一页 */}
+          <button
+            onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+            disabled={page >= totalPages || loading}
+            className="px-2.5 py-1 bg-surface border border-line rounded-md text-xs font-semibold text-ink hover:text-brand disabled:opacity-40 disabled:cursor-not-allowed transition shadow-2xs"
+          >
+            {t('pagination.next')}
+          </button>
+          {/* 末页 */}
+          <button
+            onClick={() => setPage(totalPages)}
+            disabled={page >= totalPages || loading}
+            className="px-2 py-1 bg-surface border border-line rounded-md text-xs font-medium text-ink-3 hover:text-ink disabled:opacity-40 disabled:cursor-not-allowed transition shadow-2xs"
+            title={t('pagination.last')}
+          >
+            »
+          </button>
+
+          {/* 跳转至指定页 */}
+          {totalPages > 3 && (
+            <div className="flex items-center space-x-1 pl-2 text-ink-4">
+              <span>{t('pagination.jumpTo')}</span>
+              <input
+                type="number"
+                min="1"
+                max={totalPages}
+                value={jumpPageInput}
+                onChange={(e) => setJumpPageInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    const target = parseInt(jumpPageInput, 10);
+                    if (!isNaN(target) && target >= 1 && target <= totalPages) {
+                      setPage(target);
+                      setJumpPageInput('');
+                    }
+                  }
+                }}
+                className="w-11 px-1.5 py-0.5 bg-surface border border-line rounded-md text-ink text-center font-mono text-xs focus:outline-hidden focus:border-brand shadow-2xs"
+              />
+              <span>{t('pagination.page')}</span>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* StepTrace 深度审查抽屉 (Prompt & LLM Response Inspector) */}

@@ -5,7 +5,37 @@
     "subtitle": "全链路记录多 Agent 辩论思维链 (COT)、StepTrace 耗时、幂等键与双轨硬风控一票否决依据"
   },
   "filter": {
-    "all": "全部方向"
+    "all": "全部方向",
+    "long": "做多 LONG",
+    "short": "做空 SHORT",
+    "neutral": "观望 NEUTRAL",
+    "statusLabel": "结论状态",
+    "statusAll": "全部状态",
+    "statusCompleted": "风控通过",
+    "statusRejected": "风控拦截",
+    "statusHalted": "无提案/观望",
+    "statusFailure": "运行异常/被拒",
+    "execLabel": "执行结果",
+    "execAll": "全部执行",
+    "execFilled": "已成交",
+    "execSubmitted": "挂单中",
+    "execBlocked": "发单拦截",
+    "execRejected": "交易所拒单",
+    "execCanceled": "已撤销/未记录",
+    "searchPlaceholder": "搜索决策 ID / 标的 / 错误 / 裁决...",
+    "searchClear": "清空搜索",
+    "reset": "重置筛选",
+    "activeFilters": "已筛选 {{count}} 条"
+  },
+  "pagination": {
+    "showing": "显示第 {{from}} - {{to}} 条，共 {{total}} 条",
+    "pageSize": "{{size}} 条/页",
+    "first": "首页",
+    "prev": "上一页",
+    "next": "下一页",
+    "last": "末页",
+    "jumpTo": "跳至",
+    "page": "页"
   },
   "empty": {
     "noRecords": "该机器人暂无决策审计记录。完成首轮推演后，这里会显示真实的决策轨迹。",
@@ -15,7 +45,9 @@
     "completed": "风控通过",
     "rejected": "风控拦截",
     "halted": "本轮无提案",
-    "unknown": "结论未知"
+    "unknown": "结论未知",
+    "refused": "本轮被拒绝执行",
+    "error": "本轮执行出错"
   },
   "row": {
     "verdict": "裁决: {{action}}",
@@ -34,7 +66,11 @@
     "riskCheck": "双轨风控核验审计 (Risk Enforcement Check)",
     "rejectReason": "拦截原因: {{reason}}",
     "noRules": "本轮未返回逐条规则明细",
-    "noSteps": "该记录没有 StepTrace 明细（数据库历史记录只保存思维链、提案与风控结论）。"
+    "noSteps": "该记录没有 StepTrace 明细（数据库历史记录只保存思维链、提案与风控结论）。",
+    "cycleRefused": "本轮在决策前被拒绝执行（失败即关闭）",
+    "cycleError": "本轮执行时出现未捕获的异常",
+    "noFailureReason": "未记录原因",
+    "failureHint": "这一轮没有产生决策、提案与下单；原因来自机器人运行事件记录。"
   },
   "steps": {
     "inspectHint": "点击展开查看向大模型提交的真实提示词与原始输出",
@@ -57,5 +93,38 @@
     "idempotencyKey": "幂等键:",
     "dataSource": "数据来源: 后端 StepTrace 记录",
     "done": "完成阅知"
+  },
+  "execution": {
+    "badge": "执行：{{status}}",
+    "title": "下单执行结果 (Order Execution)",
+    "decisionTime": "决策时",
+    "now": "当前",
+    "status": {
+      "filled": "已成交",
+      "partial": "部分成交",
+      "submitted": "已挂单",
+      "canceled": "已撤销",
+      "blocked": "发单前拦截",
+      "rejected": "交易所拒单",
+      "unknown": "状态未知（待对账）",
+      "noProposal": "未下单（无提案）",
+      "riskRejected": "未下单（风控拦截）",
+      "unrecorded": "未记录"
+    },
+    "reason": "原因: {{reason}}",
+    "inferred": "这是升级前的记录，没有保存执行结果，以上状态根据提案、风控结论与思维链推断。",
+    "unrecordedHint": "风控通过，但这条记录没有保存执行结果，无法判断是否下单；请以净值页的成交记录为准。",
+    "submittedHint": "限价单已挂到交易所、尚未成交；超时未成交会在对账时自动撤销，请以「当前」状态为准。",
+    "blockedHint": "订单没有发到交易所，不会产生持仓、成交或止损单。",
+    "orderCount": "共 {{n}} 笔订单",
+    "noOrders": "本轮没有订单明细。",
+    "col": {
+      "order": "订单号",
+      "type": "类型",
+      "status": "状态",
+      "qty": "成交 / 委托",
+      "price": "委托价 / 成交均价"
+    },
+    "noOrderId": "未生成"
   }
 }

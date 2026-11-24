@@ -52,7 +52,8 @@
     "foundCount": "对账发现 {{n}} 项偏差",
     "found": "对账发现偏差",
     "autoPaused": "，系统已自动暂停机器人保护本金！",
-    "failed": "对账失败: {{message}}"
+    "failed": "对账失败: {{message}}",
+    "resumeRefused": "对账一致，但未能恢复运行：{{reason}}"
   },
   "rules": {
     "unavailable": "风控雷达遥测不可用：{{error}}",

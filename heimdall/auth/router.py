@@ -35,6 +35,43 @@ auth_router = APIRouter(prefix="/api/v1", tags=["Authentication & Key Vault"])
 
 
 # ==============================================================================
+# 凭证热重载（2026-11-22 修复）
+# ==============================================================================
+# 新建 / 编辑 / 激活 / 删除密钥后，让运行中的机器人立即改用新的激活密钥。
+# 实现在 heimdall/engine/fleet/credentials.py（CredentialReloader），这里只负责判断何时触发。
+# - 数据库写入已经成功，热重载失败只记 WARN，不影响接口返回；
+# - bot_manager 在函数内导入：auth 路由被 heimdall.api.server 导入时，api.runtime 可能尚未加载。
+
+#: 被视为 LLM 密钥的服务商（与本文件激活互斥 SQL、LLMService 检索条件保持一致）
+LLM_PROVIDERS = ("deepseek", "anthropic", "openai", "gemini", "custom", "openai_compatible")
+
+
+def _is_llm_key(category: Optional[str], provider: Optional[str]) -> bool:
+    """category=llms，或服务商属于 LLM_PROVIDERS"""
+    return (category or "").strip().lower() == "llms" or (provider or "").strip().lower() in LLM_PROVIDERS
+
+
+async def _hot_reload_llm(wallet: str, reason: str) -> None:
+    """强制重载该钱包名下运行中机器人的全部 LLM 服务（失败只告警）"""
+    try:
+        from heimdall.api.runtime import bot_manager
+
+        await bot_manager.reload_llm_credentials(wallet, reason=reason)
+    except Exception as exc:
+        logger.warning("[凭证热重载] 刷新钱包 %s 的 LLM 凭证失败（原因=%s）: %s", wallet, reason, exc)
+
+
+async def _hot_reload_exchange(wallet: str, provider: str, reason: str) -> None:
+    """重新注入该钱包名下对应交易所机器人的凭证（失败只告警）"""
+    try:
+        from heimdall.api.runtime import bot_manager
+
+        await bot_manager.reload_exchange_credentials(wallet, provider, reason=reason)
+    except Exception as exc:
+        logger.warning("[凭证热重载] 刷新钱包 %s 的 %s 交易所凭证失败（原因=%s）: %s", wallet, provider, reason, exc)
+
+
+# ==============================================================================
 # 请求与响应模型 (Pydantic Schemas)
 # ==============================================================================
 
@@ -288,6 +325,10 @@ async def create_vault_key(
         caller_wallet, key_id, req.category, req.provider.lower(), req.label,
     )
 
+    # 新建并设为激活的 LLM 密钥：运行中的机器人立即改用它
+    if is_active and _is_llm_key(req.category, req.provider):
+        await _hot_reload_llm(caller_wallet, reason=f"新建并激活 LLM 密钥 {key_id}")
+
     return {
         "success": True,
         "key_id": key_id,
@@ -427,18 +468,16 @@ async def update_vault_key(
         (new_label, new_mask, new_encrypted, now_iso, key_id),
     )
 
-    # 若当前密钥处于激活生效状态，触发热重载（同时通过 configure_credentials 重建交易所 SDK 客户端）
+    # 若当前密钥处于激活生效状态，触发热重载：
+    # - LLM 密钥：刷新名下机器人的全部 LLM 服务（含按角色路由的分析师 / 辩论 / 裁判模型）；
+    # - 交易所密钥：通过 configure_credentials 重建对应交易所机器人的 SDK 客户端（同一账户换新 API 密钥）
     if bool(row.get("is_active")):
-        try:
-            from heimdall.api.server import bot_manager
-            for bot in bot_manager.bots.values():
-                if bot.owner_wallet == caller_wallet:
-                    if hasattr(bot, "llm_service") and bot.llm_service:
-                        await bot.llm_service.ensure_credentials(force_refresh=True, owner_wallet=caller_wallet)
-                    if bot.exchange.value.lower() == str(row.get("provider") or "").lower():
-                        await bot.hydrate_exchange_credentials_from_vault(force_refresh=True)
-        except Exception as e:
-            logger.debug("动态热重载活跃 Bot 凭证告警: %s", e)
+        if _is_llm_key(row.get("category"), row.get("provider")):
+            await _hot_reload_llm(caller_wallet, reason=f"编辑激活中的 LLM 密钥 {key_id}")
+        else:
+            await _hot_reload_exchange(
+                caller_wallet, str(row.get("provider") or ""), reason=f"编辑激活中的交易所密钥 {key_id}",
+            )
 
     logger.info(
         "[密钥配置更新] 钱包=%s | key_id=%s | model=%s | base_url=%s",
@@ -494,16 +533,15 @@ async def activate_vault_key(
         (now_iso, key_id),
     )
 
-    # 尝试通知活跃机器人的 LLM 服务动态热重载
-    try:
-        from heimdall.engine.bot_manager import bot_manager
-        if hasattr(bot_manager, "llm_service") and bot_manager.llm_service:
-            await bot_manager.llm_service.ensure_credentials(force_refresh=True, owner_wallet=caller_wallet)
-        for bot in bot_manager.active_bots.values():
-            if hasattr(bot, "pipeline") and hasattr(bot.pipeline, "llm"):
-                await bot.pipeline.llm.ensure_credentials(force_refresh=True, owner_wallet=caller_wallet)
-    except Exception as e:
-        logger.debug("动态热重载活跃 Bot 的 LLM 凭证告警: %s", e)
+    # 切换激活的 LLM 密钥：运行中的机器人立即改用新密钥。
+    # （修复前这里导入了不存在的 heimdall.engine.bot_manager.bot_manager，热重载从未执行）
+    if _is_llm_key(category, row.get("provider")):
+        await _hot_reload_llm(caller_wallet, reason=f"切换激活 LLM 密钥 {key_id}")
+    else:
+        # 交易所密钥决定机器人在哪个交易所账户交易，运行中切换会让独立账本与账户对不上，因此不热切换
+        logger.info(
+            "[密钥激活] 交易所密钥 %s 已设为激活；运行中的机器人继续使用当前已注入的凭证，重启机器人后生效", key_id,
+        )
 
     logger.info("[密钥激活] 钱包=%s | 成功激活凭据: key_id=%s, label=%s, provider=%s", caller_wallet, key_id, row.get("label"), row.get("provider"))
     return {
@@ -524,7 +562,7 @@ async def delete_vault_key(
     【防越权加固】：严格核验所有权，非凭据所属钱包禁止跨租户物理删除！
     """
     rows = await db_manager.execute_query(
-        "SELECT wallet_address FROM user_api_keys WHERE key_id = ?",
+        "SELECT wallet_address, category, provider, is_active FROM user_api_keys WHERE key_id = ?",
         (key_id,)
     )
     if rows:
@@ -538,6 +576,9 @@ async def delete_vault_key(
             "DELETE FROM user_api_keys WHERE key_id = ?",
             (key_id,)
         )
+        # 删除的是激活中的 LLM 密钥：运行中的机器人立即停止使用它（改用其他激活密钥或本地算法兜底）
+        if bool(rows[0].get("is_active")) and _is_llm_key(rows[0].get("category"), rows[0].get("provider")):
+            await _hot_reload_llm(caller_wallet, reason=f"删除激活中的 LLM 密钥 {key_id}")
         return {"success": True, "message": f"凭证 {key_id} 已安全销毁"}
 
     if key_id in PRESET_DEMO_KEYS or key_id.startswith("key_"):

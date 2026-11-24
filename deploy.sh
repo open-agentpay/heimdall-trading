@@ -57,15 +57,11 @@ cmd_up() {
   echo ">>> [Heimdall 部署] 正在启动生产服务栈..."
   $COMPOSE_CMD up -d "$@"
   $COMPOSE_CMD ps
-  WEB_PORT_VAL="$(grep -E '^WEB_PORT=' .env 2>/dev/null | cut -d '=' -f2 || true)"
-  WEB_PORT_VAL="${WEB_PORT_VAL:-3005}"
-  HOST_BIND_IP_VAL="$(grep -E '^HOST_BIND_IP=' .env 2>/dev/null | cut -d '=' -f2 || true)"
-  HOST_BIND_IP_VAL="${HOST_BIND_IP_VAL:-127.0.0.1}"
   echo ""
   echo "=============================================================================="
   echo "🚀 Heimdall Trading Platform 服务栈已运行！"
-  echo "  - 本地反代/直连端口 : http://${HOST_BIND_IP_VAL}:${WEB_PORT_VAL}"
-  echo "  - 后端健康检查       : http://${HOST_BIND_IP_VAL}:${WEB_PORT_VAL}/health"
+  echo "  - 前端入口（内网）   : http://heimdall-web:80（不映射宿主机端口，需由加入 heimdall-network 的反代转发）"
+  echo "  - 健康检查           : docker exec heimdall-backend python -c \"import urllib.request;print(urllib.request.urlopen('http://web/health').read().decode())\""
   echo "  - 实时日志查看       : ./deploy.sh logs"
   echo "=============================================================================="
 }

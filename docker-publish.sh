@@ -108,7 +108,7 @@ echo "2. 在服务器 .env 中指定镜像仓库与版本（或直接作为环�
 echo "   ------------------------------------------------------------"
 echo "   DOCKER_REGISTRY=${REGISTRY}"
 echo "   IMAGE_TAG=${TAG}"
-echo "   WEB_PORT=80"
+echo "   （三个容器均不映射宿主机端口；对外访问需由加入 heimdall-network 的反代转发到 heimdall-web:80）"
 echo "   ------------------------------------------------------------"
 echo "3. 在服务器执行一键拉取并启动："
 echo "   $ ./deploy.sh pull"

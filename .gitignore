@@ -59,5 +59,7 @@ node_modules/
 web/node_modules/
 web/dist/
 
-docs/
+# 文档目录默认不纳入版本；只提交产品说明（对外文档）
+docs/*
+!docs/PRODUCT.md
 skills/

@@ -16,6 +16,8 @@
 
 [English](README.md) | [中文说明](README_ZH.md)
 
+📘 **[产品说明：功能介绍与界面截图](docs/PRODUCT.md)**
+
 [![Python Version](https://img.shields.io/badge/Python-3.10+-3776AB?style=flat&logo=python)](https://python.org)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.110+-009688?style=flat&logo=fastapi)](https://fastapi.tiangolo.com)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
@@ -34,6 +36,7 @@
 - [5. 工程目录结构](#5-工程目录结构)
 - [6. 快速开始与演练](#6-快速开始与演练)
 - [7. Web REST API 契约](#7-web-rest-api-契约)
+- [产品说明（功能与界面截图）](docs/PRODUCT.md)
 
 ---
 
@@ -145,7 +148,9 @@ $$\text{NAV}_{t^+} = \frac{\text{Total Equity}_t + \Delta C}{\text{Total Shares}
 │   │   ├── notifier.py                # Telegram / 飞书 / Discord 告警
 │   │   └── heartbeat.py               # 外部死信心跳
 │   ├── api/
-│   │   ├── server.py                  # FastAPI 控制台接口
+│   │   ├── server.py                  # FastAPI 应用装配（生命周期、CORS、挂载路由）
+│   │   ├── runtime.py                 # 进程级单例：BotManager、单实例运行锁
+│   │   ├── routes/                    # 业务接口：机器人管理 / 控制 / 绩效审计 / 模拟下单 / 风控急停 / 行情 / 推流
 │   │   ├── workbench_router.py        # OMS、对账、影子报告、回测接口
 │   │   └── websocket.py               # 实时事件推送
 │   ├── auth/                          # 钱包登录（SIWE）与 AES-256-GCM 密钥金库
@@ -153,7 +158,9 @@ $$\text{NAV}_{t^+} = \frac{\text{Total Equity}_t + \Delta C}{\text{Total Shares}
 │   ├── bifrost/ · data/               # 多源行情（Binance → OKX → Hyperliquid）与情绪数据
 │   ├── database/                      # SQLite / PostgreSQL 持久化与仓储
 │   ├── engine/
-│   │   ├── bot_manager.py             # 机器人生命周期、决策循环、对账、止损覆盖
+│   │   ├── bot_manager.py             # TradingBotInstance（单个机器人入口）与 BotManager
+│   │   ├── bot_services/              # 单个机器人：决策周期、提案复审、下单、账本、对账、止损保护、规格、标记价格
+│   │   ├── fleet/                     # 平台级：启停与急停、同账户冲突、资金划拨、重启恢复、首次引导、凭证热重载
 │   │   ├── scheduler.py               # 后台决策与对账循环
 │   │   └── shadow.py                  # 影子模式运行报告与晋级门控
 │   ├── execution/
@@ -197,6 +204,23 @@ python3 -m heimdall.cli serve --host 0.0.0.0 --port 8000
 ```
 
 访问 `http://localhost:8000/docs` 查看交互式 Swagger API 文档。
+
+### Docker 部署与端口
+
+```bash
+./deploy.sh up      # 或 docker compose up -d
+```
+
+| 容器 | 服务 | 容器内端口 | 说明 |
+| :--- | :--- | :---: | :--- |
+| `heimdall-web` | Nginx + 前端静态资源 | 80 | 内网入口（由反代转发）；`/api/`、`/v1/`、`/ws/`、`/health` 反代到 `backend:8000` |
+| `heimdall-backend` | FastAPI（uvicorn，`--workers 1`） | 8000 | 仅在 Compose 内网 `heimdall-network` 中访问 |
+| `heimdall-postgres` | PostgreSQL 16 | 5432 | 仅供后端连接 |
+
+- 三个容器都不映射宿主机端口。对外访问需让反向代理（或网关）容器加入 `heimdall-network`，转发到 `heimdall-web:80`，并把对外域名加入 `HEIMDALL_CORS_ORIGINS`。
+- 部署后健康检查（经前端 Nginx 转发到后端）：`docker exec heimdall-backend python -c "import urllib.request;print(urllib.request.urlopen('http://web/health').read().decode())"`。
+- 本地开发：后端 `heimdall.cli serve` 监听 8000，前端 `cd web && npm run dev` 监听 3000，并把 `/api`、`/ws` 代理到 8000。
+- `config/default.yaml` 中的 Bifrost 地址 `localhost:8080` 为预留项（Bifrost 尚未接入），与上述端口无关。
 
 ### 运行自动化单元测试
 

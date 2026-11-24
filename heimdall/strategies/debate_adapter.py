@@ -224,6 +224,20 @@ class DebateStrategyAdapter(BaseStrategy):
                 diagnostics=diagnostics,
             )
 
+        # 交易所对齐（2026-11-24 修复）：
+        # 多 Agent 流水线里的 StrategyAgent 并不知道机器人绑定的是哪家交易所，提案上的交易所一直写死为
+        # HYPERLIQUID；OMS 按「交易所 / 市场 / 标的」查交易规格，币安机器人因此永远查不到规格，
+        # 每一笔开仓提案都在发单前被拦截（审计页显示"风控通过"，净值里却没有订单）。
+        # 这里改为以机器人自身的交易所（ctx.exchange）为准；平仓提案走 _build_proposal，本来就使用 ctx.exchange。
+        if proposal.trade_action.exchange != ctx.exchange:
+            logger.info(
+                "[DebateAdapter] bot=%s 提案 %s 的交易所 %s 与机器人交易所 %s 不一致，已按机器人交易所改写",
+                self.bot_id, proposal.proposal_id,
+                getattr(proposal.trade_action.exchange, "value", proposal.trade_action.exchange),
+                getattr(ctx.exchange, "value", ctx.exchange),
+            )
+            proposal.trade_action.exchange = ctx.exchange
+
         # 若具备有效 ATR14，对止损点位做波动率自适应保护（防止窄幅固定止损在正常波动中被扫）
         if atr14 > 0 and proposal.trade_action.stop_loss_price is not None:
             entry = proposal.trade_action.target_price

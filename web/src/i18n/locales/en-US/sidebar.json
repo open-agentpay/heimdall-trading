@@ -10,7 +10,9 @@
     "running": "Running",
     "standby": "Standby",
     "tokensTitle": "Actual cumulative LLM token usage",
-    "delete": "Delete bot {{name}}"
+    "delete": "Delete bot {{name}}",
+    "demo": "Demo",
+    "demoTitle": "Demo bot: runs in memory only with local simulated fills and never writes to the database; NAV, positions and audit records are cleared when the service restarts"
   },
   "dataHub": {
     "title": "Data Hub",
