@@ -217,15 +217,24 @@ class TradingRepository:
             ),
         )
 
-    async def get_decision_history(self, agent_id: str, limit: int = 50) -> List[Dict[str, Any]]:
-        """查询指定机器人最近 N 轮决策审计日志"""
-        sql = """
-        SELECT * FROM agent_decisions
-        WHERE agent_id = ?
-        ORDER BY timestamp DESC
-        LIMIT ?;
-        """
-        rows = await self.db.execute_query(sql, (agent_id, limit))
+    async def get_decision_history(self, agent_id: str, limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
+        """查询指定机器人最近 N 轮决策审计日志（支持 offset 分页）"""
+        if offset > 0:
+            sql = """
+            SELECT * FROM agent_decisions
+            WHERE agent_id = ?
+            ORDER BY timestamp DESC
+            LIMIT ? OFFSET ?;
+            """
+            rows = await self.db.execute_query(sql, (agent_id, limit, offset))
+        else:
+            sql = """
+            SELECT * FROM agent_decisions
+            WHERE agent_id = ?
+            ORDER BY timestamp DESC
+            LIMIT ?;
+            """
+            rows = await self.db.execute_query(sql, (agent_id, limit))
         for r in rows:
             if "thinking_logs_json" in r and r["thinking_logs_json"]:
                 r["thinking_logs"] = json.loads(r["thinking_logs_json"])
@@ -237,6 +246,14 @@ class TradingRepository:
                 except (TypeError, ValueError) as exc:
                     logger.warning("[Repository] 决策 %s 的 execution_json 无法解析，按未记录处理: %s", r.get("decision_id"), exc)
         return rows
+
+    async def count_decisions(self, agent_id: str) -> int:
+        """统计指定机器人的决策历史总条数"""
+        sql = "SELECT COUNT(*) as cnt FROM agent_decisions WHERE agent_id = ?;"
+        rows = await self.db.execute_query(sql, (agent_id,))
+        if rows and "cnt" in rows[0]:
+            return int(rows[0]["cnt"])
+        return 0
 
     # -------------------------------------------------------------------------
     # 3. 真实/模拟成交流水记录 (Trades)

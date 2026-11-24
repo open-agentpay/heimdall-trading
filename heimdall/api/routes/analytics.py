@@ -28,8 +28,10 @@ from heimdall.api.audit_feed import (
     FAILURE_KINDS,
     attach_order_states,
     collect_client_order_ids,
+    filter_record,
     merge_feed,
     order_state_view,
+    paginate_feed,
 )
 from heimdall.api.routes.common import _assert_bot_readable
 from heimdall.api.runtime import bot_manager
@@ -129,35 +131,77 @@ async def get_bot_nav(
 @router.get("/api/v1/bots/{bot_id}/decisions", tags=["Audit & Explainability"])
 async def get_bot_decisions(
         bot_id: str,
-        limit: int = Query(default=20, ge=1, le=100),
+        limit: int = Query(default=20, ge=1, le=200),
+        page: Optional[int] = Query(default=None, ge=1, description="当前页码（传入时启用分页模式）"),
+        page_size: Optional[int] = Query(default=20, ge=1, le=100, description="每页条数"),
+        action: Optional[str] = Query(default=None, description="方向过滤：LONG / SHORT / NEUTRAL"),
+        status: Optional[str] = Query(default=None, description="结论状态过滤：COMPLETED / REJECTED / HALTED / FAILURE"),
+        execution_status: Optional[str] = Query(default=None, description="执行状态过滤：FILLED / SUBMITTED / BLOCKED / REJECTED 等"),
+        search: Optional[str] = Query(default=None, description="搜索关键词：匹配决策ID、标的、错误信息、裁决"),
+        paginate: bool = Query(default=False, description="是否返回包含总数与分页元数据的对象"),
         include_failures: bool = Query(default=True, description="是否包含被拒绝 / 出错的决策轮次"),
         caller_wallet: Optional[str] = Depends(resolve_caller_wallet),
-) -> List[Dict[str, Any]]:
+) -> Any:
     """
     获取指定机器人的决策审计流（含多租户读隔离），按时间倒序：
     内存中的完整决策记录 + 数据库历史决策（按 decision_id 去重，优先内存）+ 被拒绝 / 出错的轮次。
 
     2026-11-23 修复：原来内存里只要有记录就不再读数据库，服务重启后历史审计全部看不到。
-    每行带 ``source``（memory / database / run_event）；失败轮次带 ``record_type`` 与 ``error``。
-    任一数据源读取失败只记 WARN，用其余来源照常返回。
+    2026-11-24 增强：支持分页（page / page_size）、多维筛选（action / status / execution_status / search）。
+    - 兼容老调用：当未传 page 且 paginate=False 时，直接返回 List[Dict[str, Any]]。
+    - 分页调用：当传入 page 或 paginate=True 时，返回包含 items / total / page / page_size / total_pages / counts 的分页对象。
     """
     bot = bot_manager.bots.get(bot_id)
     _assert_bot_readable(bot, bot_id, caller_wallet)
-    memory = list(bot.decision_history[-limit:]) if bot else []
+
+    # 规范化参数（兼容测试直接作为普通函数调用注入 Query 对象）
+    def _qp(val: Any, default: Any) -> Any:
+        if hasattr(val, "default"):
+            d = getattr(val, "default")
+            return default if d is ... else d
+        return val if val is not None else default
+
+    limit = int(_qp(limit, 20))
+    page_val = _qp(page, None)
+    page_int = int(page_val) if page_val is not None else None
+    page_size_int = int(_qp(page_size, 20))
+    paginate_bool = bool(_qp(paginate, False))
+    action_str = _qp(action, None)
+    status_str = _qp(status, None)
+    exec_status_str = _qp(execution_status, None)
+    search_str = _qp(search, None)
+    include_failures = bool(_qp(include_failures, True))
+
+    is_paginated = paginate_bool or (page_int is not None)
+
+    # 分页模式下拉取较大候选池（兼顾深翻页与复合检索），非分页模式保持原有的 limit 截断
+    candidate_limit = max(500, (page_int or 1) * page_size_int * 5) if is_paginated else limit
+    memory = list(bot.decision_history) if (bot and is_paginated) else (list(bot.decision_history[-limit:]) if bot else [])
     try:
-        db_rows = await trading_repo.get_decision_history(bot_id, limit=limit)
+        db_rows = await trading_repo.get_decision_history(bot_id, limit=candidate_limit)
     except Exception as exc:
         logger.warning("[审计流] 读取 %s 的数据库决策记录失败，只返回内存记录: %s", bot_id, exc)
         db_rows = []
     failures: List[Dict[str, Any]] = []
     if include_failures:
         try:
-            failures = await trading_repo.list_run_events_by_kind(bot_id, FAILURE_KINDS, limit=limit)
+            failures = await trading_repo.list_run_events_by_kind(bot_id, FAILURE_KINDS, limit=candidate_limit)
         except Exception as exc:
             logger.warning("[审计流] 读取 %s 的失败轮次失败，审计页不显示失败轮次: %s", bot_id, exc)
-    feed = merge_feed(memory, db_rows, failures, limit, symbol=bot.symbol if bot else None)
-    await _attach_current_order_states(bot, bot_id, feed)
-    return feed
+
+    merged = merge_feed(memory, db_rows, failures, limit=None if is_paginated else limit, symbol=bot.symbol if bot else None)
+
+    if is_paginated:
+        filtered = [
+            r for r in merged
+            if filter_record(r, action=action_str, status=status_str, execution_status=exec_status_str, search=search_str)
+        ]
+        result = paginate_feed(filtered, page=page_int or 1, page_size=page_size_int)
+        await _attach_current_order_states(bot, bot_id, result["items"])
+        return result
+
+    await _attach_current_order_states(bot, bot_id, merged)
+    return merged
 
 
 async def _attach_current_order_states(bot: Any, bot_id: str, feed: List[Dict[str, Any]]) -> None:

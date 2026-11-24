@@ -78,8 +78,11 @@ class MemoryOnlyRepository:
                               risk_review: Any, execution: Optional[Dict[str, Any]] = None):
         self._skip("record_decision")
 
-    async def get_decision_history(self, agent_id: str, limit: int = 50) -> List[Dict[str, Any]]:
+    async def get_decision_history(self, agent_id: str, limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
         return []
+
+    async def count_decisions(self, agent_id: str) -> int:
+        return 0
 
     async def record_trade(self, trade: Any, agent_id: str, decision_id: Optional[str] = None):
         self._skip("record_trade")

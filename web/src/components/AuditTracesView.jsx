@@ -28,6 +28,15 @@ export default function AuditTracesView({ activeBotId = "bot_eth_debate_01" }) {
   const [decisions, setDecisions] = useState([]);
   const [loading, setLoading] = useState(false);
   const [filterStance, setFilterStance] = useState('ALL'); // ALL | LONG | SHORT | NEUTRAL
+  const [filterStatus, setFilterStatus] = useState('ALL'); // ALL | COMPLETED | REJECTED | HALTED | FAILURE
+  const [filterExecution, setFilterExecution] = useState('ALL'); // ALL | FILLED | SUBMITTED | BLOCKED | REJECTED | CANCELED
+  const [searchKeyword, setSearchKeyword] = useState('');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+  const [total, setTotal] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
+  const [filterCounts, setFilterCounts] = useState({});
+  const [jumpPageInput, setJumpPageInput] = useState('');
   const [expandedTraceId, setExpandedTraceId] = useState(null);
   const [selectedStepDetail, setSelectedStepDetail] = useState(null); // 查看指定 Step 的 Prompt 与 LLM 输出详情
 
@@ -202,91 +211,222 @@ export default function AuditTracesView({ activeBotId = "bot_eth_debate_01" }) {
   const fetchTraces = async () => {
     setLoading(true);
     try {
-      // 后端合并内存、数据库历史与失败轮次；按 15 分钟一轮，50 条约覆盖最近 12 小时
-      const data = await getBotDecisions(activeBotId, 50);
-      if (Array.isArray(data) && data.length > 0) {
-        setDecisions(data.map((d, idx) => normalizeDecision(d, idx)).filter(Boolean));
+      const res = await getBotDecisions(activeBotId, {
+        page,
+        pageSize,
+        action: filterStance,
+        status: filterStatus,
+        executionStatus: filterExecution,
+        search: searchKeyword,
+        paginate: true,
+      });
+      if (res && Array.isArray(res.items)) {
+        setDecisions(res.items.map((d, idx) => normalizeDecision(d, idx)).filter(Boolean));
+        setTotal(res.total ?? res.items.length);
+        setTotalPages(res.total_pages ?? Math.max(1, Math.ceil((res.total || 0) / pageSize)));
+        setFilterCounts(res.counts || {});
+      } else if (Array.isArray(res)) {
+        setDecisions(res.map((d, idx) => normalizeDecision(d, idx)).filter(Boolean));
+        setTotal(res.length);
+        setTotalPages(Math.max(1, Math.ceil(res.length / pageSize)));
       } else {
         setDecisions([]);
+        setTotal(0);
+        setTotalPages(1);
       }
     } catch (err) {
       console.warn('[AuditTracesView] 加载真实决策审计记录异常:', err);
       setDecisions([]);
+      setTotal(0);
+      setTotalPages(1);
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    fetchTraces();
+    const timer = setTimeout(() => {
+      fetchTraces();
+    }, 200);
+    return () => clearTimeout(timer);
+  }, [activeBotId, page, pageSize, filterStance, filterStatus, filterExecution, searchKeyword]);
+
+  useEffect(() => {
+    setPage(1);
   }, [activeBotId]);
 
-  const filtered = decisions.filter(item => {
-    if (filterStance === 'ALL') return true;
-    return item.action === filterStance;
-  });
+  const hasActiveFilter = filterStance !== 'ALL' || filterStatus !== 'ALL' || filterExecution !== 'ALL' || Boolean(searchKeyword.trim());
+
+  const handleResetFilters = () => {
+    setFilterStance('ALL');
+    setFilterStatus('ALL');
+    setFilterExecution('ALL');
+    setSearchKeyword('');
+    setPage(1);
+  };
+
+  const getPageNumbers = () => {
+    if (totalPages <= 7) {
+      return Array.from({ length: totalPages }, (_, i) => i + 1);
+    }
+    if (page <= 4) {
+      return [1, 2, 3, 4, 5, '...', totalPages];
+    }
+    if (page >= totalPages - 3) {
+      return [1, '...', totalPages - 4, totalPages - 3, totalPages - 2, totalPages - 1, totalPages];
+    }
+    return [1, '...', page - 1, page, page + 1, '...', totalPages];
+  };
 
   return (
     <div className="flex-1 flex flex-col bg-canvas overflow-hidden">
       
       {/* 顶部控制栏 */}
-      <div className="h-14 bg-panel border-b border-line px-6 flex items-center justify-between shrink-0">
-        <div className="flex items-center space-x-3">
-          <div className="w-8 h-8 rounded-lg bg-muted border border-line-strong flex items-center justify-center text-brand">
-            <History className="w-4 h-4" />
+      <div className="bg-panel border-b border-line px-6 py-3 shrink-0 space-y-3">
+        {/* 第一行：标题与全局搜索、刷新 */}
+        <div className="flex items-center justify-between">
+          <div className="flex items-center space-x-3">
+            <div className="w-8 h-8 rounded-lg bg-muted border border-line-strong flex items-center justify-center text-brand">
+              <History className="w-4 h-4" />
+            </div>
+            <div>
+              <h1 className="text-sm font-bold text-ink flex items-center space-x-2">
+                <span>{t('header.title')}</span>
+                <span className="text-xs font-mono bg-muted text-ink-3 border border-line-strong px-2 py-0.5 rounded-full font-semibold">
+                  {t('header.sourceBadge')}
+                </span>
+              </h1>
+              <p className="text-xs text-ink-3">
+                {t('header.subtitle')}
+              </p>
+            </div>
           </div>
-          <div>
-            <h1 className="text-sm font-bold text-ink flex items-center space-x-2">
-              <span>{t('header.title')}</span>
-              <span className="text-xs font-mono bg-muted text-ink-3 border border-line-strong px-2 py-0.5 rounded-full font-semibold">
-                {t('header.sourceBadge')}
-              </span>
-            </h1>
-            <p className="text-xs text-ink-3">
-              {t('header.subtitle')}
-            </p>
+
+          <div className="flex items-center space-x-3">
+            {/* 关键词搜索框 */}
+            <div className="relative w-64">
+              <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-ink-4" />
+              <input
+                type="text"
+                value={searchKeyword}
+                onChange={(e) => { setSearchKeyword(e.target.value); setPage(1); }}
+                placeholder={t('filter.searchPlaceholder')}
+                className="w-full pl-8 pr-7 py-1.5 text-xs bg-surface border border-line rounded-lg text-ink placeholder:text-ink-4 focus:outline-hidden focus:border-brand transition shadow-2xs font-mono"
+              />
+              {searchKeyword && (
+                <button
+                  onClick={() => { setSearchKeyword(''); setPage(1); }}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-ink-4 hover:text-ink text-xs font-bold"
+                  title={t('filter.searchClear')}
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+
+            {/* 刷新按钮 */}
+            <button 
+              onClick={fetchTraces}
+              disabled={loading}
+              className="p-1.5 bg-surface border border-line-strong hover:border-brand rounded-lg text-xs font-semibold text-ink-2 flex items-center space-x-1.5 shadow-2xs transition"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin text-brand' : ''}`} />
+              <span>{t('common:refresh')}</span>
+            </button>
           </div>
         </div>
 
-        {/* 筛选与刷新 */}
-        <div className="flex items-center space-x-2">
-          <div className="flex bg-muted p-0.5 rounded-lg border border-line-strong text-xs">
-            {['ALL', 'LONG', 'SHORT', 'NEUTRAL'].map((stance) => (
-              <button
-                key={stance}
-                onClick={() => setFilterStance(stance)}
-                className={`px-2.5 py-1 rounded-md font-semibold transition ${
-                  filterStance === stance
-                    ? "bg-surface text-ink shadow-xs"
-                    : "text-ink-3 hover:text-ink"
-                }`}
+        {/* 第二行：多维筛选器 */}
+        <div className="flex items-center justify-between text-xs pt-2 border-t border-line/60">
+          <div className="flex items-center space-x-3 flex-wrap gap-y-2">
+            {/* 1. 多空方向 */}
+            <div className="flex bg-muted p-0.5 rounded-lg border border-line-strong text-xs">
+              {[
+                { id: 'ALL', label: t('filter.all') },
+                { id: 'LONG', label: t('filter.long') },
+                { id: 'SHORT', label: t('filter.short') },
+                { id: 'NEUTRAL', label: t('filter.neutral') },
+              ].map((stance) => (
+                <button
+                  key={stance.id}
+                  onClick={() => { setFilterStance(stance.id); setPage(1); }}
+                  className={`px-2.5 py-1 rounded-md font-semibold transition ${
+                    filterStance === stance.id
+                      ? "bg-surface text-ink shadow-2xs"
+                      : "text-ink-3 hover:text-ink"
+                  }`}
+                >
+                  {stance.label}
+                  {filterCounts?.actions?.[stance.id] !== undefined && stance.id !== 'ALL' && (
+                    <span className="ml-1 opacity-60 font-mono text-[10px]">({filterCounts.actions[stance.id]})</span>
+                  )}
+                </button>
+              ))}
+            </div>
+
+            {/* 2. 结论状态下拉 */}
+            <div className="flex items-center space-x-1.5">
+              <span className="text-ink-4 font-medium">{t('filter.statusLabel')}:</span>
+              <select
+                value={filterStatus}
+                onChange={(e) => { setFilterStatus(e.target.value); setPage(1); }}
+                className="bg-surface border border-line text-ink rounded-lg px-2.5 py-1 text-xs focus:outline-hidden focus:border-brand font-medium shadow-2xs cursor-pointer"
               >
-                {stance === 'ALL' ? t('filter.all') : stance}
-              </button>
-            ))}
+                <option value="ALL">{t('filter.statusAll')}</option>
+                <option value="COMPLETED">{t('filter.statusCompleted')}</option>
+                <option value="REJECTED">{t('filter.statusRejected')}</option>
+                <option value="HALTED">{t('filter.statusHalted')}</option>
+                <option value="FAILURE">{t('filter.statusFailure')}</option>
+              </select>
+            </div>
+
+            {/* 3. 执行结果下拉 */}
+            <div className="flex items-center space-x-1.5">
+              <span className="text-ink-4 font-medium">{t('filter.execLabel')}:</span>
+              <select
+                value={filterExecution}
+                onChange={(e) => { setFilterExecution(e.target.value); setPage(1); }}
+                className="bg-surface border border-line text-ink rounded-lg px-2.5 py-1 text-xs focus:outline-hidden focus:border-brand font-medium shadow-2xs cursor-pointer"
+              >
+                <option value="ALL">{t('filter.execAll')}</option>
+                <option value="FILLED">{t('filter.execFilled')}</option>
+                <option value="SUBMITTED">{t('filter.execSubmitted')}</option>
+                <option value="BLOCKED">{t('filter.execBlocked')}</option>
+                <option value="REJECTED">{t('filter.execRejected')}</option>
+                <option value="CANCELED">{t('filter.execCanceled')}</option>
+              </select>
+            </div>
           </div>
 
-          <button 
-            onClick={fetchTraces}
-            disabled={loading}
-            className="p-1.5 bg-surface border border-line-strong hover:border-brand rounded-lg text-xs font-semibold text-ink-2 flex items-center space-x-1.5 shadow-xs transition"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
-            <span>{t('common:refresh')}</span>
-          </button>
+          {/* 筛选重置 */}
+          {hasActiveFilter && (
+            <button
+              onClick={handleResetFilters}
+              className="px-2.5 py-1 text-xs text-brand hover:text-brand-hover hover:bg-brand-soft rounded-lg font-semibold flex items-center space-x-1 transition"
+            >
+              <span>✕</span>
+              <span>{t('filter.reset')}</span>
+            </button>
+          )}
         </div>
       </div>
 
       {/* 痕迹时间轴列表 */}
       <div className="flex-1 overflow-y-auto p-6 space-y-4">
-        {!loading && filtered.length === 0 && (
+        {loading && (
+          <div className="p-3 text-center text-xs text-ink-3 bg-surface/70 rounded-xl border border-line flex items-center justify-center space-x-2">
+            <RefreshCw className="w-3.5 h-3.5 animate-spin text-brand" />
+            <span>{t('common:loading', '加载中...')}</span>
+          </div>
+        )}
+        {!loading && decisions.length === 0 && (
           <div className="p-8 text-center text-xs text-ink-3 bg-surface rounded-xl border border-dashed border-line-strong">
-            {decisions.length === 0
+            {total === 0 && !hasActiveFilter
               ? t('empty.noRecords')
               : t('empty.noMatch')}
           </div>
         )}
-        {filtered.map((item) => {
+        {decisions.map((item) => {
           const isExpanded = expandedTraceId === item.rowKey;
           const isApproved = item.status === "COMPLETED";
           const isHalted = item.status === "HALTED";
@@ -596,6 +736,126 @@ export default function AuditTracesView({ activeBotId = "bot_eth_debate_01" }) {
             </div>
           );
         })}
+      </div>
+
+      {/* 底部翻页控制栏 */}
+      <div className="h-14 bg-panel border-t border-line px-6 flex items-center justify-between shrink-0 text-xs text-ink-2 select-none">
+        {/* 左侧：条数信息与每页大小切换 */}
+        <div className="flex items-center space-x-3">
+          <span className="text-ink-3">
+            {t('pagination.showing', {
+              from: total === 0 ? 0 : (page - 1) * pageSize + 1,
+              to: Math.min(total, page * pageSize),
+              total,
+            })}
+          </span>
+          <div className="h-3.5 w-px bg-line" />
+          <div className="flex items-center space-x-1 text-ink-3">
+            <select
+              value={pageSize}
+              onChange={(e) => { setPageSize(Number(e.target.value)); setPage(1); }}
+              className="bg-surface border border-line text-ink rounded-md px-2 py-0.5 text-xs focus:outline-hidden focus:border-brand font-mono shadow-2xs cursor-pointer"
+            >
+              {[10, 20, 50, 100].map((sz) => (
+                <option key={sz} value={sz}>
+                  {t('pagination.pageSize', { size: sz })}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        {/* 右侧：页码切换与直达 */}
+        <div className="flex items-center space-x-2">
+          {/* 首页 */}
+          <button
+            onClick={() => setPage(1)}
+            disabled={page <= 1 || loading}
+            className="px-2 py-1 bg-surface border border-line rounded-md text-xs font-medium text-ink-3 hover:text-ink disabled:opacity-40 disabled:cursor-not-allowed transition shadow-2xs"
+            title={t('pagination.first')}
+          >
+            «
+          </button>
+          {/* 上一页 */}
+          <button
+            onClick={() => setPage((p) => Math.max(1, p - 1))}
+            disabled={page <= 1 || loading}
+            className="px-2.5 py-1 bg-surface border border-line rounded-md text-xs font-semibold text-ink hover:text-brand disabled:opacity-40 disabled:cursor-not-allowed transition shadow-2xs"
+          >
+            {t('pagination.prev')}
+          </button>
+
+          {/* 数字页码列表 */}
+          <div className="flex items-center space-x-1">
+            {getPageNumbers().map((pNum, idx) => {
+              if (pNum === '...') {
+                return (
+                  <span key={`dots_${idx}`} className="px-1.5 py-0.5 text-ink-4 font-mono">
+                    ...
+                  </span>
+                );
+              }
+              const isCur = pNum === page;
+              return (
+                <button
+                  key={pNum}
+                  onClick={() => setPage(pNum)}
+                  disabled={loading}
+                  className={`w-7 h-7 rounded-md font-mono text-xs font-bold transition flex items-center justify-center ${
+                    isCur
+                      ? 'bg-brand text-white shadow-xs'
+                      : 'bg-surface border border-line text-ink-2 hover:border-brand hover:text-brand shadow-2xs'
+                  }`}
+                >
+                  {pNum}
+                </button>
+              );
+            })}
+          </div>
+
+          {/* 下一页 */}
+          <button
+            onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+            disabled={page >= totalPages || loading}
+            className="px-2.5 py-1 bg-surface border border-line rounded-md text-xs font-semibold text-ink hover:text-brand disabled:opacity-40 disabled:cursor-not-allowed transition shadow-2xs"
+          >
+            {t('pagination.next')}
+          </button>
+          {/* 末页 */}
+          <button
+            onClick={() => setPage(totalPages)}
+            disabled={page >= totalPages || loading}
+            className="px-2 py-1 bg-surface border border-line rounded-md text-xs font-medium text-ink-3 hover:text-ink disabled:opacity-40 disabled:cursor-not-allowed transition shadow-2xs"
+            title={t('pagination.last')}
+          >
+            »
+          </button>
+
+          {/* 跳转至指定页 */}
+          {totalPages > 3 && (
+            <div className="flex items-center space-x-1 pl-2 text-ink-4">
+              <span>{t('pagination.jumpTo')}</span>
+              <input
+                type="number"
+                min="1"
+                max={totalPages}
+                value={jumpPageInput}
+                onChange={(e) => setJumpPageInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    const target = parseInt(jumpPageInput, 10);
+                    if (!isNaN(target) && target >= 1 && target <= totalPages) {
+                      setPage(target);
+                      setJumpPageInput('');
+                    }
+                  }
+                }}
+                className="w-11 px-1.5 py-0.5 bg-surface border border-line rounded-md text-ink text-center font-mono text-xs focus:outline-hidden focus:border-brand shadow-2xs"
+              />
+              <span>{t('pagination.page')}</span>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* StepTrace 深度审查抽屉 (Prompt & LLM Response Inspector) */}

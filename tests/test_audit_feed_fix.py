@@ -182,3 +182,82 @@ def test_latest_state_refresh_still_runs_step(sys_bot, monkeypatch):
     monkeypatch.setattr(bots_routes, "trading_repo", _FakeRepo())
     asyncio.run(bots_routes.get_bot_latest_state(bot_id=sys_bot.bot_id, refresh=True, caller_wallet="0xabc"))
     sys_bot.step.assert_awaited_once_with(force=True)
+
+
+# -----------------------------------------------------------------------------
+# 6. 分页与多维筛选测试 (2026-11-24)
+# -----------------------------------------------------------------------------
+
+def test_feed_filtering_and_pagination_helpers():
+    from heimdall.api.audit_feed import filter_record, paginate_feed
+
+    records = [
+        {"decision_id": "d1", "debate_consensus": "LONG", "risk_approved": True, "trade_proposal": {"action": "BUY"},
+         "execution": {"status": "FILLED"}},
+        {"decision_id": "d2", "debate_consensus": "SHORT", "risk_approved": False, "trade_proposal": {"action": "SELL"},
+         "rejection_reason": "VaR Exceeded", "execution": {"status": "RISK_REJECTED"}},
+        {"decision_id": "d3", "debate_consensus": "NEUTRAL", "proposal_generated": False},
+        {"record_type": "CYCLE_ERROR", "event_id": "e1", "error": "RPC Timeout"},
+        {"record_type": "CYCLE_REFUSED", "event_id": "e2", "error": "Missing key"},
+    ]
+
+    # 方向筛选
+    assert len([r for r in records if filter_record(r, action="LONG")]) == 1
+    assert len([r for r in records if filter_record(r, action="SHORT")]) == 1
+    assert len([r for r in records if filter_record(r, action="NEUTRAL")]) == 1
+    assert len([r for r in records if filter_record(r, action="ALL")]) == 5
+
+    # 状态筛选
+    assert len([r for r in records if filter_record(r, status="COMPLETED")]) == 1
+    assert len([r for r in records if filter_record(r, status="REJECTED")]) == 1
+    assert len([r for r in records if filter_record(r, status="HALTED")]) == 1
+    assert len([r for r in records if filter_record(r, status="FAILURE")]) == 2
+
+    # 执行状态筛选
+    assert len([r for r in records if filter_record(r, execution_status="FILLED")]) == 1
+
+    # 搜索词筛选
+    assert len([r for r in records if filter_record(r, search="Timeout")]) == 1
+    assert len([r for r in records if filter_record(r, search="d2")]) == 1
+    assert len([r for r in records if filter_record(r, search="VaR")]) == 1
+
+    # 分页测试
+    p1 = paginate_feed(records, page=1, page_size=2)
+    assert p1["total"] == 5 and p1["page"] == 1 and p1["page_size"] == 2 and p1["total_pages"] == 3
+    assert len(p1["items"]) == 2 and p1["items"][0]["decision_id"] == "d1"
+    assert p1["counts"]["actions"]["LONG"] == 1
+    assert p1["counts"]["statuses"]["FAILURE"] == 2
+
+    p3 = paginate_feed(records, page=3, page_size=2)
+    assert len(p3["items"]) == 1 and p3["items"][0]["event_id"] == "e2"
+
+
+def test_decisions_endpoint_pagination_and_filter(sys_bot, monkeypatch):
+    monkeypatch.setattr(analytics, "trading_repo", _FakeRepo(
+        decisions=[
+            {"decision_id": f"d_{i}", "timestamp": f"2026-11-23T01:{i:02d}:00+00:00",
+             "thinking_logs": [], "proposal": {"action": "BUY"} if i % 2 == 0 else None,
+             "risk_approved": 1 if i % 2 == 0 else 0, "symbol": "ETH"}
+            for i in range(10)
+        ],
+        failures=[{"kind": "CYCLE_ERROR", "event_id": "err_1", "created_at": "2026-11-23T00:00:00+00:00",
+                   "detail": {"error": "gateway timeout"}}],
+    ))
+
+    # 请求第 1 页，每页 3 条
+    res = asyncio.run(analytics.get_bot_decisions(
+        bot_id=sys_bot.bot_id, page=1, page_size=3, paginate=True, caller_wallet=None
+    ))
+    assert isinstance(res, dict)
+    assert res["total"] == 11
+    assert res["page"] == 1
+    assert res["page_size"] == 3
+    assert res["total_pages"] == 4
+    assert len(res["items"]) == 3
+
+    # 搜索过滤
+    res_search = asyncio.run(analytics.get_bot_decisions(
+        bot_id=sys_bot.bot_id, search="timeout", paginate=True, caller_wallet=None
+    ))
+    assert res_search["total"] == 1
+    assert res_search["items"][0]["event_id"] == "err_1"

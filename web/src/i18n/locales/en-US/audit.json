@@ -5,7 +5,37 @@
     "subtitle": "End-to-end record of multi-agent debate chain-of-thought (COT), StepTrace latency, idempotency keys and dual-track hard risk veto rationale"
   },
   "filter": {
-    "all": "All directions"
+    "all": "All directions",
+    "long": "Long",
+    "short": "Short",
+    "neutral": "Neutral",
+    "statusLabel": "Audit Status",
+    "statusAll": "All Statuses",
+    "statusCompleted": "Risk approved",
+    "statusRejected": "Risk rejected",
+    "statusHalted": "No proposal",
+    "statusFailure": "Failure / Error",
+    "execLabel": "Execution",
+    "execAll": "All Executions",
+    "execFilled": "Filled",
+    "execSubmitted": "Submitted",
+    "execBlocked": "Blocked before sending",
+    "execRejected": "Rejected by exchange",
+    "execCanceled": "Canceled / Unrecorded",
+    "searchPlaceholder": "Search Decision ID / Symbol / Error / Verdict...",
+    "searchClear": "Clear search",
+    "reset": "Reset filters",
+    "activeFilters": "{{count}} matching"
+  },
+  "pagination": {
+    "showing": "Showing {{from}} - {{to}} of {{total}} records",
+    "pageSize": "{{size}} / page",
+    "first": "First",
+    "prev": "Prev",
+    "next": "Next",
+    "last": "Last",
+    "jumpTo": "Go to",
+    "page": "page"
   },
   "empty": {
     "noRecords": "No decision audit records for this bot yet. Real decision traces will appear here after the first run.",

@@ -197,15 +197,16 @@ def merge_feed(
     memory: Iterable[Dict[str, Any]],
     db_rows: Iterable[Dict[str, Any]],
     failures: Iterable[Dict[str, Any]],
-    limit: int,
+    limit: Optional[int] = None,
     symbol: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """
-    合并内存决策、数据库决策与失败轮次，按时间倒序取前 ``limit`` 条。
+    合并内存决策、数据库决策与失败轮次，按时间倒序。若指定 ``limit`` 则取前 limit 条；若为 None 则返回全量。
 
     :param memory: 内存 decision_history（不会被修改，返回的是浅拷贝并加上 ``source=memory``）
     :param db_rows: ``get_decision_history`` 返回的数据库行
     :param failures: ``list_run_events_by_kind`` 返回的失败运行事件
+    :param limit: 截断数量，为 None 时返回全量合并列表
     :param symbol: 失败轮次行使用的标的（运行事件里没有标的）
     """
     memory = list(memory or [])
@@ -232,12 +233,201 @@ def merge_feed(
     failure_rows = [run_event_to_row(e, symbol) for e in failures or [] if e.get("kind") in FAILURE_KINDS]
     merged = list(by_id.values()) + rows + failure_rows
     merged.sort(key=lambda r: parse_ts(r.get("timestamp")), reverse=True)
-    out = merged[: max(0, int(limit))]
+    if limit is not None:
+        out = merged[: max(0, int(limit))]
+    else:
+        out = merged
     logger.debug(
         "[审计流] 合并：内存 %d | 仅数据库 %d | 失败轮次 %d | 返回 %d 条",
         len(memory), from_db, len(failure_rows), len(out),
     )
     return out
+
+
+def get_record_action(record: Dict[str, Any]) -> Optional[str]:
+    """提取审计记录的交易方向（LONG / SHORT / NEUTRAL），失败轮次返回 None"""
+    act = record.get("debate_consensus")
+    if not act:
+        synth = record.get("debate_synthesis")
+        if isinstance(synth, dict):
+            act = synth.get("consensus_action")
+    if not act:
+        prop = record.get("trade_proposal") or record.get("proposal")
+        if isinstance(prop, dict):
+            act = prop.get("action") or prop.get("side")
+    if not act:
+        for log in record.get("thinking_logs") or []:
+            lstr = str(log)
+            if "Verdict: LONG" in lstr or "裁决: LONG" in lstr:
+                return "LONG"
+            if "Verdict: SHORT" in lstr or "裁决: SHORT" in lstr:
+                return "SHORT"
+            if "Verdict: NEUTRAL" in lstr or "裁决: NEUTRAL" in lstr:
+                return "NEUTRAL"
+    if act:
+        act_upper = str(act).upper()
+        if "LONG" in act_upper or "BUY" in act_upper:
+            return "LONG"
+        if "SHORT" in act_upper or "SELL" in act_upper:
+            return "SHORT"
+        if "NEUTRAL" in act_upper or "HOLD" in act_upper:
+            return "NEUTRAL"
+        return act_upper
+    return None
+
+
+def get_record_status(record: Dict[str, Any]) -> str:
+    """提取审计记录的风控/执行结论状态：COMPLETED / REJECTED / HALTED / REFUSED / ERROR / UNKNOWN"""
+    rec_type = record.get("record_type")
+    if rec_type == "CYCLE_ERROR":
+        return "ERROR"
+    if rec_type == "CYCLE_REFUSED":
+        return "REFUSED"
+
+    has_prop = bool(record.get("proposal_generated") or record.get("trade_proposal") or record.get("proposal"))
+    risk_rev = record.get("risk_review")
+    risk_approved = None
+    if isinstance(risk_rev, dict) and isinstance(risk_rev.get("approved"), bool):
+        risk_approved = risk_rev["approved"]
+    elif record.get("risk_approved") in (True, 1):
+        risk_approved = True
+    elif record.get("risk_approved") in (False, 0) and has_prop:
+        risk_approved = False
+
+    if risk_approved is True:
+        return "COMPLETED"
+    if risk_approved is False:
+        return "REJECTED"
+    if not has_prop:
+        return "HALTED"
+    return "UNKNOWN"
+
+
+def get_record_execution_status(record: Dict[str, Any]) -> Optional[str]:
+    """提取审计记录的执行状态（当前状态优先，无则决策时状态）"""
+    exec_info = record.get("execution")
+    if isinstance(exec_info, dict):
+        status = exec_info.get("current_status") or exec_info.get("status")
+        return str(status).upper() if status else None
+    return None
+
+
+def matches_search(record: Dict[str, Any], query: str) -> bool:
+    """关键词模糊搜索匹配（决策ID、标的、错误信息、拒绝原因、判词与日志）"""
+    q = query.strip().lower()
+    if not q:
+        return True
+    for field in ("decision_id", "symbol", "event_id", "error", "rejection_reason"):
+        val = record.get(field)
+        if val and q in str(val).lower():
+            return True
+
+    synth = record.get("debate_synthesis")
+    if isinstance(synth, dict) and q in str(synth.get("verdict") or "").lower():
+        return True
+
+    bull = record.get("bull_thesis")
+    if isinstance(bull, dict) and q in str(bull.get("key_thesis") or "").lower():
+        return True
+    bear = record.get("bear_thesis")
+    if isinstance(bear, dict) and q in str(bear.get("key_thesis") or "").lower():
+        return True
+
+    for log in record.get("thinking_logs") or []:
+        if q in str(log).lower():
+            return True
+
+    exec_info = record.get("execution")
+    if isinstance(exec_info, dict):
+        if q in str(exec_info.get("reason") or "").lower():
+            return True
+        for o in exec_info.get("orders") or []:
+            if isinstance(o, dict):
+                if q in str(o.get("client_order_id") or "").lower():
+                    return True
+                if q in str(o.get("proposal_id") or "").lower():
+                    return True
+    return False
+
+
+def filter_record(
+    record: Dict[str, Any],
+    action: Optional[str] = None,
+    status: Optional[str] = None,
+    execution_status: Optional[str] = None,
+    search: Optional[str] = None,
+) -> bool:
+    """多维审计记录过滤器"""
+    if action and action != "ALL":
+        rec_act = get_record_action(record)
+        if rec_act != action.upper():
+            return False
+
+    if status and status != "ALL":
+        rec_stat = get_record_status(record)
+        target_stat = status.upper()
+        if target_stat == "FAILURE":
+            if rec_stat not in ("ERROR", "REFUSED"):
+                return False
+        elif rec_stat != target_stat:
+            return False
+
+    if execution_status and execution_status != "ALL":
+        rec_exec = get_record_execution_status(record)
+        target_exec = execution_status.upper()
+        if target_exec == "SUBMITTED":
+            if rec_exec not in ("SUBMITTED", "PARTIAL"):
+                return False
+        elif target_exec == "CANCELED":
+            if rec_exec not in ("CANCELED", "UNRECORDED"):
+                return False
+        elif rec_exec != target_exec:
+            return False
+
+    if search and search.strip():
+        if not matches_search(record, search):
+            return False
+
+    return True
+
+
+def paginate_feed(
+    feed: List[Dict[str, Any]],
+    page: int = 1,
+    page_size: int = 20,
+) -> Dict[str, Any]:
+    """对已过滤合并的审计流进行标准分页与维度统计"""
+    total = len(feed)
+    page = max(1, int(page))
+    page_size = max(1, min(100, int(page_size)))
+    total_pages = max(1, (total + page_size - 1) // page_size) if total > 0 else 1
+    start = (page - 1) * page_size
+    end = start + page_size
+    items = feed[start:end]
+
+    action_counts = {"ALL": total, "LONG": 0, "SHORT": 0, "NEUTRAL": 0}
+    status_counts = {"ALL": total, "COMPLETED": 0, "REJECTED": 0, "HALTED": 0, "FAILURE": 0}
+    for r in feed:
+        act = get_record_action(r)
+        if act in action_counts:
+            action_counts[act] += 1
+        st = get_record_status(r)
+        if st in ("ERROR", "REFUSED"):
+            status_counts["FAILURE"] += 1
+        elif st in status_counts:
+            status_counts[st] += 1
+
+    return {
+        "items": items,
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "total_pages": total_pages,
+        "counts": {
+            "actions": action_counts,
+            "statuses": status_counts,
+        },
+    }
 
 
 def collect_client_order_ids(records: Iterable[Dict[str, Any]]) -> List[str]:
