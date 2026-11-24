@@ -197,7 +197,8 @@ class DecisionCycle(BotService):
         if st.review.approved:
             await self._timed(st, "下单执行", self._execute)
         else:
-            st.execution = ExecutionOutcome(snapshot=st.snapshot)
+            # 没有提案通过复审：执行结果记为"无提案"或"风控拦截"（带原因），审计页据此显示"未下单"
+            st.execution = ExecutionOutcome.not_attempted(st.snapshot, st.review)
 
         record = self._build_record(st)
         h.decision_history.append(record)
@@ -231,9 +232,9 @@ class DecisionCycle(BotService):
 
     def _log_completed(self, st: CycleState, record: Dict[str, Any]) -> None:
         self.log.info(
-            "%s 完成 decision_id=%s | 动作=%s | 提案 %d / 通过 %d | 成交 %d | 日内回撤=%.2f%% | 合计 %.0fms（%s）",
+            "%s 完成 decision_id=%s | 动作=%s | 提案 %d / 通过 %d | 执行结果=%s | 成交 %d | 日内回撤=%.2f%% | 合计 %.0fms（%s）",
             self.tag(), record["decision_id"], record["action_type"],
-            st.review.total, len(st.review.approved), len(st.execution.executed),
+            st.review.total, len(st.review.approved), st.execution.status, len(st.execution.executed),
             st.current_dd * 100, st.elapsed_ms(), self._fmt_timings(st),
         )
 
@@ -515,6 +516,7 @@ class DecisionCycle(BotService):
             upstream_risk_review=st.review.upstream_risk_review,
             execution_report=st.execution.report,
             executed=st.execution.executed,
+            execution=st.execution.to_audit(),
             orderbook=st.orderbook,
             lessons=st.lessons,
             last_reconciliation=self._reconcile.last_reconciliation,

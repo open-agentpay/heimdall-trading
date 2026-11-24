@@ -76,9 +76,10 @@ def test_postgres_database_manager_pool_init_query_commit_and_close():
 
             await mgr.init_tables()
             mock_create_pool.assert_awaited_once()
-            # 12 张表（含 system_settings、bot_ledgers、bot_run_events）+ 4 条 ALTER（owner_wallet + oms_orders 止损止盈计划 3 列）
-            # + 8 条 CREATE INDEX = 24 条 DDL
-            assert len(executed_sqls) == 24
+            # 12 张表（含 system_settings、bot_ledgers、bot_run_events）+ 5 条 ALTER（owner_wallet + oms_orders 止损止盈计划 3 列
+            # + agent_decisions.execution_json，2026-11-24）+ 8 条 CREATE INDEX = 25 条 DDL
+            assert len(executed_sqls) == 25
+            assert any("agent_decisions ADD COLUMN IF NOT EXISTS execution_json" in s for s, _ in executed_sqls)
             assert any("BIGSERIAL PRIMARY KEY" in s for s, _ in executed_sqls)
 
             rows = await mgr.execute_query(

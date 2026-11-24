@@ -108,6 +108,7 @@ class DecisionAuditService(BotService):
         orderbook: Optional[Dict[str, Any]],
         lessons: Optional[str],
         last_reconciliation: Optional[Dict[str, Any]],
+        execution: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
         组装一轮决策的审计记录（字段顺序与拆分前一致）。
@@ -116,6 +117,8 @@ class DecisionAuditService(BotService):
         :param proposal: 本轮第一笔提案（决策页展示用）
         :param risk_result: 最终风控结论（ProposalReviewer 给出）
         :param executed: 本轮记入的全部成交（用于影子成交估算）
+        :param execution: 本轮执行结果（ExecutionOutcome.to_audit()：状态、原因、每笔订单），
+                          与 risk_approved 分开——"风控通过"不代表"已下单 / 已成交"
         """
         h = self.host
         diag = decision.diagnostics or {}
@@ -160,10 +163,11 @@ class DecisionAuditService(BotService):
         record["shadow_fills"] = self.shadow_fills(executed, orderbook)
         record["oms_orders_count"] = len(h.oms.orders)
         record["last_reconciliation"] = last_reconciliation
+        record["execution"] = execution
         return record
 
     async def persist(self, record: Dict[str, Any], proposal: Optional[TradeProposal], risk_result: Any) -> None:
-        """将本轮决策（思维链 + 交易提案 + 最终风控结论）写入 agent_decisions 审计表；失败只告警"""
+        """将本轮决策（思维链 + 交易提案 + 最终风控结论 + 执行结果）写入 agent_decisions 审计表；失败只告警"""
         try:
             await self._repo().record_decision(
                 decision_id=record["decision_id"],
@@ -174,6 +178,7 @@ class DecisionAuditService(BotService):
                 thinking_logs=list(record.get("thinking_logs") or []),
                 proposal=proposal,
                 risk_review=risk_result if isinstance(risk_result, RiskReviewResult) else None,
+                execution=record.get("execution"),
             )
             self.log.debug("%s 决策审计已落库 decision_id=%s", self.tag(), record["decision_id"])
         except Exception as dec_err:

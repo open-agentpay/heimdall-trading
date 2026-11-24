@@ -17,6 +17,10 @@
 3. 成交以谁为准：独立账本模式（TESTNET / MAINNET）**以交易所成交流水为准**（E7 / E8），
    下单后立刻同步账本，不使用下单回包汇总出的成交，避免重复记账；
 4. 落地：内存成交流水、本地持仓基线、成交写库、平仓反思、成交后净值快照、成交通知。
+5. 执行结果（2026-11-24）：每笔提案记一行订单结果（发单前拦截 / 已挂单 / 成交 / 拒单 / 超时），
+   汇总成 ``ExecutionOutcome.status`` 写入决策审计（``execution``），审计页与"风控结论"分开显示。
+   没有提案通过复审时由 ``ExecutionOutcome.not_attempted`` 给出"无提案 / 风控拦截"。
+   下单前还会用 ``align_proposal_venue`` 把提案的交易所 / 市场对齐到机器人配置。
 
 下单宽限期
 ----------
@@ -32,10 +36,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, List, Optional
+from enum import Enum
+from typing import Any, Dict, List, Optional
 
 from heimdall.execution.base import TradeExecutionResult
-from heimdall.execution.oms import OrderLifecycleState
+from heimdall.execution.oms import ManagedOrder, OrderLifecycleState
 from heimdall.models.schemas import TradeProposal
 from heimdall.engine.bot_services.base import AlertGetter, BotHost, BotService, RepoGetter, get_service_logger
 from heimdall.engine.bot_services.instrument_specs import InstrumentSpecService
@@ -72,6 +77,118 @@ def align_proposal_venue(proposals: List[TradeProposal], exchange: Any, market_t
     return changed
 
 
+class ExecutionStatus(str, Enum):
+    """
+    一轮决策的"执行结果"（2026-11-24 新增，写入决策审计的 ``execution.status``）。
+
+    背景：审计页原来只有"风控通过 / 拦截"，风控通过之后订单到底有没有发出去、成交没有，页面上看不到
+    （bot_4350 的 3 笔开仓全部在发单前被拦截，审计页却一直显示"风控通过"）。
+    """
+
+    NO_PROPOSAL = "NO_PROPOSAL"      # 本轮策略没有产出提案（观望）
+    RISK_REJECTED = "RISK_REJECTED"  # 提案全部被硬风控 / 组合协调器拦截，没有进入下单
+    FILLED = "FILLED"                # 已全部成交
+    PARTIAL = "PARTIAL"              # 部分成交，剩余仍在挂单
+    SUBMITTED = "SUBMITTED"          # 交易所已受理挂单，尚未成交（限价单超时未成交会在对账时自动撤销）
+    CANCELED = "CANCELED"            # 已撤销（例如限价单超时）
+    BLOCKED = "BLOCKED"              # 发单前拦截：规格未知、低于最小下单量、市场校验不通过，订单没有发出
+    REJECTED = "REJECTED"            # 交易所明确拒单
+    UNKNOWN = "UNKNOWN"              # 发单超时 / 网络异常，交易所状态未知，等待对账查单确认
+    UNRECORDED = "UNRECORDED"        # 升级前的历史记录，没有保存执行结果（只用于审计流兜底，不由本服务产生）
+
+
+#: 多笔订单汇总成一个状态时的优先级：越靠前代表"推进得越远"，取本轮出现过的第一个
+_STATUS_PRIORITY = (
+    ExecutionStatus.FILLED,
+    ExecutionStatus.PARTIAL,
+    ExecutionStatus.SUBMITTED,
+    ExecutionStatus.UNKNOWN,
+    ExecutionStatus.CANCELED,
+    ExecutionStatus.REJECTED,
+    ExecutionStatus.BLOCKED,
+)
+
+
+def status_from_oms_state(state: Any) -> ExecutionStatus:
+    """OMS 订单状态 → 执行结果状态（PENDING 视为已提交待确认；无法识别的按 UNKNOWN 处理）"""
+    value = str(getattr(state, "value", state) or "").upper()
+    mapping = {
+        "FILLED": ExecutionStatus.FILLED,
+        "PARTIAL": ExecutionStatus.PARTIAL,
+        "SUBMITTED": ExecutionStatus.SUBMITTED,
+        "PENDING": ExecutionStatus.SUBMITTED,
+        "CANCELED": ExecutionStatus.CANCELED,
+        "REJECTED": ExecutionStatus.REJECTED,
+        "UNKNOWN": ExecutionStatus.UNKNOWN,
+    }
+    return mapping.get(value, ExecutionStatus.UNKNOWN)
+
+
+def summarize_status(statuses: List[Any]) -> Optional[str]:
+    """把多笔订单的状态汇总成一个（按 _STATUS_PRIORITY 取第一个出现的）；没有订单时返回 None"""
+    present = {str(getattr(s, "value", s)) for s in statuses if s}
+    for st in _STATUS_PRIORITY:
+        if st.value in present:
+            return st.value
+    return next(iter(present), None)
+
+
+def _str_or_none(value: Any) -> Optional[str]:
+    return None if value is None else str(value)
+
+
+def order_entry_from_managed(prop: TradeProposal, order: ManagedOrder, note: Optional[str] = None) -> Dict[str, Any]:
+    """OMS 订单 → 审计里的一行订单记录（数量、价格用字符串保存，避免 Decimal 序列化问题）"""
+    return {
+        "proposal_id": prop.proposal_id,
+        "client_order_id": order.client_order_id,
+        "order_type": order.order_type,
+        "side": order.side,
+        "status": status_from_oms_state(order.state).value,
+        "reason": note or order.error_message,
+        "requested_qty": _str_or_none(order.requested_qty),
+        "filled_qty": _str_or_none(order.filled_qty),
+        "limit_price": _str_or_none(order.limit_price),
+        "avg_fill_price": _str_or_none(order.avg_fill_price),
+    }
+
+
+def order_entry_blocked(prop: TradeProposal, reason: str) -> Dict[str, Any]:
+    """发单前被拦截的提案 → 审计里的一行订单记录（没有订单编号）"""
+    action = prop.trade_action
+    return {
+        "proposal_id": prop.proposal_id,
+        "client_order_id": None,
+        "order_type": action.order_type,
+        "side": getattr(action.order_side, "value", action.order_side),
+        "status": ExecutionStatus.BLOCKED.value,
+        "reason": reason,
+        "requested_qty": None,
+        "filled_qty": None,
+        "limit_price": _str_or_none(action.target_price) if action.order_type == "LIMIT" else None,
+        "avg_fill_price": None,
+    }
+
+
+def order_entry_from_fill(prop: TradeProposal, rep: Optional[TradeExecutionResult]) -> Dict[str, Any]:
+    """不经 OMS 的下单路径（对冲组合、未启用 OMS）：有成交回包即已成交，没有则视为拒单"""
+    action = prop.trade_action
+    if rep is None:
+        return {
+            "proposal_id": prop.proposal_id, "client_order_id": None, "order_type": action.order_type,
+            "side": getattr(action.order_side, "value", action.order_side),
+            "status": ExecutionStatus.REJECTED.value, "reason": "执行器没有返回该笔成交",
+            "requested_qty": None, "filled_qty": None, "limit_price": None, "avg_fill_price": None,
+        }
+    return {
+        "proposal_id": prop.proposal_id, "client_order_id": rep.order_id, "order_type": action.order_type,
+        "side": getattr(rep.order_side, "value", rep.order_side),
+        "status": ExecutionStatus.FILLED.value, "reason": None,
+        "requested_qty": _str_or_none(rep.executed_quantity), "filled_qty": _str_or_none(rep.executed_quantity),
+        "limit_price": None, "avg_fill_price": _str_or_none(rep.executed_price),
+    }
+
+
 @dataclass
 class ExecutionOutcome:
     """一轮下单执行的结果"""
@@ -82,6 +199,46 @@ class ExecutionOutcome:
     report: Optional[TradeExecutionResult] = None
     #: 本轮最后一次净值快照（成交后刷新成功则为新快照，否则为传入的快照）
     snapshot: Any = None
+    #: 执行结果汇总状态（ExecutionStatus 的值）
+    status: str = ExecutionStatus.NO_PROPOSAL.value
+    #: 没有下单时的原因（风控拦截原因等）；有订单时各笔原因见 orders[].reason
+    reason: Optional[str] = None
+    #: 每笔提案的下单结果（见 order_entry_* 系列函数）
+    orders: List[Dict[str, Any]] = field(default_factory=list)
+
+    @classmethod
+    def not_attempted(cls, snapshot: Any, review: Any) -> "ExecutionOutcome":
+        """
+        没有提案通过复审、本轮不下单时的执行结果。
+
+        :param review: ProposalReviewer 返回的 ReviewOutcome（用 total 区分"没有提案"与"全部被拦截"）
+        """
+        total = int(getattr(review, "total", 0) or 0)
+        if total <= 0:
+            return cls(snapshot=snapshot, status=ExecutionStatus.NO_PROPOSAL.value)
+        reasons = [r for r in (getattr(review, "reasons", None) or []) if r]
+        if not reasons:
+            risk = getattr(review, "risk_result", None)
+            fallback = getattr(risk, "rejection_reason", None)
+            reasons = [fallback] if fallback else []
+        return cls(
+            snapshot=snapshot,
+            status=ExecutionStatus.RISK_REJECTED.value,
+            reason="；".join(str(r) for r in reasons) or None,
+        )
+
+    def to_audit(self) -> Dict[str, Any]:
+        """写入决策审计记录与数据库 execution_json 的内容（纯 JSON 类型）"""
+        counts: Dict[str, int] = {}
+        for o in self.orders:
+            counts[o["status"]] = counts.get(o["status"], 0) + 1
+        return {
+            "status": self.status,
+            "reason": self.reason,
+            "orders": [dict(o) for o in self.orders],
+            "counts": counts,
+            "fills_recorded": len(self.executed),
+        }
 
 
 class OrderExecutionService(BotService):
@@ -108,6 +265,8 @@ class OrderExecutionService(BotService):
         self._reconcile = reconcile
         self._repo = repo_getter
         self._alerts = alert_getter
+        #: 最近一轮每笔提案的下单结果（_route_orders 每轮开始时重置）
+        self._last_orders: List[Dict[str, Any]] = []
 
     # ------------------------------------------------------------------
     # 入口
@@ -148,6 +307,11 @@ class OrderExecutionService(BotService):
         )
 
         executed = await self._route_orders(decision, approved, decision_id)
+        # 每笔提案的下单结果（发单前拦截 / 已挂单 / 成交 / 拒单 / 超时）——审计页据此显示"执行结果"
+        out.orders = self._last_orders
+        out.status = summarize_status([o["status"] for o in out.orders]) or ExecutionStatus.BLOCKED.value
+        if not out.orders:
+            out.reason = "执行链路没有返回任何订单结果"
 
         # E7 / E8：独立账本模式下，成交以交易所成交流水为准（成交编号去重、含真实手续费与已实现盈亏），
         #          不再使用下单回包汇总出的成交，避免重复记账
@@ -174,8 +338,9 @@ class OrderExecutionService(BotService):
                 latest_nav=out.snapshot.nav,
             )
         self.log.info(
-            "%s 执行完成 | 通过提案 %d 笔 | 记入成交 %d 笔 | 首笔成交=%s | 最新净值=%.4f",
-            self.tag(), len(approved), len(executed),
+            "%s 执行完成 | 通过提案 %d 笔 | 执行结果=%s %s | 记入成交 %d 笔 | 首笔成交=%s | 最新净值=%.4f",
+            self.tag(), len(approved), out.status, out.to_audit()["counts"],
+            len(executed),
             out.report.trade_id if out.report else "-", out.snapshot.nav,
         )
         return out
@@ -187,16 +352,26 @@ class OrderExecutionService(BotService):
     async def _route_orders(
         self, decision: Any, approved: List[TradeProposal], decision_id: str,
     ) -> List[TradeExecutionResult]:
+        """
+        路由下单并返回下单回包里的成交；每笔提案的下单结果写入 ``self._last_orders``
+        （每轮开始时清空，决策周期对同一机器人是串行的，不存在并发覆盖）。
+        """
         h = self.host
+        self._last_orders: List[Dict[str, Any]] = []
         if decision.action_type == "HEDGE_PAIR" and len(approved) == 2:
             self.log.debug("%s 对冲组合下单（原子执行 2 笔）", self.tag())
-            return await h.executor.execute_atomic_pair(approved[0], approved[1])
+            results = list(await h.executor.execute_atomic_pair(approved[0], approved[1]) or [])
+            by_prop = {r.proposal_id: r for r in results}
+            self._last_orders = [order_entry_from_fill(p, by_prop.get(p.proposal_id)) for p in approved]
+            return results
         if h.use_oms:
             await self._specs.ensure()  # P1：下单前确保使用交易所环境的真实规格
             return await self._submit_via_oms(decision, approved, decision_id)
         executed: List[TradeExecutionResult] = []
         for prop in approved:
-            executed.append(await h.executor.execute_proposal(prop))
+            rep = await h.executor.execute_proposal(prop)
+            executed.append(rep)
+            self._last_orders.append(order_entry_from_fill(prop, rep))
         return executed
 
     async def _release(self, prop: TradeProposal) -> None:
@@ -223,8 +398,10 @@ class OrderExecutionService(BotService):
                 # 发单前拦截（标的规格未知、数量低于最小下单量、市场校验不通过等）：不发单，释放组合敞口
                 self.log.warning("[Bot %s · OMS 发单前拦截] 提案=%s | 原因=%s", self.bot_id, prop.proposal_id, pre_err)
                 decision.thinking_logs.append(f"[OMS 发单前拦截]: {pre_err}")
+                self._last_orders.append(order_entry_blocked(prop, str(pre_err)))
                 await self._release(prop)
                 continue
+            self._last_orders.append(order_entry_from_managed(prop, managed_order))
             if exec_res is not None:
                 executed.append(exec_res)
                 self.log.info(

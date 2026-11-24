@@ -24,7 +24,13 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from heimdall.api.audit_feed import FAILURE_KINDS, merge_feed
+from heimdall.api.audit_feed import (
+    FAILURE_KINDS,
+    attach_order_states,
+    collect_client_order_ids,
+    merge_feed,
+    order_state_view,
+)
 from heimdall.api.routes.common import _assert_bot_readable
 from heimdall.api.runtime import bot_manager
 from heimdall.auth.dependencies import resolve_caller_wallet
@@ -149,7 +155,36 @@ async def get_bot_decisions(
             failures = await trading_repo.list_run_events_by_kind(bot_id, FAILURE_KINDS, limit=limit)
         except Exception as exc:
             logger.warning("[审计流] 读取 %s 的失败轮次失败，审计页不显示失败轮次: %s", bot_id, exc)
-    return merge_feed(memory, db_rows, failures, limit, symbol=bot.symbol if bot else None)
+    feed = merge_feed(memory, db_rows, failures, limit, symbol=bot.symbol if bot else None)
+    await _attach_current_order_states(bot, bot_id, feed)
+    return feed
+
+
+async def _attach_current_order_states(bot: Any, bot_id: str, feed: List[Dict[str, Any]]) -> None:
+    """
+    给审计流里每笔订单补上 OMS 当前状态（2026-11-24）：先查数据库 oms_orders，再用内存 OMS 覆盖（内存更新）。
+    任一来源失败只记 WARN，审计页照常显示决策时的执行结果。
+    """
+    cids = collect_client_order_ids(feed)
+    if not cids:
+        return
+    views: Dict[str, Dict[str, Any]] = {}
+    lookup = getattr(trading_repo, "get_oms_orders_by_client_ids", None)
+    if lookup is not None:
+        try:
+            for row in await lookup(cids) or []:
+                if row.get("client_order_id"):
+                    views[str(row["client_order_id"])] = order_state_view(row)
+        except Exception as exc:
+            logger.warning("[审计流] 读取 %s 的订单当前状态失败，只显示决策时的执行结果: %s", bot_id, exc)
+    oms = getattr(bot, "oms", None) if bot else None
+    mem_orders = getattr(oms, "orders", None) or {}
+    wanted = set(cids)
+    for cid, order in list(mem_orders.items()):
+        if str(cid) in wanted:
+            views[str(cid)] = order_state_view(order)
+    touched = attach_order_states(feed, views)
+    logger.debug("[审计流] %s：%d 个订单号，查到当前状态 %d 个，补齐 %d 笔", bot_id, len(cids), len(views), touched)
 
 
 @router.get("/api/v1/bots/{bot_id}/trades", tags=["Audit & Explainability"])

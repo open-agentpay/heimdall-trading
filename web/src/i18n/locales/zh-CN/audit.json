@@ -63,5 +63,38 @@
     "idempotencyKey": "幂等键:",
     "dataSource": "数据来源: 后端 StepTrace 记录",
     "done": "完成阅知"
+  },
+  "execution": {
+    "badge": "执行：{{status}}",
+    "title": "下单执行结果 (Order Execution)",
+    "decisionTime": "决策时",
+    "now": "当前",
+    "status": {
+      "filled": "已成交",
+      "partial": "部分成交",
+      "submitted": "已挂单",
+      "canceled": "已撤销",
+      "blocked": "发单前拦截",
+      "rejected": "交易所拒单",
+      "unknown": "状态未知（待对账）",
+      "noProposal": "未下单（无提案）",
+      "riskRejected": "未下单（风控拦截）",
+      "unrecorded": "未记录"
+    },
+    "reason": "原因: {{reason}}",
+    "inferred": "这是升级前的记录，没有保存执行结果，以上状态根据提案、风控结论与思维链推断。",
+    "unrecordedHint": "风控通过，但这条记录没有保存执行结果，无法判断是否下单；请以净值页的成交记录为准。",
+    "submittedHint": "限价单已挂到交易所、尚未成交；超时未成交会在对账时自动撤销，请以「当前」状态为准。",
+    "blockedHint": "订单没有发到交易所，不会产生持仓、成交或止损单。",
+    "orderCount": "共 {{n}} 笔订单",
+    "noOrders": "本轮没有订单明细。",
+    "col": {
+      "order": "订单号",
+      "type": "类型",
+      "status": "状态",
+      "qty": "成交 / 委托",
+      "price": "委托价 / 成交均价"
+    },
+    "noOrderId": "未生成"
   }
 }

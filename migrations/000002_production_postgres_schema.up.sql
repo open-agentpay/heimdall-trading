@@ -33,7 +33,8 @@ CREATE TABLE IF NOT EXISTS agent_decisions (
     proposal_json TEXT,
     risk_approved INTEGER NOT NULL DEFAULT 0,
     rejection_reason TEXT,
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    execution_json TEXT                 -- 2026-11-24：本轮执行结果（状态、原因、每笔订单），与风控结论分开
 );
 
 CREATE INDEX IF NOT EXISTS idx_decisions_agent_ts ON agent_decisions (agent_id, timestamp DESC);

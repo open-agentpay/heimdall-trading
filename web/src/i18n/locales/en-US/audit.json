@@ -63,5 +63,38 @@
     "idempotencyKey": "Idempotency key:",
     "dataSource": "Source: backend StepTrace records",
     "done": "Done"
+  },
+  "execution": {
+    "badge": "Execution: {{status}}",
+    "title": "Order Execution",
+    "decisionTime": "At decision",
+    "now": "Now",
+    "status": {
+      "filled": "Filled",
+      "partial": "Partially filled",
+      "submitted": "Order placed",
+      "canceled": "Canceled",
+      "blocked": "Blocked before sending",
+      "rejected": "Rejected by exchange",
+      "unknown": "Unknown (awaiting reconciliation)",
+      "noProposal": "Not sent (no proposal)",
+      "riskRejected": "Not sent (risk rejected)",
+      "unrecorded": "Not recorded"
+    },
+    "reason": "Reason: {{reason}}",
+    "inferred": "This record predates execution tracking; the status above is inferred from the proposal, risk outcome and chain-of-thought.",
+    "unrecordedHint": "Risk approved, but this record did not save an execution result, so it is unknown whether an order was sent. Check the trades on the NAV page.",
+    "submittedHint": "The limit order is on the exchange and not yet filled; unfilled orders are canceled automatically during reconciliation after the timeout. Rely on the \"Now\" status.",
+    "blockedHint": "The order was never sent to the exchange, so no position, fill or stop order was created.",
+    "orderCount": "{{n}} order(s)",
+    "noOrders": "No order details for this cycle.",
+    "col": {
+      "order": "Order ID",
+      "type": "Type",
+      "status": "Status",
+      "qty": "Filled / requested",
+      "price": "Limit / avg fill price"
+    },
+    "noOrderId": "Not created"
   }
 }

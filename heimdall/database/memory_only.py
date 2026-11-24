@@ -75,7 +75,7 @@ class MemoryOnlyRepository:
     # ---- 决策审计、成交、净值 ----
     async def record_decision(self, decision_id: str, agent_id: str, symbol: str, timestamp: str,
                               market_regime: Optional[str], thinking_logs: List[str], proposal: Any,
-                              risk_review: Any):
+                              risk_review: Any, execution: Optional[Dict[str, Any]] = None):
         self._skip("record_decision")
 
     async def get_decision_history(self, agent_id: str, limit: int = 50) -> List[Dict[str, Any]]:
@@ -120,6 +120,9 @@ class MemoryOnlyRepository:
         return None
 
     async def list_oms_orders(self, *args: Any, **kwargs: Any) -> List[Dict[str, Any]]:
+        return []
+
+    async def get_oms_orders_by_client_ids(self, client_order_ids: List[str]) -> List[Dict[str, Any]]:
         return []
 
     async def get_bot_ledger(self, *args: Any, **kwargs: Any) -> Optional[Dict[str, Any]]:

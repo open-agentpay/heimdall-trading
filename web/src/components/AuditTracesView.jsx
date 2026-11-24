@@ -7,7 +7,9 @@
  * 1. 完整展示历史任务时间轴（Task ID, Trace ID, 标的, 周期, 最终结论）；
  * 2. 深入审查每个决策的证据链：Analyst 研报、多空对抗辩论要点、裁判判词；
  * 3. 审查两道风控规则核验明细与物理硬拦截记录；
- * 4. 展示 StepTrace 耗时流水线（微秒级可观测性）与本地降级标记。
+ * 4. 展示 StepTrace 耗时流水线（微秒级可观测性）与本地降级标记；
+ * 5. 下单执行结果（2026-11-24）：与"风控结论"分开显示每轮是否真的下了单——已成交 / 已挂单 / 发单前拦截 /
+ *    拒单 / 待对账，以及每笔订单"决策时"与"当前"的状态（后端 execution 字段）。
  */
 
 import React, { useState, useEffect } from 'react';
@@ -57,6 +59,7 @@ export default function AuditTracesView({ activeBotId = "bot_eth_debate_01" }) {
         idempotencyKey: null,
         rejectionReason: null,
         failureReason: item.error || null,
+        execution: null,
         timestamp: item.timestamp ? String(item.timestamp).replace('T', ' ').slice(0, 19) : '--',
         timestampRaw: item.timestamp ?? null,
       };
@@ -124,6 +127,29 @@ export default function AuditTracesView({ activeBotId = "bot_eth_debate_01" }) {
       ? Math.round(knownLatencies.reduce((a, b) => a + b, 0) * 10) / 10
       : null;
 
+    // 执行结果：后端 execution 字段（新记录由决策周期写入；升级前的记录由后端推断，带 inferred）。
+    // 订单的 current_* 字段是接口返回前从 OMS 补上的"当前"状态（例如已挂单的限价单之后被超时撤销）。
+    const exec = item.execution && typeof item.execution === 'object' ? item.execution : null;
+    const execution = exec ? {
+      status: exec.status || null,
+      currentStatus: exec.current_status || null,
+      reason: exec.reason || null,
+      inferred: Boolean(exec.inferred),
+      orders: (Array.isArray(exec.orders) ? exec.orders : []).map((o) => ({
+        proposalId: o.proposal_id || null,
+        clientOrderId: o.client_order_id || null,
+        orderType: o.order_type || null,
+        side: o.side || null,
+        status: o.status || null,
+        currentState: o.current_state || null,
+        reason: o.current_reason || o.reason || null,
+        requestedQty: o.requested_qty ?? null,
+        filledQty: o.current_filled_qty ?? o.filled_qty ?? null,
+        limitPrice: o.limit_price ?? null,
+        avgFillPrice: o.avg_fill_price ?? null,
+      })),
+    } : null;
+
     return {
       rowKey: item.decision_id || item.timestamp || `row_${idx}`,
       decisionId: item.decision_id || null,
@@ -142,10 +168,36 @@ export default function AuditTracesView({ activeBotId = "bot_eth_debate_01" }) {
       totalLatencyMs,
       idempotencyKey: proposal.idempotency_key || null,
       rejectionReason: risk.rejection_reason || risk.rejection_rule || item.rejection_reason || null,
+      execution,
       timestamp: item.timestamp ? String(item.timestamp).replace('T', ' ').slice(0, 19) : '--',
       timestampRaw: item.timestamp ?? null,
     };
   };
+
+  // 执行结果状态 → 文案（键名写全，便于多语言静态检查核对）
+  const execLabel = (s) => ({
+    FILLED: t('execution.status.filled'),
+    PARTIAL: t('execution.status.partial'),
+    SUBMITTED: t('execution.status.submitted'),
+    CANCELED: t('execution.status.canceled'),
+    BLOCKED: t('execution.status.blocked'),
+    REJECTED: t('execution.status.rejected'),
+    UNKNOWN: t('execution.status.unknown'),
+    NO_PROPOSAL: t('execution.status.noProposal'),
+    RISK_REJECTED: t('execution.status.riskRejected'),
+  }[s] || t('execution.status.unrecorded'));
+
+  // 执行结果状态 → 配色：成交绿、挂单中蓝、没发出去 / 被拒红、待确认 / 已撤销 / 未记录黄
+  const execStyle = (s) => (
+    s === 'FILLED' ? 'bg-success-soft text-success border-success-line'
+      : (s === 'PARTIAL' || s === 'SUBMITTED') ? 'bg-info-soft text-info border-info-line'
+      : (s === 'BLOCKED' || s === 'REJECTED') ? 'bg-danger-soft text-danger border-danger-line'
+      : (s === 'UNKNOWN' || s === 'CANCELED' || s === 'UNRECORDED') ? 'bg-warning-soft text-warning border-warning-line'
+      : 'bg-canvas text-ink-3 border-line'
+  );
+
+  // 没有进入下单的两种结果（无提案 / 风控拦截）已由风控徽章表达，不再重复显示执行结果
+  const NOT_SENT = ['NO_PROPOSAL', 'RISK_REJECTED'];
 
   const fetchTraces = async () => {
     setLoading(true);
@@ -256,6 +308,8 @@ export default function AuditTracesView({ activeBotId = "bot_eth_debate_01" }) {
             : isHalted
             ? t('status.halted')
             : t('status.unknown');
+          // 执行结果徽章：优先显示订单"当前"状态，没有则显示决策时的状态
+          const execShown = item.execution ? (item.execution.currentStatus || item.execution.status) : null;
 
           return (
             <div 
@@ -311,6 +365,11 @@ export default function AuditTracesView({ activeBotId = "bot_eth_debate_01" }) {
                     {isApproved ? <CheckCircle2 className="w-3.5 h-3.5" /> : (isRejected || isFailed) ? <XCircle className="w-3.5 h-3.5" /> : <Minus className="w-3.5 h-3.5" />}
                     <span>{statusText}</span>
                   </div>
+                  {execShown && !item.isFailure && !NOT_SENT.includes(execShown) && (
+                    <div className={`px-2.5 py-1 rounded-full text-xs font-bold border ${execStyle(execShown)}`}>
+                      {t('execution.badge', { status: execLabel(execShown) })}
+                    </div>
+                  )}
 
                   <div className="text-ink-4">
                     {isExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
@@ -407,6 +466,79 @@ export default function AuditTracesView({ activeBotId = "bot_eth_debate_01" }) {
                       ))}
                     </div>
                   </div>
+
+                  {/* 3.5 下单执行结果：风控通过之后订单到底发没发出去、成交没有 */}
+                  {item.execution && !NOT_SENT.includes(item.execution.status) && (
+                    <div className="bg-surface p-3.5 rounded-xl border border-line space-y-2">
+                      <div className="font-bold text-ink flex items-center justify-between">
+                        <span className="flex items-center space-x-1.5">
+                          <Activity className="w-4 h-4 text-brand" />
+                          <span>{t('execution.title')}</span>
+                        </span>
+                        <span className="flex items-center space-x-1.5 text-xs font-medium">
+                          <span className="text-ink-4">{t('execution.decisionTime')}</span>
+                          <span className={`px-2 py-0.5 rounded-full border font-bold ${execStyle(item.execution.status)}`}>
+                            {execLabel(item.execution.status)}
+                          </span>
+                          {item.execution.currentStatus && item.execution.currentStatus !== item.execution.status && (
+                            <>
+                              <span className="text-ink-4">→ {t('execution.now')}</span>
+                              <span className={`px-2 py-0.5 rounded-full border font-bold ${execStyle(item.execution.currentStatus)}`}>
+                                {execLabel(item.execution.currentStatus)}
+                              </span>
+                            </>
+                          )}
+                        </span>
+                      </div>
+
+                      {item.execution.reason && (
+                        <p className="text-danger leading-relaxed bg-panel p-2.5 rounded-lg border border-line-soft break-all">
+                          {t('execution.reason', { reason: item.execution.reason })}
+                        </p>
+                      )}
+                      {execShown === 'BLOCKED' && <p className="text-xs text-ink-3">{t('execution.blockedHint')}</p>}
+                      {execShown === 'SUBMITTED' && <p className="text-xs text-ink-3">{t('execution.submittedHint')}</p>}
+                      {execShown === 'UNRECORDED' && <p className="text-xs text-ink-3">{t('execution.unrecordedHint')}</p>}
+                      {item.execution.inferred && <p className="text-xs text-ink-4">{t('execution.inferred')}</p>}
+
+                      {item.execution.orders.length === 0 && !item.execution.inferred && (
+                        <div className="text-xs text-ink-4">{t('execution.noOrders')}</div>
+                      )}
+                      {item.execution.orders.length > 0 && (
+                        <div className="space-y-1.5 font-mono text-xs">
+                          {item.execution.orders.length > 1 && (
+                            <div className="text-ink-4">{t('execution.orderCount', { n: item.execution.orders.length })}</div>
+                          )}
+                          <div className="grid grid-cols-12 gap-2 text-ink-4 px-2">
+                            <span className="col-span-4">{t('execution.col.order')}</span>
+                            <span className="col-span-2">{t('execution.col.type')}</span>
+                            <span className="col-span-2">{t('execution.col.status')}</span>
+                            <span className="col-span-2">{t('execution.col.qty')}</span>
+                            <span className="col-span-2">{t('execution.col.price')}</span>
+                          </div>
+                          {item.execution.orders.map((o, oi) => {
+                            const shown = o.currentState || o.status;
+                            return (
+                              <div key={o.clientOrderId || `${o.proposalId}_${oi}`} className="bg-panel rounded-lg border border-line-soft p-2 space-y-1">
+                                <div className="grid grid-cols-12 gap-2 items-center">
+                                  <span className="col-span-4 truncate" title={o.clientOrderId || ''}>{o.clientOrderId || t('execution.noOrderId')}</span>
+                                  <span className="col-span-2">{[o.orderType, o.side].filter(Boolean).join(' · ') || '--'}</span>
+                                  <span className="col-span-2">
+                                    <span className={`px-1.5 py-0.5 rounded border ${execStyle(shown)}`}>{execLabel(shown)}</span>
+                                  </span>
+                                  <span className="col-span-2">{o.filledQty ?? '--'} / {o.requestedQty ?? '--'}</span>
+                                  <span className="col-span-2">{o.limitPrice ?? '--'} / {o.avgFillPrice ?? '--'}</span>
+                                </div>
+                                {o.reason && (
+                                  <div className="text-ink-3 break-all">{t('execution.reason', { reason: o.reason })}</div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  )}
 
                   {/* 4. 微秒级 StepTrace 可观测流水线 */}
                   {(!item.stepTraces || item.stepTraces.length === 0) && (

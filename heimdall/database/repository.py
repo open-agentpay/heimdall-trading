@@ -188,27 +188,32 @@ class TradingRepository:
         thinking_logs: List[str],
         proposal: Optional[TradeProposal],
         risk_review: Optional[RiskReviewResult],
+        execution: Optional[Dict[str, Any]] = None,
     ):
         """
         保存单次周期的完整决策切片（包含大模型思考链、多空辩论结论与风控核准结果）
+
+        :param execution: 本轮执行结果（状态、原因、每笔订单，2026-11-24 新增 execution_json 列）；
+                          旧调用方不传时为 NULL，审计流会从思维链推断
         """
         now = datetime.now(timezone.utc).isoformat()
         logs_json = json.dumps(thinking_logs, ensure_ascii=False)
         proposal_json = proposal.model_dump_json() if proposal else None
         approved_int = 1 if (risk_review and risk_review.approved) else 0
         rejection_reason = risk_review.rejection_reason if risk_review else None
+        execution_json = json.dumps(execution, ensure_ascii=False, default=str) if execution is not None else None
 
         sql = """
         INSERT INTO agent_decisions (
             decision_id, agent_id, symbol, timestamp, market_regime,
-            thinking_logs_json, proposal_json, risk_approved, rejection_reason, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+            thinking_logs_json, proposal_json, risk_approved, rejection_reason, created_at, execution_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
         """
         await self.db.execute_commit(
             sql,
             (
                 decision_id, agent_id, symbol, timestamp, market_regime,
-                logs_json, proposal_json, approved_int, rejection_reason, now
+                logs_json, proposal_json, approved_int, rejection_reason, now, execution_json
             ),
         )
 
@@ -226,6 +231,11 @@ class TradingRepository:
                 r["thinking_logs"] = json.loads(r["thinking_logs_json"])
             if "proposal_json" in r and r["proposal_json"]:
                 r["proposal"] = json.loads(r["proposal_json"])
+            if r.get("execution_json"):
+                try:
+                    r["execution"] = json.loads(r["execution_json"])
+                except (TypeError, ValueError) as exc:
+                    logger.warning("[Repository] 决策 %s 的 execution_json 无法解析，按未记录处理: %s", r.get("decision_id"), exc)
         return rows
 
     # -------------------------------------------------------------------------
@@ -512,6 +522,18 @@ class TradingRepository:
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         sql = f"SELECT * FROM oms_orders {where} ORDER BY created_at DESC;"
         return await self.db.execute_query(sql, tuple(params))
+
+    async def get_oms_orders_by_client_ids(self, client_order_ids: List[str]) -> List[Dict[str, Any]]:
+        """
+        按客户端订单号批量读取 OMS 订单（审计页用来显示决策时下的单"现在"是什么状态，
+        例如已挂单的限价单之后被超时撤销）。空列表直接返回，不查库。
+        """
+        ids = [str(c) for c in (client_order_ids or []) if c]
+        if not ids:
+            return []
+        placeholders = ",".join("?" for _ in ids)
+        sql = f"SELECT * FROM oms_orders WHERE client_order_id IN ({placeholders});"
+        return await self.db.execute_query(sql, tuple(ids))
 
 
     # -------------------------------------------------------------------------

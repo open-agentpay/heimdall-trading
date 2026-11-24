@@ -384,6 +384,8 @@ class DatabaseManager:
             "ALTER TABLE oms_orders ADD COLUMN IF NOT EXISTS stop_loss_price TEXT;",
             "ALTER TABLE oms_orders ADD COLUMN IF NOT EXISTS take_profit_price TEXT;",
             "ALTER TABLE oms_orders ADD COLUMN IF NOT EXISTS attach_protection INTEGER NOT NULL DEFAULT 0;",
+            # 2026-11-24：决策审计记录每轮"执行结果"（状态、原因、每笔订单），与风控结论分开
+            "ALTER TABLE agent_decisions ADD COLUMN IF NOT EXISTS execution_json TEXT;",
             "CREATE INDEX IF NOT EXISTS idx_decisions_agent_ts ON agent_decisions (agent_id, timestamp DESC);",
             "CREATE INDEX IF NOT EXISTS idx_trades_agent_exec ON trades (agent_id, executed_at DESC);",
             "CREATE INDEX IF NOT EXISTS idx_nav_agent_ts ON agent_equity_snapshots (agent_id, timestamp ASC);",
@@ -596,6 +598,16 @@ class DatabaseManager:
                             cursor.execute(ddl)
                         except Exception as e:
                             logger.warning("[DatabaseManager] 补齐 oms_orders.%s 列警告: %s", col, e)
+
+                # 2026-11-24：决策审计新增执行结果列（旧库补列；旧记录为 NULL，审计流从思维链推断）
+                cursor.execute("PRAGMA table_info(agent_decisions);")
+                decision_columns = [row[1] for row in cursor.fetchall()]
+                if "execution_json" not in decision_columns:
+                    try:
+                        cursor.execute("ALTER TABLE agent_decisions ADD COLUMN execution_json TEXT;")
+                        logger.info("[DatabaseManager] 已为 agent_decisions 补齐 execution_json 列")
+                    except Exception as e:
+                        logger.warning("[DatabaseManager] 补齐 agent_decisions.execution_json 列警告: %s", e)
 
                 cursor.execute("PRAGMA table_info(trading_agents);")
                 columns = [row[1] for row in cursor.fetchall()]

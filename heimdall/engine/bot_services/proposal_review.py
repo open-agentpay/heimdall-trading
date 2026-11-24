@@ -100,6 +100,8 @@ class ReviewOutcome:
     exempted: int = 0
     rejected_by_guard: int = 0
     rejected_by_coordinator: int = 0
+    #: 被拦截提案的原因（硬风控 / 组合协调器），写入审计"执行结果"里没有下单的原因
+    reasons: List[str] = field(default_factory=list)
 
 
 class ProposalReviewer(BotService):
@@ -171,6 +173,7 @@ class ProposalReviewer(BotService):
                     self.bot_id, prop.proposal_id, rev.rejection_reason,
                 )
                 decision.thinking_logs.append(f"[HardRiskGuard 执行前复审拦截]: {rev.rejection_reason}")
+                out.reasons.append(f"硬风控拦截：{rev.rejection_reason or '未返回原因'}")
 
         # 第 3 关：组合协调器全局敞口锁（预留额度；后续发单失败时由执行服务释放）
         if passed and h.portfolio_coordinator is not None:
@@ -188,6 +191,7 @@ class ProposalReviewer(BotService):
                     out.rejected_by_coordinator += 1
                     self.log.warning("[Bot %s] 组合协调器拦截提案: %s", self.bot_id, coord_reason)
                     decision.thinking_logs.append(f"[PortfolioCoordinator 拦截]: {coord_reason}")
+                    out.reasons.append(f"组合协调器拦截：{coord_reason or '未返回原因'}")
             passed = reserved
 
         out.approved = passed
