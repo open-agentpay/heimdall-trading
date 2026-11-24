@@ -16,6 +16,8 @@
 
 [English](README.md) | [中文说明](README_ZH.md)
 
+📘 **[Product Guide: features & screenshots (Chinese)](docs/PRODUCT.md)**
+
 [![Python Version](https://img.shields.io/badge/Python-3.10+-3776AB?style=flat&logo=python)](https://python.org)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.110+-009688?style=flat&logo=fastapi)](https://fastapi.tiangolo.com)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
@@ -34,6 +36,7 @@
 - [5. Project Directory Structure](#5-project-directory-structure)
 - [6. Quick Start & CLI Demo](#6-quick-start--cli-demo)
 - [7. Web REST API Contract](#7-web-rest-api-contract)
+- [Product Guide (features & screenshots, Chinese)](docs/PRODUCT.md)
 
 ---
 

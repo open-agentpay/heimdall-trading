@@ -16,6 +16,8 @@
 
 [English](README.md) | [中文说明](README_ZH.md)
 
+📘 **[产品说明：功能介绍与界面截图](docs/PRODUCT.md)**
+
 [![Python Version](https://img.shields.io/badge/Python-3.10+-3776AB?style=flat&logo=python)](https://python.org)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.110+-009688?style=flat&logo=fastapi)](https://fastapi.tiangolo.com)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
@@ -34,6 +36,7 @@
 - [5. 工程目录结构](#5-工程目录结构)
 - [6. 快速开始与演练](#6-快速开始与演练)
 - [7. Web REST API 契约](#7-web-rest-api-契约)
+- [产品说明（功能与界面截图）](docs/PRODUCT.md)
 
 ---
 
