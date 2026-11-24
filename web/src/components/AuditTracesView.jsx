@@ -416,7 +416,7 @@ export default function AuditTracesView({ activeBotId = "bot_eth_debate_01" }) {
         {loading && (
           <div className="p-3 text-center text-xs text-ink-3 bg-surface/70 rounded-xl border border-line flex items-center justify-center space-x-2">
             <RefreshCw className="w-3.5 h-3.5 animate-spin text-brand" />
-            <span>{t('common:loading', '加载中...')}</span>
+            <span>{t('common:loading')}</span>
           </div>
         )}
         {!loading && decisions.length === 0 && (
