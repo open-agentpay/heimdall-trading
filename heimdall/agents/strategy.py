@@ -160,7 +160,9 @@ class StrategyAgent:
 
         # 5. 构建具体交易动作 (TradeAction)
         trade_action = TradeAction(
-            exchange=ExchangeType.HYPERLIQUID,  # 默认首选去中心化低费率永续合约 DEX
+            # 占位值：流水线不知道机器人绑定的交易所。实盘链路由 DebateStrategyAdapter 按机器人交易所改写，
+            # 下单前 OrderExecutionService 还会再按机器人交易所对齐一次（见 align_proposal_venue）
+            exchange=ExchangeType.HYPERLIQUID,
             symbol=symbol,
             position_side=pos_side,
             order_side=order_side,

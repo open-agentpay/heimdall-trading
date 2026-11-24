@@ -47,6 +47,31 @@ from heimdall.engine.bot_services.trade_recorder import TradeRecorder
 logger = get_service_logger("execution")
 
 
+def align_proposal_venue(proposals: List[TradeProposal], exchange: Any, market_type: Any) -> List[str]:
+    """
+    下单前把提案的交易所 / 市场类型对齐到机器人自身的配置（纯函数，便于单测）。
+
+    为什么需要：执行适配器（h.executor）在创建机器人时已经按「交易所 × 市场 × 运行模式」选定，
+    订单实际只会发往这一家交易所；但 OMS 用提案上的 ``trade_action.exchange`` 去查交易规格。
+    策略层一旦把交易所写错（2026-11-24 发现辩论策略一直写死 HYPERLIQUID），币安机器人就永远查不到规格，
+    所有开仓都在发单前被拦截。这里以机器人配置为准，作为所有策略的兜底。
+
+    :return: 被改写的提案描述列表（"<proposal_id>: <原交易所>/<原市场> -> <新交易所>/<新市场>"），供调用方写 WARN 日志
+    """
+    changed: List[str] = []
+    for prop in proposals:
+        action = prop.trade_action
+        old_ex, old_mt = action.exchange, action.market_type
+        if old_ex != exchange or old_mt != market_type:
+            changed.append(
+                f"{prop.proposal_id}: {getattr(old_ex, 'value', old_ex)}/{getattr(old_mt, 'value', old_mt)}"
+                f" -> {getattr(exchange, 'value', exchange)}/{getattr(market_type, 'value', market_type)}"
+            )
+        action.exchange = exchange
+        action.market_type = market_type
+    return changed
+
+
 @dataclass
 class ExecutionOutcome:
     """一轮下单执行的结果"""
@@ -110,8 +135,13 @@ class OrderExecutionService(BotService):
         out = ExecutionOutcome(snapshot=snapshot)
 
         self._protection.mark_exec_activity()  # 下单宽限期起点：期间不检查止损覆盖、不收尾保护单
-        for prop in approved:
-            prop.trade_action.market_type = h.market_type
+        # 交易所与市场类型以机器人配置为准（OMS 按这两个字段查交易规格）；策略层写错时记 WARN 便于追查
+        changed = align_proposal_venue(approved, h.exchange, h.market_type)
+        if changed:
+            self.log.warning(
+                "[Bot %s] %d 笔提案的交易所/市场与机器人配置不一致，已按机器人配置改写: %s",
+                self.bot_id, len(changed), "; ".join(changed),
+            )
         self.log.info(
             "[Bot %s] %d 笔提案通过风控审核，提交执行链路下单 (market=%s, use_oms=%s)...",
             self.bot_id, len(approved), h.market_type.value, h.use_oms,
